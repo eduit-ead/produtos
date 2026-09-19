@@ -23,7 +23,40 @@ function formatBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }
 
-async function main() {
+function parseSlugArg(args) {
+  const prefix = "--slug=";
+  const arg = args.find((a) => a.startsWith(prefix));
+  return arg ? arg.slice(prefix.length) : null;
+}
+
+async function convertSingle(slug) {
+  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+
+  const inputFile = path.join(SOURCE_DIR, `${slug}.png`);
+  const outputFile = path.join(OUTPUT_DIR, `${slug}.jpg`);
+
+  if (!fs.existsSync(inputFile)) {
+    console.error(`PNG não encontrado: ${inputFile}`);
+    process.exit(1);
+  }
+
+  const originalSize = fs.statSync(inputFile).size;
+
+  await convertPngToJpeg(inputFile, outputFile);
+
+  const optimizedSize = fs.statSync(outputFile).size;
+  const reduction =
+    originalSize > 0
+      ? ((originalSize - optimizedSize) / originalSize) * 100
+      : 0;
+
+  console.log(
+    `${slug}.jpg ✓ ${formatBytes(originalSize)} → ${formatBytes(optimizedSize)} ` +
+      `(${reduction.toFixed(1)}% menor)`
+  );
+}
+
+async function convertAll() {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
   const files = fs
@@ -141,6 +174,18 @@ async function main() {
   console.log(`Média JPG: ${summary.media_tamanho_jpg_formatado}`);
   console.log("");
   console.log(`Relatório: ${reportPath}`);
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  const slug = parseSlugArg(args);
+
+  if (slug) {
+    await convertSingle(slug);
+    return;
+  }
+
+  await convertAll();
 }
 
 main().catch((error) => {

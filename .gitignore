@@ -11,6 +11,8 @@ pnpm-lock.yaml
 
 # Cache e artefatos gerados
 input/cache/
+input/backups/
+input/~$*.xlsx
 output/
 
 # Logs

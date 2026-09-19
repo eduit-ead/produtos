@@ -747,6 +747,8 @@ function readCourses() {
       slug = slugify(curso);
     }
 
+    const courseId = getValue(row, ["course_id"]) || slug;
+
     const formacao = getValue(row, ["Formação"]);
     const modalidade = getValue(row, ["Modalidade"]);
     const duracao = getValue(row, ["Duração"]);
@@ -758,6 +760,7 @@ function readCourses() {
     return {
       curso,
       slug,
+      courseId,
       formacao,
       modalidade,
       duracao,
@@ -1082,7 +1085,7 @@ async function generateAll() {
 
 function buildResultRow(course, status, arquivoFinal, erro) {
   return {
-    course_id: course.slug,
+    course_id: course.courseId || course.slug,
     curso: course.curso,
     slug: course.slug,
     modalidade: course.modalidade,
@@ -1206,6 +1209,136 @@ async function runTest() {
 }
 
 // -------------------------------------------------------
+// Geração de um único curso por slug
+// -------------------------------------------------------
+
+function parseSlugArg(args) {
+  const prefix = "--slug=";
+  const arg = args.find((a) => a.startsWith(prefix));
+  return arg ? arg.slice(prefix.length) : null;
+}
+
+async function updateFinalManifest(result) {
+  const manifestJson = path.join(OUTPUT_FINAL_DIR, "resultado.json");
+  const manifestCsv = path.join(OUTPUT_FINAL_DIR, "resultado.csv");
+
+  let results = [];
+
+  if (fs.existsSync(manifestJson)) {
+    try {
+      results = JSON.parse(fs.readFileSync(manifestJson, "utf8"));
+    } catch {
+      results = [];
+    }
+  } else {
+    // Se não existe, gera a partir dos dados atuais da planilha
+    results = readCourses()
+      .filter((c) => c.curso)
+      .map((course) =>
+        buildResultRow(course, "pendente", "", "Não processado")
+      );
+  }
+
+  const index = results.findIndex(
+    (r) => r.slug === result.slug
+  );
+
+  if (index >= 0) {
+    results[index] = result;
+  } else {
+    results.push(result);
+  }
+
+  fs.writeFileSync(
+    manifestJson,
+    JSON.stringify(results, null, 2),
+    "utf8"
+  );
+
+  const csvHeader = [
+    "course_id",
+    "curso",
+    "slug",
+    "modalidade",
+    "formacao",
+    "duracao",
+    "imagem_origem",
+    "arquivo_final",
+    "status",
+    "erro",
+  ];
+
+  const csvRows = results.map((row) =>
+    [
+      row.course_id,
+      row.curso,
+      row.slug,
+      row.modalidade,
+      row.formacao,
+      row.duracao,
+      row.imagem_origem,
+      row.arquivo_final,
+      row.status,
+      row.erro,
+    ]
+      .map(csvEscape)
+      .join(",")
+  );
+
+  const csv = [csvHeader.join(","), ...csvRows].join("\n");
+
+  fs.writeFileSync(manifestCsv, "\uFEFF" + csv, "utf8");
+}
+
+async function generateSingle(slug) {
+  fs.mkdirSync(OUTPUT_FINAL_DIR, { recursive: true });
+
+  const courses = readCourses();
+  const course = courses.find((c) => c.slug === slug);
+
+  if (!course) {
+    console.error(`Curso com slug "${slug}" não encontrado.`);
+    process.exit(1);
+  }
+
+  console.log(`Processando: ${course.curso} (${slug})`);
+
+  const validationErrors = validateCourse(course);
+
+  if (validationErrors.length > 0) {
+    console.error(
+      `✗ ${course.curso}: ${validationErrors.join("; ")}`
+    );
+
+    const result = buildResultRow(
+      course,
+      "erro",
+      "",
+      validationErrors.join("; ")
+    );
+    await updateFinalManifest(result);
+    return;
+  }
+
+  try {
+    const outputFile = await generateCourseImage(
+      course,
+      OUTPUT_FINAL_DIR
+    );
+
+    console.log(`✓ ${outputFile}`);
+
+    const result = buildResultRow(course, "ok", outputFile, "");
+    await updateFinalManifest(result);
+  } catch (error) {
+    console.error(`✗ Erro em ${course.curso}: ${error.message}`);
+
+    const result = buildResultRow(course, "erro", "", error.message);
+    await updateFinalManifest(result);
+  }
+}
+
+// -------------------------------------------------------
 // Entrypoint
 // -------------------------------------------------------
 
@@ -1213,9 +1346,15 @@ async function main() {
   const args = process.argv.slice(2);
   const isAll = args.includes("--all");
   const isDryRun = args.includes("--dry-run");
+  const slug = parseSlugArg(args);
 
   if (isDryRun) {
     await dryRun();
+    return;
+  }
+
+  if (slug) {
+    await generateSingle(slug);
     return;
   }
 
