@@ -14,6 +14,7 @@ input/cache/
 input/backups/
 input/~$*.xlsx
 output/
+output/ai-backgrounds/
 
 # Logs
 *.log
