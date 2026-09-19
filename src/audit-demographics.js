@@ -17,13 +17,13 @@ const INPUT_FILE = path.join(ROOT, "input", "cursos.xlsx");
 const OUTPUT_DIR = path.join(ROOT, "output", "ai-pilot");
 const SHEET_NAME = "Graduação";
 
-// Metas demográficas globais (soma exata = 128, método dos maiores restos)
+// Metas demográficas globais (protagonista principal — counts inteiros, soma exata = 128)
 const TARGETS = {
-  gender: {
+  protagonistGender: {
     mulher: 77,
     homem: 51,
   },
-  ethnicity: {
+  protagonistEthnicity: {
     parda: 58,
     negra: 32,
     branca: 32,
@@ -135,8 +135,15 @@ function extractAge(text) {
 function classifyPeopleCount(personText, activityText, promptText) {
   const combined = `${personText} ${activityText} ${promptText}`;
 
-  if (PEOPLE_COUNT_PATTERNS.grupo.test(combined)) return "grupo (3+)";
+  // Testa "duas" antes de "grupo" para evitar que "duas pessoas" seja classificado como grupo
   if (PEOPLE_COUNT_PATTERNS.duas.test(combined)) return "duas pessoas";
+
+  // Grupo: ignora ocorrências de "pessoas" quando precedido de "duas"
+  const grupoMatch = combined.match(/\b(grupo|equipe|turma|colegas|três|quatro|cinco|seis|várias|vários|pessoas)\b/gi);
+  if (grupoMatch) {
+    const hasOnlyTwoPeople = /\bduas pessoas\b/gi.test(combined);
+    if (!hasOnlyTwoPeople) return "grupo (3+)";
+  }
 
   const pluralSignals = /\b(dois|duas|ambos|ambas|todos|todas|colegas|alunos|estudantes|profissionais)\b/i;
   if (pluralSignals.test(combined)) return "duas ou mais";
@@ -144,6 +151,139 @@ function classifyPeopleCount(personText, activityText, promptText) {
   if (/sem personagem principal/i.test(combined)) return "sem personagem";
 
   return "uma pessoa";
+}
+
+function chooseProtagonistGender(gender, personText, activityText, promptText) {
+  if (gender === "mulher" || gender === "homem") return gender;
+
+  const combined = `${personText} ${activityText} ${promptText}`;
+  const n = normalizeText(combined);
+
+  // Se houver marcação explícita de protagonista, usa a descrição que vem antes
+  const protagonistIndex = n.indexOf("protagonista");
+  if (protagonistIndex >= 0) {
+    const lead = n.slice(0, protagonistIndex + 20);
+    const womanIdx = ["mulher", "mulheres", "feminina", "feminino", "garota", "jovem mulher"]
+      .map((t) => lead.lastIndexOf(normalizeText(t)))
+      .filter((i) => i >= 0)
+      .pop();
+    const manIdx = ["homem", "homens", "masculino", "masculina", "garoto", "jovem homem"]
+      .map((t) => lead.lastIndexOf(normalizeText(t)))
+      .filter((i) => i >= 0)
+      .pop();
+
+    if (womanIdx !== undefined && manIdx === undefined) return "mulher";
+    if (manIdx !== undefined && womanIdx === undefined) return "homem";
+    if (womanIdx !== undefined && manIdx !== undefined) {
+      return womanIdx > manIdx ? "mulher" : "homem";
+    }
+  }
+
+  // Heurística determinística por posição, excluindo termos neutros compartilhados
+  const womanOnly = ["mulher", "mulheres", "feminina", "feminino", "garota", "jovem mulher"];
+  const manOnly = ["homem", "homens", "masculino", "masculina", "garoto", "jovem homem"];
+
+  const womanIndex = womanOnly.reduce((min, term) => {
+    const idx = n.indexOf(normalizeText(term));
+    return idx >= 0 && idx < min ? idx : min;
+  }, Infinity);
+  const manIndex = manOnly.reduce((min, term) => {
+    const idx = n.indexOf(normalizeText(term));
+    return idx >= 0 && idx < min ? idx : min;
+  }, Infinity);
+
+  if (womanIndex !== Infinity && manIndex !== Infinity) {
+    return womanIndex <= manIndex ? "mulher" : "homem";
+  }
+  if (womanIndex !== Infinity) return "mulher";
+  if (manIndex !== Infinity) return "homem";
+
+  return "não identificado";
+}
+
+function chooseProtagonistEthnicity(ethnicity, personText, promptText) {
+  if (!ethnicity.startsWith("múltipla")) return ethnicity;
+
+  const combined = `${personText} ${promptText}`;
+  const n = normalizeText(combined);
+  const parts = ethnicity.replace("múltipla: ", "").split(", ").map((s) => s.trim());
+
+  let chosen = parts[0];
+  let bestIndex = Infinity;
+  for (const part of parts) {
+    const terms = ETHNICITY_TERMS[part] || [part];
+    for (const term of terms) {
+      const idx = n.indexOf(normalizeText(term));
+      if (idx >= 0 && idx < bestIndex) {
+        bestIndex = idx;
+        chosen = part;
+      }
+    }
+  }
+  return chosen;
+}
+
+function inferProtagonistFunction(course, peopleCount) {
+  const activity = course.visual_atividade || course["area de atuação"] || "";
+  const profession = course.Curso || "";
+  if (peopleCount === "uma pessoa") return activity || `atividade principal de ${profession}`;
+  return `${activity || "atividade central"} (protagonista principal)`;
+}
+
+function extractSecondaryCharacters(course, protagonistGender, protagonistEthnicity, peopleCount) {
+  const secondaries = [];
+  if (peopleCount === "uma pessoa") return secondaries;
+
+  const activity = course.visual_atividade || "";
+  const personText = course.visual_personagem || "";
+  const promptText = course.prompt_imagem || "";
+  const combined = `${personText} ${activity} ${promptText}`;
+
+  // Heurística simples: detectar menção a segunda pessoa ou equipe
+  const hasWoman = hasTerm(combined, GENDER_TERMS.mulher);
+  const hasMan = hasTerm(combined, GENDER_TERMS.homem);
+
+  // Determina gênero complementar ao protagonista quando possível
+  let secondaryGender = null;
+  if (peopleCount === "duas pessoas") {
+    if (protagonistGender === "mulher" && hasMan) secondaryGender = "homem";
+    else if (protagonistGender === "homem" && hasWoman) secondaryGender = "mulher";
+    else secondaryGender = protagonistGender === "mulher" ? "homem" : "mulher";
+  } else if (peopleCount === "grupo (3+)") {
+    secondaryGender = "mistos";
+  }
+
+  // Etnia complementar: evita ser igual à do protagonista quando houver indício de diversidade
+  let secondaryEthnicity = null;
+  const n = normalizeText(combined);
+  const detectedEthnicities = [];
+  for (const [category, terms] of Object.entries(ETHNICITY_TERMS)) {
+    if (hasTerm(combined, terms)) detectedEthnicities.push(category);
+  }
+  if (detectedEthnicities.length > 1) {
+    const complement = detectedEthnicities.find((e) => e !== protagonistEthnicity);
+    secondaryEthnicity = complement || detectedEthnicities[0];
+  } else {
+    secondaryEthnicity = "complementar";
+  }
+
+  if (peopleCount === "duas pessoas") {
+    secondaries.push({
+      genero: secondaryGender,
+      perfil_etnico_racial: secondaryEthnicity,
+      funcao: `${activity || "atividade"} (segundo personagem)`,
+      participacao_real: true,
+    });
+  } else if (peopleCount === "grupo (3+)") {
+    secondaries.push({
+      genero: secondaryGender,
+      perfil_etnico_racial: secondaryEthnicity,
+      funcao: `${activity || "atividade"} (equipe de apoio)`,
+      participacao_real: true,
+    });
+  }
+
+  return secondaries;
 }
 
 function hasDiversityInGroup(personText, activityText, promptText) {
@@ -283,28 +423,47 @@ function analyzeCourses(courses) {
     const prompt = course.prompt_imagem || "";
     const allText = `${person} ${activity} ${prompt}`;
 
-    const gender = classifyGender(person, activity, prompt);
-    const ethnicity = classifyEthnicity(person, prompt);
+    const rawGender = classifyGender(person, activity, prompt);
+    const rawEthnicity = classifyEthnicity(person, prompt);
     const age = extractAge(allText);
     const peopleCount = classifyPeopleCount(person, activity, prompt);
+
+    const protagonistGender = chooseProtagonistGender(rawGender, person, activity, prompt);
+    const protagonistEthnicityRaw = chooseProtagonistEthnicity(rawEthnicity, person, prompt);
+    const protagonistEthnicity = ["parda", "negra", "branca", "outra"].includes(protagonistEthnicityRaw)
+      ? protagonistEthnicityRaw
+      : ["indigena", "asiatica"].includes(protagonistEthnicityRaw)
+        ? "outra"
+        : "não identificado";
+    const protagonistFunction = inferProtagonistFunction(course, peopleCount);
+    const secondaries = extractSecondaryCharacters(course, protagonistGender, protagonistEthnicity, peopleCount);
+
     const diversityInGroup = hasDiversityInGroup(person, activity, prompt);
     const prohibited = findProhibitedTerms(allText);
     const ambiguous = findAmbiguousDemographic(allText);
-    const stereotypeAlerts = checkStereotype(course, gender, ethnicity, peopleCount);
+    const stereotypeAlerts = checkStereotype(course, protagonistGender, protagonistEthnicity, peopleCount);
 
     return {
       ...course,
       analise: {
-        genero: gender,
-        etnia: ethnicity,
-        idade: age,
+        genero_bruto: rawGender,
+        etnia_bruta: rawEthnicity,
+        protagonista: {
+          genero: protagonistGender,
+          perfil_etnico_racial: protagonistEthnicity,
+          idade: age,
+          funcao: protagonistFunction,
+        },
+        personagens_secundarios: secondaries,
         quantidade_pessoas: peopleCount,
         diversidade_em_grupo: diversityInGroup,
         termos_proibidos: prohibited,
         termos_ambiguos: ambiguous,
         alertas_estereotipo: stereotypeAlerts,
         sem_informacao_suficiente:
-          gender === "não identificado" && ethnicity === "não identificado" && age === null,
+          protagonistGender === "não identificado" &&
+          protagonistEthnicity === "não identificado" &&
+          age === null,
       },
     };
   });
@@ -317,17 +476,20 @@ function computeStats(analyzed) {
   const withPerson = analyzed.filter((c) => c.analise.quantidade_pessoas !== "sem personagem");
   const totalWithPerson = withPerson.length;
 
-  // Gênero bruto
-  const genderCounts = {};
-  // Gênero ajustado: coletivo misto conta como 0.5 mulher e 0.5 homem
-  const genderAdjusted = { mulher: 0, homem: 0, nao_identificado: 0 };
+  // Protagonista — counts inteiros
+  const protagonistGenderCounts = { mulher: 0, homem: 0, nao_identificado: 0 };
+  const protagonistEthnicityCounts = { parda: 0, negra: 0, branca: 0, outra: 0, nao_identificado: 0 };
 
-  // Etnia bruta
-  const ethnicityCounts = {};
-  // Etnia ajustada: múltiplas etnias são distribuídas igualmente
-  const ethnicityAdjusted = { parda: 0, negra: 0, branca: 0, indigena: 0, asiatica: 0, outra: 0, nao_identificado: 0 };
-
+  // Quantidade de pessoas — counts inteiros
   const peopleCounts = {};
+
+  // Secundários — sem meta, apenas medição
+  const secondaryGenderCounts = {};
+  const secondaryEthnicityCounts = {};
+  const secondaryFunctionCounts = {};
+  let totalSecondaries = 0;
+  let decorativeSecondaries = 0;
+
   const ageSum = [];
   const ageMissing = [];
   const unidentified = [];
@@ -339,60 +501,46 @@ function computeStats(analyzed) {
 
   for (const c of analyzed) {
     const a = c.analise;
+    const p = a.protagonista;
 
-    genderCounts[a.genero] = (genderCounts[a.genero] || 0) + 1;
-    if (a.genero === "mulher") {
-      genderAdjusted.mulher += 1;
-    } else if (a.genero === "homem") {
-      genderAdjusted.homem += 1;
-    } else if (a.genero === "coletivo misto") {
-      genderAdjusted.mulher += 0.5;
-      genderAdjusted.homem += 0.5;
-    } else {
-      genderAdjusted.nao_identificado += 1;
-    }
-
-    ethnicityCounts[a.etnia] = (ethnicityCounts[a.etnia] || 0) + 1;
-    if (a.etnia.startsWith("múltipla")) {
-      const parts = a.etnia.replace("múltipla: ", "").split(", ").map((s) => s.trim());
-      const weight = 1 / parts.length;
-      for (const part of parts) {
-        const key = part === "outra" ? "outra" : part;
-        if (ethnicityAdjusted[key] !== undefined) {
-          ethnicityAdjusted[key] += weight;
-        } else {
-          ethnicityAdjusted.outra += weight;
-        }
-      }
-    } else if (a.etnia === "não identificado") {
-      ethnicityAdjusted.nao_identificado += 1;
-    } else if (ethnicityAdjusted[a.etnia] !== undefined) {
-      ethnicityAdjusted[a.etnia] += 1;
-    } else {
-      ethnicityAdjusted.outra += 1;
-    }
+    protagonistGenderCounts[p.genero] = (protagonistGenderCounts[p.genero] || 0) + 1;
+    protagonistEthnicityCounts[p.perfil_etnico_racial] =
+      (protagonistEthnicityCounts[p.perfil_etnico_racial] || 0) + 1;
 
     peopleCounts[a.quantidade_pessoas] = (peopleCounts[a.quantidade_pessoas] || 0) + 1;
 
-    if (a.idade !== null) ageSum.push(a.idade);
+    for (const s of a.personagens_secundarios || []) {
+      totalSecondaries++;
+      if (!s.participacao_real) decorativeSecondaries++;
+      secondaryGenderCounts[s.genero] = (secondaryGenderCounts[s.genero] || 0) + 1;
+      secondaryEthnicityCounts[s.perfil_etnico_racial] =
+        (secondaryEthnicityCounts[s.perfil_etnico_racial] || 0) + 1;
+      secondaryFunctionCounts[s.funcao] = (secondaryFunctionCounts[s.funcao] || 0) + 1;
+    }
+
+    if (p.idade !== null) ageSum.push(p.idade);
     else ageMissing.push(c);
 
     if (a.sem_informacao_suficiente) noInfo.push(c);
     if (a.termos_proibidos.length > 0) prohibitedHits.push(c);
     if (a.termos_ambiguos.length > 0) ambiguousHits.push(c);
     if (a.alertas_estereotipo.length > 0) stereotypeHits.push(c);
-    if (a.diversidade_em_grupo && a.quantidade_pessoas !== "uma pessoa" && a.quantidade_pessoas !== "sem personagem") {
+    if (
+      a.diversidade_em_grupo &&
+      a.quantidade_pessoas !== "uma pessoa" &&
+      a.quantidade_pessoas !== "sem personagem"
+    ) {
       groupDiversity.push(c);
     }
 
-    if (a.genero === "não identificado" && a.etnia === "não identificado" && a.idade === null) {
+    if (p.genero === "não identificado" && p.perfil_etnico_racial === "não identificado" && p.idade === null) {
       unidentified.push(c);
     }
   }
 
   const avgAge = ageSum.length > 0 ? ageSum.reduce((a, b) => a + b, 0) / ageSum.length : 0;
 
-  // Concentração de características em cursos similares
+  // Concentração de características em cursos similares (protagonista)
   const concentrationAlerts = [];
   const byClassification = {};
   for (const c of analyzed) {
@@ -404,23 +552,25 @@ function computeStats(analyzed) {
 
   for (const [cls, items] of Object.entries(byClassification)) {
     if (items.length < 3) continue;
-    const genderMono = items.every((c) => c.analise.genero === items[0].analise.genero);
-    const ethMono = items.every((c) => c.analise.etnia === items[0].analise.etnia);
+    const genderMono = items.every((c) => c.analise.protagonista.genero === items[0].analise.protagonista.genero);
+    const ethMono = items.every(
+      (c) => c.analise.protagonista.perfil_etnico_racial === items[0].analise.protagonista.perfil_etnico_racial
+    );
 
-    if (genderMono && items[0].analise.genero !== "não identificado") {
+    if (genderMono && items[0].analise.protagonista.genero !== "não identificado") {
       concentrationAlerts.push({
-        tipo: "gênero idêntico na classificação",
+        tipo: "gênero do protagonista idêntico na classificação",
         classificacao: cls,
-        valor: items[0].analise.genero,
+        valor: items[0].analise.protagonista.genero,
         quantidade: items.length,
         cursos: items.map((c) => c.curso),
       });
     }
-    if (ethMono && items[0].analise.etnia !== "não identificado") {
+    if (ethMono && items[0].analise.protagonista.perfil_etnico_racial !== "não identificado") {
       concentrationAlerts.push({
-        tipo: "etnia idêntica na classificação",
+        tipo: "etnia do protagonista idêntica na classificação",
         classificacao: cls,
-        valor: items[0].analise.etnia,
+        valor: items[0].analise.protagonista.perfil_etnico_racial,
         quantidade: items.length,
         cursos: items.map((c) => c.curso),
       });
@@ -430,27 +580,31 @@ function computeStats(analyzed) {
   return {
     total,
     total_com_personagem: totalWithPerson,
-    genero: { counts: genderCounts, percentages: Object.fromEntries(
-      Object.entries(genderCounts).map(([k, v]) => [k, percentage(v, total)])
-    ) },
-    genero_ajustado: {
-      counts: genderAdjusted,
+    protagonista_genero: {
+      counts: protagonistGenderCounts,
       percentages: Object.fromEntries(
-        Object.entries(genderAdjusted).map(([k, v]) => [k, percentage(v, total)])
+        Object.entries(protagonistGenderCounts).map(([k, v]) => [k, percentage(v, total)])
       ),
     },
-    etnia: { counts: ethnicityCounts, percentages: Object.fromEntries(
-      Object.entries(ethnicityCounts).map(([k, v]) => [k, percentage(v, total)])
-    ) },
-    etnia_ajustada: {
-      counts: ethnicityAdjusted,
+    protagonista_etnia: {
+      counts: protagonistEthnicityCounts,
       percentages: Object.fromEntries(
-        Object.entries(ethnicityAdjusted).map(([k, v]) => [k, percentage(v, total)])
+        Object.entries(protagonistEthnicityCounts).map(([k, v]) => [k, percentage(v, total)])
       ),
     },
-    quantidade_pessoas: { counts: peopleCounts, percentages: Object.fromEntries(
-      Object.entries(peopleCounts).map(([k, v]) => [k, percentage(v, total)])
-    ) },
+    quantidade_pessoas: {
+      counts: peopleCounts,
+      percentages: Object.fromEntries(
+        Object.entries(peopleCounts).map(([k, v]) => [k, percentage(v, total)])
+      ),
+    },
+    personagens_secundarios: {
+      total: totalSecondaries,
+      decorativos: decorativeSecondaries,
+      genero: secondaryGenderCounts,
+      etnia: secondaryEthnicityCounts,
+      funcao: secondaryFunctionCounts,
+    },
     idade: {
       media: avgAge ? avgAge.toFixed(1) : null,
       identificados: ageSum.length,
@@ -484,7 +638,7 @@ function computeStats(analyzed) {
 function formatDiff(current, target) {
   const diff = current - target;
   const sign = diff > 0 ? "+" : "";
-  return `${current.toFixed(1)}/${target} (${sign}${diff.toFixed(1)})`;
+  return `${current}/${target} (${sign}${diff})`;
 }
 
 function generateMarkdown(stats) {
@@ -492,46 +646,38 @@ function generateMarkdown(stats) {
   md += `**Total de cursos analisados:** ${stats.total}\n\n`;
 
   md += `## Metas globais (counts determinísticos, soma = 128)\n\n`;
-  md += `### Gênero\n`;
-  md += `- Mulher: ${TARGETS.gender.mulher}\n`;
-  md += `- Homem: ${TARGETS.gender.homem}\n\n`;
-  md += `### Perfil étnico-racial\n`;
-  md += `- Parda: ${TARGETS.ethnicity.parda}\n`;
-  md += `- Negra: ${TARGETS.ethnicity.negra}\n`;
-  md += `- Branca: ${TARGETS.ethnicity.branca}\n`;
-  md += `- Outra (indígena, asiática etc.): ${TARGETS.ethnicity.outra}\n\n`;
-  md += `### Quantidade de pessoas\n`;
+  md += `### Protagonista — gênero\n`;
+  md += `- Mulher: ${TARGETS.protagonistGender.mulher}\n`;
+  md += `- Homem: ${TARGETS.protagonistGender.homem}\n\n`;
+  md += `### Protagonista — perfil étnico-racial\n`;
+  md += `- Parda: ${TARGETS.protagonistEthnicity.parda}\n`;
+  md += `- Negra: ${TARGETS.protagonistEthnicity.negra}\n`;
+  md += `- Branca: ${TARGETS.protagonistEthnicity.branca}\n`;
+  md += `- Outra (indígena, asiática etc.): ${TARGETS.protagonistEthnicity.outra}\n\n`;
+  md += `### Quantidade de pessoas por cena\n`;
   md += `- Uma pessoa: ${TARGETS.peopleCount.uma}\n`;
   md += `- Duas pessoas: ${TARGETS.peopleCount.duas}\n`;
   md += `- Grupo (3+): ${TARGETS.peopleCount.grupo}\n\n`;
 
   md += `## Resultado geral\n\n`;
 
-  md += `### Gênero (classificação bruta)\n\n`;
-  for (const [k, v] of Object.entries(stats.genero.percentages)) {
-    md += `- ${k}: ${v}% (${stats.genero.counts[k]} cursos)\n`;
+  md += `### Protagonista — gênero (counts inteiros)\n\n`;
+  for (const [k, v] of Object.entries(stats.protagonista_genero.percentages)) {
+    const target = TARGETS.protagonistGender[k];
+    const diffLine = target !== undefined ? ` — ${formatDiff(stats.protagonista_genero.counts[k], target)}` : "";
+    md += `- ${k}: ${v}% (${stats.protagonista_genero.counts[k]} cursos)${diffLine}\n`;
   }
   md += `\n`;
 
-  md += `### Gênero ajustado (coletivos mistos contados como 0.5 mulher + 0.5 homem)\n\n`;
-  md += `- mulher: ${stats.genero_ajustado.percentages.mulher}% (${stats.genero_ajustado.counts.mulher.toFixed(1)}) — ${formatDiff(stats.genero_ajustado.counts.mulher, TARGETS.gender.mulher)}\n`;
-  md += `- homem: ${stats.genero_ajustado.percentages.homem}% (${stats.genero_ajustado.counts.homem.toFixed(1)}) — ${formatDiff(stats.genero_ajustado.counts.homem, TARGETS.gender.homem)}\n`;
-  md += `\n`;
-
-  md += `### Perfil étnico-racial ajustado (múltiplas identidades distribuídas igualmente no curso)\n\n`;
-  for (const [k, target] of Object.entries(TARGETS.ethnicity)) {
-    const current = stats.etnia_ajustada.counts[k] || 0;
-    md += `- ${k}: ${stats.etnia_ajustada.percentages[k] || "0.00"}% (${current.toFixed(1)}) — ${formatDiff(current, target)}\n`;
+  md += `### Protagonista — perfil étnico-racial (counts inteiros)\n\n`;
+  for (const [k, v] of Object.entries(stats.protagonista_etnia.percentages)) {
+    const target = TARGETS.protagonistEthnicity[k];
+    const diffLine = target !== undefined ? ` — ${formatDiff(stats.protagonista_etnia.counts[k], target)}` : "";
+    md += `- ${k}: ${v}% (${stats.protagonista_etnia.counts[k]} cursos)${diffLine}\n`;
   }
   md += `\n`;
 
-  md += `### Etnia (classificação bruta)\n\n`;
-  for (const [k, v] of Object.entries(stats.etnia.percentages)) {
-    md += `- ${k}: ${v}% (${stats.etnia.counts[k]} cursos)\n`;
-  }
-  md += `\n`;
-
-  md += `### Quantidade de pessoas\n\n`;
+  md += `### Quantidade de pessoas por cena\n\n`;
   for (const [k, v] of Object.entries(stats.quantidade_pessoas.percentages)) {
     md += `- ${k}: ${v}% (${stats.quantidade_pessoas.counts[k]} cursos)\n`;
   }
@@ -541,6 +687,23 @@ function generateMarkdown(stats) {
   md += `- uma pessoa: ${formatDiff(stats.quantidade_pessoas.counts["uma pessoa"] || 0, TARGETS.peopleCount.uma)}\n`;
   md += `- duas pessoas: ${formatDiff(stats.quantidade_pessoas.counts["duas pessoas"] || 0, TARGETS.peopleCount.duas)}\n`;
   md += `- grupo (3+): ${formatDiff(stats.quantidade_pessoas.counts["grupo (3+)"] || 0, TARGETS.peopleCount.grupo)}\n\n`;
+
+  md += `### Personagens secundários (diversidade complementar, sem meta matemática)\n\n`;
+  md += `- Total de personagens secundários identificados: ${stats.personagens_secundarios.total}\n`;
+  md += `- Secundários com participação apenas decorativa: ${stats.personagens_secundarios.decorativos}\n`;
+  md += `**Gênero dos secundários:**\n`;
+  for (const [k, v] of Object.entries(stats.personagens_secundarios.genero)) {
+    md += `  - ${k}: ${v}\n`;
+  }
+  md += `**Perfil étnico-racial dos secundários:**\n`;
+  for (const [k, v] of Object.entries(stats.personagens_secundarios.etnia)) {
+    md += `  - ${k}: ${v}\n`;
+  }
+  md += `**Funções dos secundários:**\n`;
+  for (const [k, v] of Object.entries(stats.personagens_secundarios.funcao)) {
+    md += `  - ${k}: ${v}\n`;
+  }
+  md += `\n`;
 
   md += `### Idade\n\n`;
   md += `- Média declarada: ${stats.idade.media || "não calculável"} anos\n`;
@@ -601,47 +764,47 @@ function generateMarkdown(stats) {
     stats.alertas_estereotipo.total_ocorrencias +
     stats.concentracao.length;
 
-  const genderWoman = stats.genero_ajustado.counts.mulher;
-  const parda = stats.etnia_ajustada.counts.parda;
-  const negra = stats.etnia_ajustada.counts.negra;
-  const branca = stats.etnia_ajustada.counts.branca;
+  const genderWoman = stats.protagonista_genero.counts.mulher;
+  const parda = stats.protagonista_etnia.counts.parda;
+  const negra = stats.protagonista_etnia.counts.negra;
+  const branca = stats.protagonista_etnia.counts.branca;
   const uma = stats.quantidade_pessoas.counts["uma pessoa"] || 0;
   const duas = stats.quantidade_pessoas.counts["duas pessoas"] || 0;
   const grupo = stats.quantidade_pessoas.counts["grupo (3+)"] || 0;
 
   const adjustments = [];
-  if (genderWoman < TARGETS.gender.mulher) {
-    adjustments.push(`aumentar protagonismo feminino em ${(TARGETS.gender.mulher - genderWoman).toFixed(1)} cursos (atual ${genderWoman.toFixed(1)}, meta ${TARGETS.gender.mulher})`);
+  if (genderWoman < TARGETS.protagonistGender.mulher) {
+    adjustments.push(`aumentar protagonismo feminino em ${TARGETS.protagonistGender.mulher - genderWoman} cursos (atual ${genderWoman}, meta ${TARGETS.protagonistGender.mulher})`);
   }
-  if (genderWoman > TARGETS.gender.mulher) {
-    adjustments.push(`reduzir protagonismo feminino em ${(genderWoman - TARGETS.gender.mulher).toFixed(1)} cursos (atual ${genderWoman.toFixed(1)}, meta ${TARGETS.gender.mulher})`);
+  if (genderWoman > TARGETS.protagonistGender.mulher) {
+    adjustments.push(`reduzir protagonismo feminino em ${genderWoman - TARGETS.protagonistGender.mulher} cursos (atual ${genderWoman}, meta ${TARGETS.protagonistGender.mulher})`);
   }
-  if (parda < TARGETS.ethnicity.parda) {
-    adjustments.push(`aumentar representação parda em ${(TARGETS.ethnicity.parda - parda).toFixed(1)} cursos (atual ${parda.toFixed(1)}, meta ${TARGETS.ethnicity.parda})`);
+  if (parda < TARGETS.protagonistEthnicity.parda) {
+    adjustments.push(`aumentar protagonismo pardo em ${TARGETS.protagonistEthnicity.parda - parda} cursos (atual ${parda}, meta ${TARGETS.protagonistEthnicity.parda})`);
   }
-  if (parda > TARGETS.ethnicity.parda) {
-    adjustments.push(`reduzir representação parda em ${(parda - TARGETS.ethnicity.parda).toFixed(1)} cursos`);
+  if (parda > TARGETS.protagonistEthnicity.parda) {
+    adjustments.push(`reduzir protagonismo pardo em ${parda - TARGETS.protagonistEthnicity.parda} cursos`);
   }
-  if (negra < TARGETS.ethnicity.negra) {
-    adjustments.push(`aumentar representação negra em ${(TARGETS.ethnicity.negra - negra).toFixed(1)} cursos`);
+  if (negra < TARGETS.protagonistEthnicity.negra) {
+    adjustments.push(`aumentar protagonismo negro em ${TARGETS.protagonistEthnicity.negra - negra} cursos`);
   }
-  if (negra > TARGETS.ethnicity.negra) {
-    adjustments.push(`reduzir representação negra em ${(negra - TARGETS.ethnicity.negra).toFixed(1)} cursos (atual ${negra.toFixed(1)}, meta ${TARGETS.ethnicity.negra})`);
+  if (negra > TARGETS.protagonistEthnicity.negra) {
+    adjustments.push(`reduzir protagonismo negro em ${negra - TARGETS.protagonistEthnicity.negra} cursos (atual ${negra}, meta ${TARGETS.protagonistEthnicity.negra})`);
   }
-  if (branca < TARGETS.ethnicity.branca) {
-    adjustments.push(`aumentar representação branca em ${(TARGETS.ethnicity.branca - branca).toFixed(1)} cursos`);
+  if (branca < TARGETS.protagonistEthnicity.branca) {
+    adjustments.push(`aumentar protagonismo branco em ${TARGETS.protagonistEthnicity.branca - branca} cursos`);
   }
-  if (branca > TARGETS.ethnicity.branca) {
-    adjustments.push(`reduzir representação branca em ${(branca - TARGETS.ethnicity.branca).toFixed(1)} cursos (atual ${branca.toFixed(1)}, meta ${TARGETS.ethnicity.branca})`);
+  if (branca > TARGETS.protagonistEthnicity.branca) {
+    adjustments.push(`reduzir protagonismo branco em ${branca - TARGETS.protagonistEthnicity.branca} cursos (atual ${branca}, meta ${TARGETS.protagonistEthnicity.branca})`);
   }
   if (duas < TARGETS.peopleCount.duas) {
-    adjustments.push(`aumentar cenas com duas pessoas em ${(TARGETS.peopleCount.duas - duas).toFixed(1)} cursos (atual ${duas}, meta ${TARGETS.peopleCount.duas})`);
+    adjustments.push(`aumentar cenas com duas pessoas em ${TARGETS.peopleCount.duas - duas} cursos (atual ${duas}, meta ${TARGETS.peopleCount.duas})`);
   }
   if (grupo > TARGETS.peopleCount.grupo) {
-    adjustments.push(`reduzir cenas com grupos grandes em ${(grupo - TARGETS.peopleCount.grupo).toFixed(1)} cursos (atual ${grupo}, meta ${TARGETS.peopleCount.grupo})`);
+    adjustments.push(`reduzir cenas com grupos grandes em ${grupo - TARGETS.peopleCount.grupo} cursos (atual ${grupo}, meta ${TARGETS.peopleCount.grupo})`);
   }
   if (uma > TARGETS.peopleCount.uma) {
-    adjustments.push(`reduzir cenas com uma pessoa em ${(uma - TARGETS.peopleCount.uma).toFixed(1)} cursos (atual ${uma}, meta ${TARGETS.peopleCount.uma})`);
+    adjustments.push(`reduzir cenas com uma pessoa em ${uma - TARGETS.peopleCount.uma} cursos (atual ${uma}, meta ${TARGETS.peopleCount.uma})`);
   }
 
   md += `Registros com problemas críticos: **${criticalIssues}**.\n\n`;
@@ -665,31 +828,76 @@ function generateMarkdown(stats) {
   return md;
 }
 
+function parseArgs() {
+  const args = process.argv.slice(2);
+  let overlay = null;
+  for (const arg of args) {
+    if (arg.startsWith("--overlay=")) {
+      overlay = arg.replace("--overlay=", "").trim();
+    }
+  }
+  return { overlay };
+}
+
+function applyOverlay(courses, overlayPath) {
+  if (!overlayPath) return courses;
+  const fullPath = path.isAbsolute(overlayPath) ? overlayPath : path.join(ROOT, overlayPath);
+  if (!fs.existsSync(fullPath)) {
+    throw new Error(`Arquivo de overlay não encontrado: ${fullPath}`);
+  }
+  const overlayRecords = JSON.parse(fs.readFileSync(fullPath, "utf8"));
+  if (!Array.isArray(overlayRecords)) {
+    throw new Error(`Overlay deve ser um array de registros: ${fullPath}`);
+  }
+  const overlayMap = new Map(overlayRecords.map((r) => [r.course_id, r]));
+
+  return courses.map((c) => {
+    const overlayRecord = overlayMap.get(c.course_id);
+    if (!overlayRecord) return c;
+    return { ...c, ...overlayRecord };
+  });
+}
+
 async function main() {
+  const { overlay } = parseArgs();
+
   console.log("Carregando planilha...");
   const courses = await loadCourses();
   console.log(`Cursos encontrados: ${courses.length}`);
 
+  if (overlay) {
+    console.log(`Aplicando overlay: ${overlay}`);
+  }
+  const mergedCourses = applyOverlay(courses, overlay);
+  const overlayCount = mergedCourses.filter((c, i) => c !== courses[i]).length;
+  if (overlay) {
+    console.log(`Registros substituídos em memória: ${overlayCount}`);
+  }
+
   console.log("Analisando conteúdos...");
-  const analyzed = analyzeCourses(courses);
+  const analyzed = analyzeCourses(mergedCourses);
   const stats = computeStats(analyzed);
 
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
-  const jsonPath = path.join(OUTPUT_DIR, "auditoria-demografica.json");
-  const mdPath = path.join(OUTPUT_DIR, "auditoria-demografica.md");
+  const suffix = overlay ? "-projetada" : "";
+  const jsonPath = path.join(OUTPUT_DIR, `auditoria-demografica${suffix}.json`);
+  const mdPath = path.join(OUTPUT_DIR, `auditoria-demografica${suffix}.md`);
 
   fs.writeFileSync(
     jsonPath,
     JSON.stringify({ stats, cursos: analyzed }, null, 2),
     "utf8"
   );
-  fs.writeFileSync(mdPath, generateMarkdown(stats, analyzed), "utf8");
+  fs.writeFileSync(mdPath, generateMarkdown(stats), "utf8");
 
   console.log("\n================================");
   console.log("AUDITORIA DEMOGRÁFICA CONCLUÍDA");
   console.log("================================");
   console.log(`Cursos analisados: ${stats.total}`);
+  if (overlay) {
+    console.log(`Overlay aplicado: ${overlayCount} registros`);
+  }
   console.log(`Sem informação suficiente: ${stats.nao_identificados.total_ocorrencias}`);
   console.log(`Termos proibidos: ${stats.termos_proibidos.total_ocorrencias}`);
   console.log(`Alertas de estereótipo: ${stats.alertas_estereotipo.total_ocorrencias}`);
@@ -698,7 +906,15 @@ async function main() {
   console.log(`MD:   ${mdPath}`);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  loadCourses,
+  analyzeCourses,
+  TARGETS,
+};
