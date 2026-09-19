@@ -8,8 +8,11 @@
     "generate": "node src/generate.js",
     "generate:all": "node src/generate.js --all",
     "content:audit": "node src/audit-content.js",
+    "content:demographics": "node src/audit-demographics.js",
+    "content:demographics:plan": "node src/plan-demographic-rebalance.js",
     "image:pilot": "node src/generate-ai-background.js",
-    "image:preview": "node src/generate-ai-preview.js"
+    "image:preview": "node src/generate-ai-preview.js",
+    "image:pilot-batch": "node src/generate-ai-pilot.js"
   },
   "keywords": [],
   "author": "",

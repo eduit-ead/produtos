@@ -13,6 +13,7 @@ const ExcelJS = require("exceljs");
 require("dotenv").config();
 
 const OpenAI = require("openai");
+const { estimateCost } = require("./ai-pricing");
 
 const ROOT = path.resolve(__dirname, "..");
 const INPUT_FILE = path.join(ROOT, "input", "cursos.xlsx");
@@ -43,6 +44,16 @@ function parseArgs() {
   }
 
   return { slug, dryRun, force };
+}
+
+function cleanUrl(value = "") {
+  let url = String(value || "").trim();
+  if (!url) return "";
+  const markdownMatch = url.match(/\((https?:\/\/[^)]+)\)/);
+  if (markdownMatch) {
+    url = markdownMatch[1];
+  }
+  return url;
 }
 
 function getValue(row, possibleNames) {
@@ -107,6 +118,11 @@ async function findCourse(slug) {
   const slugCol = col("slug");
   const courseIdCol = col("course_id");
   const cursoCol = col("Curso");
+  const formacaoCol = col("Formação");
+  const modalidadeCol = col("Modalidade");
+  const duracaoCol = col("Duração");
+  const imageCol = col("Image");
+  const descricaoCol = col("descricao_curta");
   const promptCol = col("prompt_imagem");
 
   if (!slugCol) {
@@ -125,6 +141,11 @@ async function findCourse(slug) {
         course_id: String(row.getCell(courseIdCol || slugCol).value || slug).trim(),
         slug: rowSlug,
         curso: String(row.getCell(cursoCol).value || "").trim(),
+        formacao: String(row.getCell(formacaoCol).value || "").trim(),
+        modalidade: String(row.getCell(modalidadeCol).value || "").trim(),
+        duracao: String(row.getCell(duracaoCol).value || "").trim(),
+        imageUrl: cleanUrl(String(row.getCell(imageCol).value || "").trim()),
+        descricao_curta: String(row.getCell(descricaoCol).value || "").trim(),
         prompt: String(row.getCell(promptCol).value || "").trim(),
       };
     }
@@ -137,8 +158,11 @@ function sha256(buffer) {
   return crypto.createHash("sha256").update(buffer).digest("hex");
 }
 
-async function generateImage(course, dryRun) {
+async function generateImage(course, options = {}) {
   const apiKey = process.env.OPENAI_API_KEY;
+  const dryRun = options.dryRun || false;
+  const force = options.force || false;
+  const outputDir = options.outputDir || OUTPUT_DIR;
 
   if (!apiKey) {
     throw new Error("Variável de ambiente OPENAI_API_KEY não configurada.");
@@ -148,12 +172,12 @@ async function generateImage(course, dryRun) {
     throw new Error("Campo 'prompt_imagem' está vazio.");
   }
 
-  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+  fs.mkdirSync(outputDir, { recursive: true });
 
-  const pngPath = path.join(OUTPUT_DIR, `${course.slug}.png`);
-  const jsonPath = path.join(OUTPUT_DIR, `${course.slug}.json`);
+  const pngPath = path.join(outputDir, `${course.slug}-fundo-ia.png`);
+  const jsonPath = path.join(outputDir, `${course.slug}.json`);
 
-  if (fs.existsSync(pngPath) && !dryRun) {
+  if (fs.existsSync(pngPath) && !dryRun && !force) {
     throw new Error(
       `Arquivo já existe: ${pngPath}. Use --force para sobrescrever.`
     );
@@ -192,6 +216,9 @@ async function generateImage(course, dryRun) {
   const buffer = Buffer.from(b64, "base64");
   fs.writeFileSync(pngPath, buffer);
 
+  const usage = response.usage || null;
+  const cost = estimateCost(DEFAULT_MODEL, usage);
+
   const record = {
     course_id: course.course_id,
     slug: course.slug,
@@ -204,7 +231,8 @@ async function generateImage(course, dryRun) {
     data: new Date().toISOString(),
     caminho_arquivo: pngPath,
     hash_sha256: sha256(buffer),
-    uso_api: response.usage || null,
+    uso_api: usage,
+    custo_estimado_usd: cost,
     dry_run: false,
   };
 
@@ -239,7 +267,7 @@ async function main() {
 
   if (dryRun) {
     console.log("\n[DRY-RUN] Validação OK. Nenhuma chamada à API será feita.");
-    const record = await generateImage(course, true);
+    const record = await generateImage(course, { dryRun: true });
     console.log("\nRegistro simulado:");
     console.log(JSON.stringify(record, null, 2));
     console.log("\nNenhuma imagem foi gerada.");
@@ -251,7 +279,7 @@ async function main() {
   }
 
   try {
-    const record = await generateImage(course, false);
+    const record = await generateImage(course, { force });
     console.log("\n================================");
     console.log("IMAGEM GERADA");
     console.log("================================");
@@ -265,7 +293,19 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  findCourse,
+  generateImage,
+  sha256,
+  DEFAULT_MODEL,
+  DEFAULT_QUALITY,
+  DEFAULT_SIZE,
+  DEFAULT_FORMAT,
+};

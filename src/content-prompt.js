@@ -23,13 +23,58 @@ ${courseList}
 
 ## Público-alvo das futuras imagens
 
-- Brasileiros entre 20 e 35 anos.
-- Aproximadamente 65% dos personagens principais devem ser femininos no conjunto dos cursos, sem aplicação rígida imagem por imagem.
-- Diversidade natural de tons de pele, traços e texturas de cabelo.
-- Roupas contemporâneas e adequadas à atividade representada.
-- Ambientes modernos, realistas e acessíveis, com contexto visual brasileiro.
-- Sem sexualização, infantilização ou estereótipos ligados a gênero, classe social ou profissão.
-- Evitar tanto precariedade quanto luxo exagerado.
+- Público brasileiro prioritário entre 20 e 35 anos.
+- Maioria feminina, aproximadamente 60% dos personagens principais no conjunto completo dos cursos, sem aplicação rígida em cada imagem.
+- Predominância de pessoas de classe C, representadas de forma natural.
+- Ambientes brasileiros contemporâneos, reais e acessíveis.
+- Evitar tanto aparência de luxo quanto estereótipos de pobreza.
+- Roupas comuns, profissionais ou casuais, coerentes com a atividade.
+- Diversidade deve parecer natural, não publicitária ou artificial.
+- Sem sexualização, infantilização ou estereótipos ligados a gênero, classe social, etnia, corpo ou profissão.
+
+## Distribuição demográfica global desejada
+
+A distribuição deve ser avaliada no catálogo completo de 128 cursos, e não isoladamente em cada lote.
+
+### Gênero dos personagens principais
+
+- Aproximadamente 60% mulheres.
+- Aproximadamente 40% homens.
+
+### Características étnico-raciais declaradas
+
+Use termos respeitosos:
+
+- pessoa parda;
+- pessoa negra;
+- pessoa branca;
+- pessoa de traços indígenas;
+- pessoa de ascendência asiática.
+
+Distribuição alvo:
+
+- Aproximadamente 45% pessoas pardas.
+- Aproximadamente 25% pessoas negras.
+- Aproximadamente 25% pessoas brancas.
+- Aproximadamente 5% pessoas indígenas, asiáticas ou outras representações brasileiras.
+
+Não utilize o termo "mulato" nos prompts ou em qualquer campo.
+
+### Quantidade de pessoas nas cenas
+
+- Aproximadamente 70% das cenas com uma pessoa.
+- Aproximadamente 25% das cenas com duas pessoas.
+- Aproximadamente 5% das cenas com pequenos grupos.
+
+Em cenas com duas ou mais pessoas, priorizar combinações naturais de diferentes gêneros, tons de pele e características físicas.
+
+## Regras demográficas e de representação
+
+- Não associe curso, profissão, comportamento, condição econômica ou capacidade intelectual a gênero, cor ou etnia.
+- A escolha demográfica não pode alterar a atividade central do curso nem prejudicar a composição.
+- A região inferior esquerda do card deve continuar livre para logo, nome do curso e informações acadêmicas.
+- Descreva características visuais concretas quando necessário, mas não presuma identidade étnica a partir da aparência.
+- A representação deve refletir o Brasil real: diverso, sem exotização nem uniformização.
 
 ## Campos de origem fornecidos no JSON
 
@@ -87,13 +132,16 @@ Descrição do personagem principal, contendo:
 
 - papel profissional ou acadêmico;
 - idade aparente entre 20 e 35 anos;
-- gênero;
-- características visuais naturais;
+- gênero (mulher ou homem, respeitando a distribuição global de 60/40);
+- características visuais concretas, como tom de pele e cabelo;
+- identificação étnico-racial respeitosa quando pertinente;
 - representação brasileira diversa.
 
-Descreva características visuais concretas, como tom de pele e cabelo. Não presuma identidade étnica a partir da aparência.
+Use os termos definidos na seção de distribuição demográfica. Não presuma identidade étnica a partir da aparência e nunca use o termo "mulato".
 
-Não usar estereótipos. Quando uma pessoa não for necessária, use: \`sem personagem principal\`.
+Quando uma pessoa não for necessária para representar corretamente o curso, use: \`sem personagem principal\`.
+
+Em cenas com duas ou mais pessoas, descreva brevemente cada uma e indique a combinação natural de diversidade.
 
 ### visual_ambiente
 
@@ -198,10 +246,15 @@ O arquivo deve conter um array JSON com objetos no seguinte formato:
 - Não inclua dados acadêmicos (modalidade, formação, duração) dentro dos campos visuais.
 - A cena deve girar em torno da atividade central do curso. Evite representar como principal uma tarefa periférica, burocrática ou genérica que possa ser confundida com qualquer outra formação.
 - Evite estereótipos visuais ligados a gênero, idade, classe social, etnia, corpo ou profissão.
+- Não associe curso, profissão, comportamento, condição econômica ou capacidade intelectual a gênero, cor ou etnia.
 - Quando houver cursos semelhantes na grade, enfatize no tema, ambiente, objetos e atividade o elemento que diferencia um do outro.
 - Antes de finalizar, verifique se a cena proposta poderia ser confundida com a de outro curso. Se sim, ajuste o tema, ambiente, objetos ou atividade para torná-la específica.
 - Não faça promessas médicas, terapêuticas, clínicas ou de resultado de tratamento, especialmente em cursos de saúde e bem-estar. Evite termos como "cura", "tratar", "diagnosticar" ou "resolver" no sentido médico.
+- Mantenha a representação dentro do contexto de classe C brasileira, evitando aparência de luxo ou estereótipos de pobreza.
+- A distribuição demográfica deve ser considerada no catálogo completo, e não imposta de forma idêntica em cada curso.
+- Nunca use o termo "mulato" nos prompts ou campos visuais.
 `;
+
 }
 
 module.exports = {

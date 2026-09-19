@@ -15,6 +15,7 @@ const {
   prepareBackgroundBuffer,
   TEMPLATE,
 } = require("./render-card");
+const { estimateCost } = require("./ai-pricing");
 
 const ROOT = path.resolve(__dirname, "..");
 const INPUT_FILE = path.join(ROOT, "input", "cursos.xlsx");
@@ -335,6 +336,10 @@ function generateHtml(data) {
       <tr><th>Modelo de imagem</th><td>${escapeHtml(data.modelo)}</td></tr>
       <tr><th>Qualidade</th><td>${escapeHtml(data.qualidade)}</td></tr>
       <tr><th>Tamanho</th><td>${escapeHtml(data.tamanho)}</td></tr>
+      <tr><th>Tokens de texto (input)</th><td>${data.uso_api?.input_tokens_details?.text_tokens ?? data.uso_api?.input_tokens ?? "—"}</td></tr>
+      <tr><th>Tokens de imagem (output)</th><td>${data.uso_api?.output_tokens_details?.image_tokens ?? data.uso_api?.output_tokens ?? "—"}</td></tr>
+      <tr><th>Custo estimado</th><td>${data.custo_estimado_usd !== null ? `$${data.custo_estimado_usd.totalCostUsd.toFixed(4)} USD` : "a confirmar"}</td></tr>
+      <tr><th>Tempo de geração</th><td>${data.tempo_geracao_ms !== null ? `${data.tempo_geracao_ms} ms` : "—"}</td></tr>
       <tr><th>Descrição curta</th><td>${escapeHtml(data.descricao_curta)}</td></tr>
     </table>
 
@@ -457,6 +462,19 @@ async function main() {
   console.log("Copiando card atual de referência...");
   fs.copyFileSync(currentCardPath, path.join(previewDir, "card-atual-ref.png"));
 
+  const iaJsonPath = path.join(ROOT, "output", "ai-backgrounds", "openai", `${slug}.json`);
+  let iaRecord = null;
+  if (fs.existsSync(iaJsonPath)) {
+    try {
+      iaRecord = JSON.parse(fs.readFileSync(iaJsonPath, "utf8"));
+    } catch {
+      // ignore
+    }
+  }
+
+  const cost = iaRecord?.custo_estimado_usd ||
+    (iaRecord?.uso_api ? estimateCost(iaRecord.modelo || "gpt-image-2.5-flare", iaRecord.uso_api) : null);
+
   const dadosJson = {
     curso: course.curso,
     course_id: course.course_id,
@@ -466,13 +484,16 @@ async function main() {
     duracao: course.duracao,
     descricao_curta: course.descricao_curta,
     prompt_imagem: course.prompt_imagem,
-    modelo: "gpt-image-2.5-flare",
-    qualidade: "medium",
-    tamanho: "1024x1024",
+    modelo: iaRecord?.modelo || "gpt-image-2.5-flare",
+    qualidade: iaRecord?.qualidade || "medium",
+    tamanho: iaRecord?.tamanho || "1024x1024",
     fundoAtualFile: currentBackgroundFile,
     fundoIaFile: aiBackgroundFile,
     cardAtualFile: currentCardFile,
     cardIaFile: iaCardFile,
+    uso_api: iaRecord?.uso_api || null,
+    custo_estimado_usd: cost,
+    tempo_geracao_ms: iaRecord?.tempo_geracao_ms || null,
   };
 
   fs.writeFileSync(
