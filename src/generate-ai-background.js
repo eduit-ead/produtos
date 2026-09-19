@@ -182,7 +182,6 @@ async function generateImage(course, dryRun) {
     n: 1,
     size: DEFAULT_SIZE,
     quality: DEFAULT_QUALITY,
-    response_format: "b64_json",
   });
 
   const b64 = response.data?.[0]?.b64_json;
