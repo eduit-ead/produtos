@@ -196,6 +196,11 @@ O arquivo deve conter um array JSON com objetos no seguinte formato:
 - O conjunto dos 128 cursos deve respeitar a distribuição de diversidade e gênero descrita, sem aplicar regras idênticas a cada curso individualmente.
 - Varie as aberturas das descrições curtas com construções naturais, preferencialmente no imperativo. Dentro de cada lote, no máximo duas podem usar a mesma construção inicial.
 - Não inclua dados acadêmicos (modalidade, formação, duração) dentro dos campos visuais.
+- A cena deve girar em torno da atividade central do curso. Evite representar como principal uma tarefa periférica, burocrática ou genérica que possa ser confundida com qualquer outra formação.
+- Evite estereótipos visuais ligados a gênero, idade, classe social, etnia, corpo ou profissão.
+- Quando houver cursos semelhantes na grade, enfatize no tema, ambiente, objetos e atividade o elemento que diferencia um do outro.
+- Antes de finalizar, verifique se a cena proposta poderia ser confundida com a de outro curso. Se sim, ajuste o tema, ambiente, objetos ou atividade para torná-la específica.
+- Não faça promessas médicas, terapêuticas, clínicas ou de resultado de tratamento, especialmente em cursos de saúde e bem-estar. Evite termos como "cura", "tratar", "diagnosticar" ou "resolver" no sentido médico.
 `;
 }
 
