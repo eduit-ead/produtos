@@ -103,6 +103,20 @@ const FORBIDDEN_PROMPT_TERMS = [
   "universidade",
 ];
 
+// Única exceção para "marca": a expressão de restrição "marca-d'água".
+// A palavra isolada "marca" continua proibida em qualquer outro contexto.
+const WATERMARK_PATTERN = /marca[\s-]*d[''`´’][aá]gua/gi;
+
+function findForbiddenPromptTerms(prompt) {
+  const lower = prompt.toLowerCase();
+  const withoutWatermark = lower.replace(WATERMARK_PATTERN, "");
+
+  return FORBIDDEN_PROMPT_TERMS.filter((term) => {
+    const haystack = term === "marca" ? withoutWatermark : lower;
+    return haystack.includes(term.toLowerCase());
+  });
+}
+
 function createEmptyRecord(courseId = "") {
   return {
     course_id: courseId,
@@ -185,10 +199,7 @@ function validateRecord(record, options = {}) {
   }
 
   if (isNonEmptyString(record.prompt_imagem)) {
-    const prompt = record.prompt_imagem.toLowerCase();
-    const found = FORBIDDEN_PROMPT_TERMS.filter((term) =>
-      prompt.includes(term.toLowerCase())
-    );
+    const found = findForbiddenPromptTerms(record.prompt_imagem);
     if (found.length > 0) {
       errors.push(
         `prompt_imagem contém termos não permitidos: ${found.join(", ")}.`
@@ -254,6 +265,7 @@ module.exports = {
   SOURCE_FIELDS,
   VALIDATION,
   FORBIDDEN_PROMPT_TERMS,
+  findForbiddenPromptTerms,
   createEmptyRecord,
   validateRecord,
   validateBatch,
