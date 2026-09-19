@@ -9,6 +9,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const XLSX = require("xlsx");
 const { validateBatch, validateRecord, FORBIDDEN_PROMPT_TERMS } = require("./content-schema");
 
 const ROOT = path.resolve(__dirname, "..");
@@ -166,6 +167,31 @@ function findSimilarPairs(records, field, threshold, maxPairs) {
           score: Number(score.toFixed(3)),
           snippetA: a.slice(0, 80),
           snippetB: b.slice(0, 80),
+          origin: "lote",
+        });
+      }
+    }
+  }
+  return pairs.sort((x, y) => y.score - x.score).slice(0, maxPairs);
+}
+
+function findSimilarPairsCross(recordsA, recordsB, field, threshold, maxPairs) {
+  const pairs = [];
+  for (const aRecord of recordsA) {
+    for (const bRecord of recordsB) {
+      const a = aRecord[field] || "";
+      const b = bRecord[field] || "";
+      if (!a || !b) continue;
+      const score = similarityScore(a, b);
+      if (score >= threshold) {
+        pairs.push({
+          a: aRecord.course_id,
+          b: bRecord.course_id,
+          field,
+          score: Number(score.toFixed(3)),
+          snippetA: a.slice(0, 80),
+          snippetB: b.slice(0, 80),
+          origin: "planilha",
         });
       }
     }
@@ -300,7 +326,7 @@ function isEmptyRecord(record) {
 // AUDITORIA
 // =============================================================================
 
-function audit(records) {
+function audit(records, referenceRecords = []) {
   const errors = [];
   const warnings = [];
   const infos = [];
@@ -311,6 +337,7 @@ function audit(records) {
   }
 
   infos.push({ level: "info", message: `Total de registros no lote: ${records.length}.` });
+  infos.push({ level: "info", message: `Registros de referência encontrados na planilha: ${referenceRecords.length}.` });
 
   // Validação via schema
   const schemaErrors = validateBatch(records, [], { requireRascunho: true });
@@ -420,7 +447,13 @@ function audit(records) {
     });
   }
 
-  // Colisões visuais em campos individuais
+  function visualSignature(record) {
+    return [record.visual_tema, record.visual_ambiente, record.visual_objetos, record.visual_atividade]
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  // Colisões visuais em campos individuais (internas ao lote)
   const individualVisualPairs = [];
   const visualFields = ["visual_personagem", "visual_ambiente", "visual_objetos", "visual_atividade"];
   for (const field of visualFields) {
@@ -437,12 +470,7 @@ function audit(records) {
     }
   }
 
-  // Colisão na assinatura visual combinada
-  function visualSignature(record) {
-    return [record.visual_tema, record.visual_ambiente, record.visual_objetos, record.visual_atividade]
-      .filter(Boolean)
-      .join(" ");
-  }
+  // Colisão na assinatura visual combinada (interna ao lote)
   const signatureVisualPairs = findSimilarPairs(
     records.map((r) => ({ ...r, _signature: visualSignature(r) })),
     "_signature",
@@ -459,7 +487,45 @@ function audit(records) {
     }
   }
 
-  const topVisualPairs = [...individualVisualPairs, ...signatureVisualPairs]
+  // Comparações contra a planilha de referência
+  const crossVisualPairs = [];
+  if (referenceRecords.length > 0) {
+    const lotWithSignature = records.map((r) => ({ ...r, _signature: visualSignature(r) }));
+    const refWithSignature = referenceRecords.map((r) => ({ ...r, _signature: visualSignature(r) }));
+    const crossFields = ["descricao_curta", "visual_tema", "visual_personagem", "visual_ambiente", "visual_atividade"];
+    for (const field of crossFields) {
+      const pairs = findSimilarPairsCross(records, referenceRecords, field, LIMITS.visualIndividualWarning, 100);
+      for (const p of pairs) {
+        crossVisualPairs.push(p);
+        const level = p.score >= LIMITS.visualIndividualError ? "erro" : "aviso";
+        const msg = `Colisão ${level === "erro" ? "forte" : "moderada"} entre lote "${p.a}" e planilha "${p.b}" no campo ${p.field} (score ${p.score}).`;
+        if (level === "erro") {
+          errors.push({ level, message: msg });
+        } else {
+          warnings.push({ level, message: msg });
+        }
+      }
+    }
+    const sigPairs = findSimilarPairsCross(
+      lotWithSignature,
+      refWithSignature,
+      "_signature",
+      LIMITS.visualSignatureWarning,
+      100
+    ).map((p) => ({ ...p, field: "assinatura_visual" }));
+    for (const p of sigPairs) {
+      crossVisualPairs.push(p);
+      const level = p.score >= LIMITS.visualSignatureError ? "erro" : "aviso";
+      const msg = `Colisão ${level === "erro" ? "forte" : "moderada"} entre lote "${p.a}" e planilha "${p.b}" na assinatura visual combinada (score ${p.score}).`;
+      if (level === "erro") {
+        errors.push({ level, message: msg });
+      } else {
+        warnings.push({ level, message: msg });
+      }
+    }
+  }
+
+  const topVisualPairs = [...individualVisualPairs, ...signatureVisualPairs, ...crossVisualPairs]
     .sort((a, b) => b.score - a.score)
     .slice(0, LIMITS.maxVisualSimilarityPairs);
 
@@ -535,12 +601,25 @@ function audit(records) {
     });
   }
 
+  // Estatísticas de comparação
+  const n = records.length;
+  const m = referenceRecords.length;
+  const internalPairs = n >= 2 ? (n * (n - 1)) / 2 : 0;
+  const crossPairs = n * m;
+  const internalComparisons = internalPairs * (visualFields.length + 1); // campos + assinatura
+  const crossComparisons = crossPairs * (visualFields.length + 1);
+  infos.push({ level: "info", message: `Total de comparações internas ao lote: ${internalComparisons}.` });
+  infos.push({ level: "info", message: `Total de comparações contra a planilha: ${crossComparisons}.` });
+
   const ok = errors.length === 0;
 
   return {
     ok,
     summary: {
       total: records.length,
+      referenceTotal: referenceRecords.length,
+      internalComparisons,
+      crossComparisons,
       errors: errors.length,
       warnings: warnings.length,
       infos: infos.length,
@@ -573,9 +652,18 @@ function generateMarkdown(audit, inputPath) {
   md += `**Data:** ${new Date().toISOString()}\n\n`;
   md += `## Resumo\n\n`;
   md += `- Total de registros: ${summary.total}\n`;
+  if (summary.referenceTotal !== undefined) {
+    md += `- Registros de referência na planilha: ${summary.referenceTotal}\n`;
+  }
   md += `- Erros: ${summary.errors}\n`;
   md += `- Avisos: ${summary.warnings}\n`;
   md += `- Informações: ${summary.infos}\n`;
+  if (summary.internalComparisons !== undefined) {
+    md += `- Comparações internas ao lote: ${summary.internalComparisons}\n`;
+  }
+  if (summary.crossComparisons !== undefined) {
+    md += `- Comparações contra a planilha: ${summary.crossComparisons}\n`;
+  }
   md += `- Pode ser importado: ${summary.canImport ? "Sim" : "Não"}\n\n`;
 
   md += `## Erros (${errors.length})\n\n`;
@@ -648,7 +736,8 @@ function generateMarkdown(audit, inputPath) {
     md += "Nenhum par com similaridade visual acima do limite.\n\n";
   } else {
     for (const p of details.topVisualSimilarities) {
-      md += `- **${p.a}** ↔ **${p.b}** | campo: \`${p.field}\` | score: ${p.score}\n`;
+      const originLabel = p.origin === "planilha" ? "(lote × planilha)" : "(dentro do lote)";
+      md += `- **${p.a}** ↔ **${p.b}** | campo: \`${p.field}\` | score: ${p.score} ${originLabel}\n`;
       md += `  - A: ${p.snippetA}...\n`;
       md += `  - B: ${p.snippetB}...\n`;
     }
@@ -681,19 +770,45 @@ function generateMarkdown(audit, inputPath) {
 function parseArgs() {
   const args = process.argv.slice(2);
   let file = null;
+  let against = null;
   for (const arg of args) {
     if (arg.startsWith("--file=")) {
       file = arg.replace("--file=", "");
     }
+    if (arg.startsWith("--against=")) {
+      against = arg.replace("--against=", "");
+    }
   }
-  return { file };
+  return { file, against };
+}
+
+function loadReferenceRecords(againstPath) {
+  const fullPath = path.isAbsolute(againstPath) ? againstPath : path.join(ROOT, againstPath);
+  if (!fs.existsSync(fullPath)) {
+    console.error(`Arquivo de referência não encontrado: ${fullPath}`);
+    process.exit(1);
+  }
+  const workbook = XLSX.readFile(fullPath);
+  const sheet = workbook.Sheets["Graduação"];
+  if (!sheet) {
+    console.error('Aba "Graduação" não encontrada na planilha de referência.');
+    process.exit(1);
+  }
+  const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+  return rows.filter((r) => {
+    // Considera como referência apenas cursos com conteúdo já preenchido
+    const hasContent =
+      r.conteudo_status && r.conteudo_status.toString().trim() !== "" &&
+      r.descricao_curta && r.descricao_curta.toString().trim() !== "";
+    return hasContent;
+  });
 }
 
 async function main() {
-  const { file } = parseArgs();
+  const { file, against } = parseArgs();
 
   if (!file) {
-    console.error("Uso: node src/audit-content.js --file=output/content/batch-XXX-output.json");
+    console.error("Uso: node src/audit-content.js --file=output/content/batch-XXX-output.json [--against=input/cursos.xlsx]");
     process.exit(1);
   }
 
@@ -712,7 +827,14 @@ async function main() {
     process.exit(1);
   }
 
-  const result = audit(records);
+  let referenceRecords = [];
+  if (against) {
+    const allReference = loadReferenceRecords(against);
+    const lotIds = new Set(records.map((r) => r.course_id).filter(Boolean));
+    referenceRecords = allReference.filter((r) => !lotIds.has(r.course_id));
+  }
+
+  const result = audit(records, referenceRecords);
 
   const rawName = path.basename(inputPath, ".json");
   const baseName = rawName.endsWith("-output") ? rawName.slice(0, -"-output".length) : rawName;
