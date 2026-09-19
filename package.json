@@ -6,7 +6,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "generate": "node src/generate.js",
-    "generate:all": "node src/generate.js --all"
+    "generate:all": "node src/generate.js --all",
+    "content:audit": "node src/audit-content.js"
   },
   "keywords": [],
   "author": "",
