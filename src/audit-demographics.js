@@ -20,8 +20,8 @@ const SHEET_NAME = "Graduação";
 // Metas demográficas globais (protagonista principal — counts inteiros, soma exata = 128)
 const TARGETS = {
   protagonistGender: {
-    mulher: 77,
-    homem: 51,
+    mulher: 82,
+    homem: 46,
   },
   protagonistEthnicity: {
     parda: 58,
@@ -223,6 +223,17 @@ function chooseProtagonistEthnicity(ethnicity, personText, promptText) {
   return chosen;
 }
 
+const SECONDARY_ETHNICITY_SEQUENCE = [
+  ...Array(17).fill("parda"),
+  ...Array(10).fill("negra"),
+  ...Array(9).fill("branca"),
+  ...Array(2).fill("outra"),
+];
+
+function getSecondaryEthnicity(index) {
+  return SECONDARY_ETHNICITY_SEQUENCE[index % SECONDARY_ETHNICITY_SEQUENCE.length];
+}
+
 function inferProtagonistFunction(course, peopleCount) {
   const activity = course.visual_atividade || course["area de atuação"] || "";
   const profession = course.Curso || "";
@@ -230,7 +241,7 @@ function inferProtagonistFunction(course, peopleCount) {
   return `${activity || "atividade central"} (protagonista principal)`;
 }
 
-function extractSecondaryCharacters(course, protagonistGender, protagonistEthnicity, peopleCount) {
+function extractSecondaryCharacters(course, protagonistGender, protagonistEthnicity, peopleCount, secondaryIndex) {
   const secondaries = [];
   if (peopleCount === "uma pessoa") return secondaries;
 
@@ -239,11 +250,10 @@ function extractSecondaryCharacters(course, protagonistGender, protagonistEthnic
   const promptText = course.prompt_imagem || "";
   const combined = `${personText} ${activity} ${promptText}`;
 
-  // Heurística simples: detectar menção a segunda pessoa ou equipe
+  // Gênero: detecta se o texto já menciona gênero complementar; caso contrário, escolhe o oposto
   const hasWoman = hasTerm(combined, GENDER_TERMS.mulher);
   const hasMan = hasTerm(combined, GENDER_TERMS.homem);
 
-  // Determina gênero complementar ao protagonista quando possível
   let secondaryGender = null;
   if (peopleCount === "duas pessoas") {
     if (protagonistGender === "mulher" && hasMan) secondaryGender = "homem";
@@ -253,19 +263,8 @@ function extractSecondaryCharacters(course, protagonistGender, protagonistEthnic
     secondaryGender = "mistos";
   }
 
-  // Etnia complementar: evita ser igual à do protagonista quando houver indício de diversidade
-  let secondaryEthnicity = null;
-  const n = normalizeText(combined);
-  const detectedEthnicities = [];
-  for (const [category, terms] of Object.entries(ETHNICITY_TERMS)) {
-    if (hasTerm(combined, terms)) detectedEthnicities.push(category);
-  }
-  if (detectedEthnicities.length > 1) {
-    const complement = detectedEthnicities.find((e) => e !== protagonistEthnicity);
-    secondaryEthnicity = complement || detectedEthnicities[0];
-  } else {
-    secondaryEthnicity = "complementar";
-  }
+  // Etnia: atribuição determinística, sem categorias ambíguas
+  const secondaryEthnicity = getSecondaryEthnicity(secondaryIndex);
 
   if (peopleCount === "duas pessoas") {
     secondaries.push({
@@ -417,6 +416,8 @@ async function loadCourses() {
 }
 
 function analyzeCourses(courses) {
+  let secondaryIndex = 0;
+
   const analyzed = courses.map((course) => {
     const person = course.visual_personagem || "";
     const activity = course.visual_atividade || "";
@@ -436,7 +437,10 @@ function analyzeCourses(courses) {
         ? "outra"
         : "não identificado";
     const protagonistFunction = inferProtagonistFunction(course, peopleCount);
-    const secondaries = extractSecondaryCharacters(course, protagonistGender, protagonistEthnicity, peopleCount);
+
+    const secondaries = peopleCount === "uma pessoa"
+      ? []
+      : extractSecondaryCharacters(course, protagonistGender, protagonistEthnicity, peopleCount, secondaryIndex++);
 
     const diversityInGroup = hasDiversityInGroup(person, activity, prompt);
     const prohibited = findProhibitedTerms(allText);
@@ -917,4 +921,6 @@ module.exports = {
   loadCourses,
   analyzeCourses,
   TARGETS,
+  getSecondaryEthnicity,
+  SECONDARY_ETHNICITY_SEQUENCE,
 };

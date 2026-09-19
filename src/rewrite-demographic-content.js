@@ -11,7 +11,7 @@ const fs = require("fs");
 const path = require("path");
 const ExcelJS = require("exceljs");
 const { OUTPUT_FIELDS } = require("./content-schema");
-const { loadCourses, analyzeCourses, TARGETS } = require("./audit-demographics");
+const { loadCourses, analyzeCourses, TARGETS, getSecondaryEthnicity } = require("./audit-demographics");
 
 const ROOT = path.resolve(__dirname, "..");
 const INPUT_FILE = path.join(ROOT, "input", "cursos.xlsx");
@@ -233,18 +233,9 @@ function extractAge(text) {
   return m ? parseInt(m[1], 10) : 28;
 }
 
-function describeSecondary(protagonistGender, protagonistEthnicity, activity) {
-  const gender = complementaryGender(protagonistGender);
-  const ethnicity = complementaryEthnicity(protagonistEthnicity);
-  const genderNoun = gender === "mulher" ? "mulher" : "homem";
-  const ethnicAdj = ethnicity === "parda" ? "parda" : ethnicity === "negra" ? "negra" : "branca";
-  return `${genderNoun} de pele ${ethnicAdj}, cerca de 30 anos, participa da atividade como segunda pessoa`;
-}
-
-function addSecondPerson(record, proposta) {
+function addSecondPerson(record, proposta, secondaryEthnicity) {
   const pg = proposta.genero;
-  const pe = proposta.etnia.replace(" (indígena/asiática)", "");
-  const secondaryDesc = describeSecondaryShort(pg, pe);
+  const secondaryDesc = describeSecondaryShort(pg, secondaryEthnicity);
 
   let person = record.visual_personagem || "";
   person = person.replace(/\.$/, "");
@@ -270,10 +261,9 @@ function addSecondPerson(record, proposta) {
   record.visual_evitar = evitar;
 }
 
-function reduceGroupToTwo(record, proposta) {
+function reduceGroupToTwo(record, proposta, secondaryEthnicity) {
   const pg = proposta.genero;
-  const pe = proposta.etnia.replace(" (indígena/asiática)", "");
-  const secondaryDesc = describeSecondaryShort(pg, pe);
+  const secondaryDesc = describeSecondaryShort(pg, secondaryEthnicity);
 
   // Preserva o visual_personagem original, removendo sinais de grupo e ajustando para duas pessoas
   let person = record.visual_personagem || "";
@@ -308,22 +298,21 @@ function reduceGroupToTwo(record, proposta) {
   record.visual_evitar = evitar;
 }
 
-function describeSecondaryShort(protagonistGender, protagonistEthnicity) {
+function describeSecondaryShort(protagonistGender, secondaryEthnicity) {
   const gender = complementaryGender(protagonistGender);
-  const ethnicity = complementaryEthnicity(protagonistEthnicity);
   const genderNoun = gender === "mulher" ? "mulher" : "homem";
-  const ethnicAdj = ethnicity === "parda" ? "parda" : ethnicity === "negra" ? "negra" : "branca";
+  const ethnicAdj = secondaryEthnicity === "parda" ? "parda" : secondaryEthnicity === "negra" ? "negra" : secondaryEthnicity === "outra" ? "traços indígenas" : "branca";
   return `${genderNoun} de pele ${ethnicAdj}`;
 }
 
-function applyPeopleCountChange(record, proposta) {
+function applyPeopleCountChange(record, proposta, secondaryEthnicity) {
   const from = record.analise ? record.analise.quantidade_pessoas : "uma pessoa";
   const to = proposta.quantidade_pessoas;
 
   if (from === "uma pessoa" && to === "duas pessoas") {
-    addSecondPerson(record, proposta);
+    addSecondPerson(record, proposta, secondaryEthnicity);
   } else if (from === "grupo (3+)" && to === "duas pessoas") {
-    reduceGroupToTwo(record, proposta);
+    reduceGroupToTwo(record, proposta, secondaryEthnicity);
   }
 }
 
@@ -366,7 +355,7 @@ function rebuildPrompt(record) {
   record.prompt_imagem = prompt;
 }
 
-function applyActions(record, acoes, proposta) {
+function applyActions(record, acoes, proposta, secondaryEthnicity) {
   // Anexa análise atual para referência
   if (!record.analise) {
     record.analise = {
@@ -397,7 +386,7 @@ function applyActions(record, acoes, proposta) {
       const toEthnicity = acao.split(" → ")[1].replace(" (indígena/asiática)", "");
       record.analise.protagonista.perfil_etnico_racial = toEthnicity;
     } else if (acao.includes("→ duas pessoas") || acao.includes("→ uma pessoa") || acao.includes("→ grupo")) {
-      applyPeopleCountChange(record, proposta);
+      applyPeopleCountChange(record, proposta, secondaryEthnicity);
       const toPeople = acao.split(" → ")[1];
       record.analise.quantidade_pessoas = toPeople;
     }
@@ -440,7 +429,7 @@ async function loadAllCourses() {
   return courses;
 }
 
-function buildCatalog(allCourses, rewrittenMap, auditAnalyzed) {
+function buildCatalog(allCourses, rewrittenMap, auditAnalyzed, secondaryEthMap) {
   return allCourses.map((course) => {
     const analyzed = auditAnalyzed.find((c) => c.course_id === course.course_id);
     const rewritten = rewrittenMap.get(course.course_id);
@@ -451,7 +440,12 @@ function buildCatalog(allCourses, rewrittenMap, auditAnalyzed) {
     const protagonist = source.analise.protagonista;
     const quantidade = source.analise.quantidade_pessoas;
     const secondaries = isRewritten
-      ? extractSecondariesFromRecord(rewritten, protagonist.genero, protagonist.perfil_etnico_racial, quantidade)
+      ? extractSecondariesFromRecord(
+          rewritten,
+          protagonist.genero,
+          quantidade,
+          quantidade !== "uma pessoa" ? secondaryEthMap.get(course.course_id) : null
+        )
       : (analyzed.analise.personagens_secundarios || []);
 
     return {
@@ -471,12 +465,13 @@ function buildCatalog(allCourses, rewrittenMap, auditAnalyzed) {
   });
 }
 
-function extractSecondariesFromRecord(record, protagonistGender, protagonistEthnicity, peopleCount) {
+function extractSecondariesFromRecord(record, protagonistGender, peopleCount, secondaryEthnicity) {
   if (peopleCount === "uma pessoa") return [];
+  if (!secondaryEthnicity) return [];
 
   const activity = record.visual_atividade || "";
   const gender = complementaryGender(protagonistGender);
-  const ethnicity = complementaryEthnicity(protagonistEthnicity);
+  const ethnicity = secondaryEthnicity;
   const funcao = peopleCount === "duas pessoas" ? `${activity} (segundo personagem)` : `${activity} (equipe de apoio)`;
 
   return [
@@ -491,6 +486,30 @@ function extractSecondariesFromRecord(record, protagonistGender, protagonistEthn
 
 function inferFunction(course) {
   return course.visual_atividade || `atividade principal de ${course.Curso}`;
+}
+
+function buildSecondaryEthnicityMap(allCourses, planMap, auditAnalyzed) {
+  const analyzedMap = new Map(auditAnalyzed.map((c) => [c.course_id, c.analise]));
+  const withSecondaries = [];
+
+  for (const course of allCourses) {
+    const planItem = planMap.get(course.course_id);
+    let hasSecondaries;
+    if (planItem) {
+      const proposta = deriveProposta(planItem.classificacao_atual, planItem.acoes);
+      hasSecondaries = proposta.quantidade_pessoas !== "uma pessoa";
+    } else {
+      const analise = analyzedMap.get(course.course_id);
+      hasSecondaries = analise && analise.quantidade_pessoas !== "uma pessoa";
+    }
+    if (hasSecondaries) withSecondaries.push(course.course_id);
+  }
+
+  const map = new Map();
+  withSecondaries.forEach((course_id, idx) => {
+    map.set(course_id, getSecondaryEthnicity(idx));
+  });
+  return map;
 }
 
 async function main() {
@@ -509,6 +528,8 @@ async function main() {
   const auditCourses = await loadCourses();
   const auditAnalyzed = analyzeCourses(auditCourses);
 
+  const secondaryEthMap = buildSecondaryEthnicityMap(allCourses, planMap, auditAnalyzed);
+
   const rewrittenRecords = [];
   const rewrittenMap = new Map();
 
@@ -522,7 +543,7 @@ async function main() {
     const analyzed = auditAnalyzed.find((c) => c.course_id === course.course_id);
     course.analise = analyzed ? analyzed.analise : null;
 
-    applyActions(course, planItem.acoes, proposta);
+    applyActions(course, planItem.acoes, proposta, secondaryEthMap.get(course.course_id));
 
     // Remove campos auxiliares antes de salvar
     delete course.analise;
@@ -540,7 +561,7 @@ async function main() {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
   // Gera catálogo de personas
-  const catalog = buildCatalog(allCourses, rewrittenMap, auditAnalyzed);
+  const catalog = buildCatalog(allCourses, rewrittenMap, auditAnalyzed, secondaryEthMap);
   const catalogPath = path.join(OUTPUT_DIR, "catalogo-personas.json");
   fs.writeFileSync(catalogPath, JSON.stringify({ gerado_em: new Date().toISOString(), total: catalog.length, cursos: catalog }, null, 2), "utf8");
 

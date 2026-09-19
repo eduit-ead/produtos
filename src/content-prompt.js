@@ -38,8 +38,8 @@ A distribuição deve ser avaliada no catálogo completo de 128 cursos, e não i
 
 ### Gênero dos personagens principais
 
-- Aproximadamente 60% mulheres.
-- Aproximadamente 40% homens.
+- Entre 60% e 65% mulheres.
+- Entre 35% e 40% homens.
 
 ### Características étnico-raciais declaradas
 

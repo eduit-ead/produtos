@@ -15,7 +15,7 @@ const AUDIT_FILE = path.join(ROOT, "output", "ai-pilot", "auditoria-demografica.
 const OUTPUT_DIR = path.join(ROOT, "output", "ai-pilot");
 
 const TARGETS = {
-  protagonistGender: { mulher: 77, homem: 51 },
+  protagonistGender: { mulher: 82, homem: 46 },
   protagonistEthnicity: { parda: 58, negra: 32, branca: 32, outra: 6 },
   peopleCount: { uma: 90, duas: 32, grupo: 6 },
 };

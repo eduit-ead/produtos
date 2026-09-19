@@ -60,6 +60,31 @@ const VISUAL_NOISE_TERMS = new Set([
   "expressao",
 ]);
 
+// Termos que devem ser ignorados na similaridade visual (descritores demográficos, boilerplate, instruções padronizadas).
+const VISUAL_SIMILARITY_STOPWORDS = new Set([
+  // Gênero
+  "mulher", "mulheres", "feminina", "feminino", "homem", "homens", "masculino", "masculina", "garota", "garoto", "jovem",
+  // Idade
+  "cerca", "aproximadamente", "anos", "idade",
+  // Etnia/cor/cabelo
+  "parda", "pardo", "negra", "negro", "branca", "branco", "outra", "indigena", "indigenas", "asiatica", "asiatico", "asiatica",
+  "pele", "cabelo", "crespo", "cacheado", "ondulado", "liso", "lisos", "escuro", "escura", "claro", "clara", "castanho", "castanha",
+  "morena", "moreno", "loiro", "loira", "louro", "loura", "sardas", "retinta", "bronzeada", "oliva", "pardo",
+  // Quantidade/personagens
+  "duas", "dois", "pessoas", "pessoa", "protagonista", "segunda", "secundario", "secundaria", "equipe", "grupo", "turma", "colegas",
+  // Composição
+  "direita", "esquerda", "inferior", "centro", "regiao", "livre", "quadrado", "enquadramento", "composicao", "assunto", "principal",
+  // Cenário/iluminação/fotografia
+  "iluminacao", "natural", "fotografia", "publicitaria", "cenario", "contemporaneo", "brasileiro", "brasileira", "brasil",
+  // Instruções padronizadas negativas e genéricas
+  "rostos", "maos", "objetos", "importantes", "area", "separacao", "clara", "fundo", "textos", "logotipos", "logotipo",
+  "marcas", "marca", "legenda", "legendas", "identificacoes", "comerciais", "graficos", "sobrepostos", "agua", "deformados",
+  "deformado", "incorretas", "incorreto", "visiveis", "legiveis", "escritos", "sem", "nao", "evitar", "livre", "vazio",
+  "realista", "realismo", "fotografico",
+  // Termos genéricos
+  "atividade", "funcao", "trabalho", "acao", "realiza", "conduz", "aponta", "mostra", "demonstra", "organiza", "revisa",
+]);
+
 const COMMON_OPENERS = ["aprenda", "desenvolva", "prepare-se", "aprofunde", "domine", "conheça"];
 
 const GENDER_TERMS = {
@@ -94,6 +119,17 @@ function tokenize(text) {
 
 function tokenSet(text) {
   return new Set(tokenize(text));
+}
+
+function tokenizeVisual(text) {
+  const normalized = normalizeText(text);
+  return normalized
+    .split(/\s+/)
+    .filter((t) => t.length >= 2 && !STOPWORDS.has(t) && !VISUAL_NOISE_TERMS.has(t) && !VISUAL_SIMILARITY_STOPWORDS.has(t));
+}
+
+function tokenSetVisual(text) {
+  return new Set(tokenizeVisual(text));
 }
 
 function jaccardSimilarity(a, b) {
@@ -134,6 +170,114 @@ function similarityScore(a, b) {
   return Math.max(jaccardSimilarity(a, b), cosineSimilarity(a, b));
 }
 
+function jaccardSimilarityVisual(a, b) {
+  const setA = tokenSetVisual(a);
+  const setB = tokenSetVisual(b);
+  if (setA.size === 0 || setB.size === 0) return 0;
+  const intersection = new Set([...setA].filter((x) => setB.has(x)));
+  const union = new Set([...setA, ...setB]);
+  return intersection.size / union.size;
+}
+
+function cosineSimilarityVisual(a, b) {
+  const tokensA = tokenizeVisual(a);
+  const tokensB = tokenizeVisual(b);
+  const vocab = new Set([...tokensA, ...tokensB]);
+  const freq = (tokens) => {
+    const map = {};
+    for (const t of tokens) map[t] = (map[t] || 0) + 1;
+    return map;
+  };
+  const freqA = freq(tokensA);
+  const freqB = freq(tokensB);
+  let dot = 0;
+  let magA = 0;
+  let magB = 0;
+  for (const term of vocab) {
+    const va = freqA[term] || 0;
+    const vb = freqB[term] || 0;
+    dot += va * vb;
+    magA += va * va;
+    magB += vb * vb;
+  }
+  if (magA === 0 || magB === 0) return 0;
+  return dot / (Math.sqrt(magA) * Math.sqrt(magB));
+}
+
+function similarityScoreVisual(a, b) {
+  return Math.max(jaccardSimilarityVisual(a, b), cosineSimilarityVisual(a, b));
+}
+
+const DEMOGRAPHIC_STOPWORDS = new Set([
+  "mulher", "mulheres", "feminina", "feminino", "homem", "homens", "masculino", "masculina",
+  "garota", "garoto", "jovem", "adulto", "adulta", "crianca", "idoso", "idosa",
+  "cerca", "aproximadamente", "anos", "idade",
+  "parda", "pardo", "negra", "negro", "branca", "branco", "outra", "indigena", "indigenas",
+  "asiatica", "asiatico", "asiatica", "pele", "cabelo", "crespo", "cacheado", "ondulado", "liso",
+  "escuro", "escura", "claro", "clara", "castanho", "morena", "moreno", "loiro", "loira",
+]);
+
+const GENERIC_TERMS = new Set([
+  "pessoa", "pessoas", "profissional", "profissionais", "estudante", "estudantes", "aluno", "aluna",
+  "atividade", "funcao", "acao", "trabalho", "realiza", "conduz", "aponta", "mostra", "demonstra",
+  "organiza", "revisa", "coordena", "analisa", "gerencia", "atua", "exercer", "exerce", "desempenha",
+]);
+
+const BOILERPLATE_PHRASES = new Set([
+  "regiao inferior esquerda livre", "inferior esquerda livre", "regiao inferior esquerda",
+  "sem rostos", "sem maos", "sem objetos", "sem texto", "sem textos", "sem logotipos", "sem marcas",
+  "sem legenda", "sem legendas", "sem identificacoes", "sem elementos graficos", "sem marca dagua",
+  "fotografia publicitária", "cenario brasileiro contemporaneo", "iluminacao natural",
+  "composicao quadrada", "enquadramento medio", "separacao clara", "assunto principal",
+  "protagonista à direita", "segunda pessoa", "personagem secundario",
+]);
+
+function classifySimilarityWarning(pair, sharedTerms) {
+  if (pair.a === pair.b) return "comparacao_com_versao_original_do_mesmo_curso";
+
+  const terms = [...sharedTerms];
+  if (terms.length === 0) return "boilerplate";
+
+  const demoCount = terms.filter((t) => DEMOGRAPHIC_STOPWORDS.has(t)).length;
+  const genericCount = terms.filter((t) => GENERIC_TERMS.has(t)).length;
+  const boilerplateCount = terms.filter((t) => VISUAL_SIMILARITY_STOPWORDS.has(t) && !DEMOGRAPHIC_STOPWORDS.has(t) && !GENERIC_TERMS.has(t)).length;
+
+  if (demoCount > 0 && demoCount >= genericCount && demoCount >= boilerplateCount) {
+    return "descritor_demografico";
+  }
+  if (genericCount > 0 && genericCount >= demoCount && genericCount >= boilerplateCount) {
+    return "termo_generico";
+  }
+  if (boilerplateCount >= terms.length / 2 && demoCount === 0) {
+    return "boilerplate";
+  }
+  return "colisao_real";
+}
+
+function extractSharedVisualTerms(a, b) {
+  const setA = tokenSetVisual(a);
+  const setB = tokenSetVisual(b);
+  return new Set([...setA].filter((x) => setB.has(x)));
+}
+
+function extractSharedTerms(a, b) {
+  const setA = tokenSet(a);
+  const setB = tokenSet(b);
+  return new Set([...setA].filter((x) => setB.has(x)));
+}
+
+function extractSharedBoilerplatePhrases(a, b) {
+  const na = normalizeText(a);
+  const nb = normalizeText(b);
+  const found = [];
+  for (const phrase of BOILERPLATE_PHRASES) {
+    if (na.includes(phrase) && nb.includes(phrase)) {
+      found.push(phrase);
+    }
+  }
+  return found;
+}
+
 function extractOpener(text) {
   const normalized = normalizeText(text);
   const firstWord = normalized.split(/\s+/)[0];
@@ -151,14 +295,15 @@ function findRepeatedOpeners(records) {
     .map(([word, count]) => ({ word, count }));
 }
 
-function findSimilarPairs(records, field, threshold, maxPairs) {
+function findSimilarPairs(records, field, threshold, maxPairs, useVisual = false) {
+  const scoreFn = useVisual ? similarityScoreVisual : similarityScore;
   const pairs = [];
   for (let i = 0; i < records.length; i++) {
     for (let j = i + 1; j < records.length; j++) {
       const a = records[i][field] || "";
       const b = records[j][field] || "";
       if (!a || !b) continue;
-      const score = similarityScore(a, b);
+      const score = scoreFn(a, b);
       if (score >= threshold) {
         pairs.push({
           a: records[i].course_id,
@@ -175,14 +320,17 @@ function findSimilarPairs(records, field, threshold, maxPairs) {
   return pairs.sort((x, y) => y.score - x.score).slice(0, maxPairs);
 }
 
-function findSimilarPairsCross(recordsA, recordsB, field, threshold, maxPairs) {
+function findSimilarPairsCross(recordsA, recordsB, field, threshold, maxPairs, useVisual = false) {
+  const scoreFn = useVisual ? similarityScoreVisual : similarityScore;
   const pairs = [];
   for (const aRecord of recordsA) {
     for (const bRecord of recordsB) {
+      // Evita comparar um curso auditado com sua própria versão original na planilha
+      if (aRecord.course_id && bRecord.course_id && aRecord.course_id === bRecord.course_id) continue;
       const a = aRecord[field] || "";
       const b = bRecord[field] || "";
       if (!a || !b) continue;
-      const score = similarityScore(a, b);
+      const score = scoreFn(a, b);
       if (score >= threshold) {
         pairs.push({
           a: aRecord.course_id,
@@ -457,11 +605,19 @@ function audit(records, referenceRecords = []) {
   const individualVisualPairs = [];
   const visualFields = ["visual_personagem", "visual_ambiente", "visual_objetos", "visual_atividade"];
   for (const field of visualFields) {
-    const pairs = findSimilarPairs(records, field, LIMITS.visualIndividualWarning, 100);
+    const pairs = findSimilarPairs(records, field, LIMITS.visualIndividualWarning, 100, true);
     for (const p of pairs) {
+      const a = records.find((r) => r.course_id === p.a)?.[field] || "";
+      const b = records.find((r) => r.course_id === p.b)?.[field] || "";
+      const sharedVisual = extractSharedVisualTerms(a, b);
+      const sharedBoilerplate = extractSharedBoilerplatePhrases(a, b);
+      const sharedAll = [...new Set([...extractSharedTerms(a, b), ...sharedVisual, ...sharedBoilerplate.map((x) => x.replace(/\s+/g, "_"))])];
+      const classification = classifySimilarityWarning(p, [...sharedVisual, ...sharedBoilerplate]);
+      p.sharedTerms = [...sharedVisual, ...sharedBoilerplate];
+      p.classification = classification;
       individualVisualPairs.push(p);
       const level = p.score >= LIMITS.visualIndividualError ? "erro" : "aviso";
-      const msg = `Colisão visual ${level === "erro" ? "forte" : "moderada"} entre "${p.a}" e "${p.b}" no campo ${p.field} (score ${p.score}).`;
+      const msg = `Colisão visual ${level === "erro" ? "forte" : "moderada"} entre "${p.a}" e "${p.b}" no campo ${p.field} (score ${p.score}) [${classification}].`;
       if (level === "erro") {
         errors.push({ level, message: msg });
       } else {
@@ -471,15 +627,25 @@ function audit(records, referenceRecords = []) {
   }
 
   // Colisão na assinatura visual combinada (interna ao lote)
+  const signatureRecords = records.map((r) => ({ ...r, _signature: visualSignature(r) }));
   const signatureVisualPairs = findSimilarPairs(
-    records.map((r) => ({ ...r, _signature: visualSignature(r) })),
+    signatureRecords,
     "_signature",
     LIMITS.visualSignatureWarning,
-    100
+    100,
+    true
   ).map((p) => ({ ...p, field: "assinatura_visual" }));
   for (const p of signatureVisualPairs) {
+    const aRecord = records.find((r) => r.course_id === p.a);
+    const bRecord = records.find((r) => r.course_id === p.b);
+    const a = aRecord ? visualSignature(aRecord) : "";
+    const b = bRecord ? visualSignature(bRecord) : "";
+    const sharedVisual = extractSharedVisualTerms(a, b);
+    const sharedBoilerplate = extractSharedBoilerplatePhrases(a, b);
+    p.sharedTerms = [...sharedVisual, ...sharedBoilerplate];
+    p.classification = classifySimilarityWarning(p, [...sharedVisual, ...sharedBoilerplate]);
     const level = p.score >= LIMITS.visualSignatureError ? "erro" : "aviso";
-    const msg = `Colisão na assinatura visual combinada entre "${p.a}" e "${p.b}" (score ${p.score}).`;
+    const msg = `Colisão na assinatura visual combinada entre "${p.a}" e "${p.b}" (score ${p.score}) [${p.classification}].`;
     if (level === "erro") {
       errors.push({ level, message: msg });
     } else {
@@ -494,11 +660,20 @@ function audit(records, referenceRecords = []) {
     const refWithSignature = referenceRecords.map((r) => ({ ...r, _signature: visualSignature(r) }));
     const crossFields = ["descricao_curta", "visual_tema", "visual_personagem", "visual_ambiente", "visual_atividade"];
     for (const field of crossFields) {
-      const pairs = findSimilarPairsCross(records, referenceRecords, field, LIMITS.visualIndividualWarning, 100);
+      const isVisual = field.startsWith("visual_") || field === "visual_tema";
+      const pairs = findSimilarPairsCross(records, referenceRecords, field, LIMITS.visualIndividualWarning, 100, isVisual);
       for (const p of pairs) {
+        const a = records.find((r) => r.course_id === p.a)?.[field] || "";
+        const b = referenceRecords.find((r) => r.course_id === p.b)?.[field] || "";
+        const sharedVisual = isVisual ? extractSharedVisualTerms(a, b) : new Set();
+        const sharedBoilerplate = extractSharedBoilerplatePhrases(a, b);
+        p.sharedTerms = isVisual ? [...sharedVisual, ...sharedBoilerplate] : [...extractSharedTerms(a, b)];
+        p.classification = isVisual
+          ? classifySimilarityWarning(p, [...sharedVisual, ...sharedBoilerplate])
+          : "comparacao_cruzada_descricao";
         crossVisualPairs.push(p);
         const level = p.score >= LIMITS.visualIndividualError ? "erro" : "aviso";
-        const msg = `Colisão ${level === "erro" ? "forte" : "moderada"} entre lote "${p.a}" e planilha "${p.b}" no campo ${p.field} (score ${p.score}).`;
+        const msg = `Colisão ${level === "erro" ? "forte" : "moderada"} entre lote "${p.a}" e planilha "${p.b}" no campo ${p.field} (score ${p.score}) [${p.classification}].`;
         if (level === "erro") {
           errors.push({ level, message: msg });
         } else {
@@ -511,12 +686,21 @@ function audit(records, referenceRecords = []) {
       refWithSignature,
       "_signature",
       LIMITS.visualSignatureWarning,
-      100
+      100,
+      true
     ).map((p) => ({ ...p, field: "assinatura_visual" }));
     for (const p of sigPairs) {
+      const aRecord = records.find((r) => r.course_id === p.a);
+      const bRecord = referenceRecords.find((r) => r.course_id === p.b);
+      const a = aRecord ? visualSignature(aRecord) : "";
+      const b = bRecord ? visualSignature(bRecord) : "";
+      const sharedVisual = extractSharedVisualTerms(a, b);
+      const sharedBoilerplate = extractSharedBoilerplatePhrases(a, b);
+      p.sharedTerms = [...sharedVisual, ...sharedBoilerplate];
+      p.classification = classifySimilarityWarning(p, [...sharedVisual, ...sharedBoilerplate]);
       crossVisualPairs.push(p);
       const level = p.score >= LIMITS.visualSignatureError ? "erro" : "aviso";
-      const msg = `Colisão ${level === "erro" ? "forte" : "moderada"} entre lote "${p.a}" e planilha "${p.b}" na assinatura visual combinada (score ${p.score}).`;
+      const msg = `Colisão ${level === "erro" ? "forte" : "moderada"} entre lote "${p.a}" e planilha "${p.b}" na assinatura visual combinada (score ${p.score}) [${p.classification}].`;
       if (level === "erro") {
         errors.push({ level, message: msg });
       } else {
@@ -613,6 +797,41 @@ function audit(records, referenceRecords = []) {
 
   const ok = errors.length === 0;
 
+  const allVisualPairs = [...individualVisualPairs, ...signatureVisualPairs, ...crossVisualPairs];
+  const warningsAnalysis = {
+    totalWarnings: warnings.length,
+    byField: {},
+    byClassification: {},
+    visualPairs: allVisualPairs.map((p) => ({
+      a: p.a,
+      b: p.b,
+      field: p.field,
+      score: p.score,
+      classification: p.classification || "nao_classificado",
+      terms: p.sharedTerms || [],
+    })),
+    descriptionPairs: similarDescs.map((p) => ({
+      a: p.a,
+      b: p.b,
+      field: "descricao_curta",
+      score: p.score,
+      classification: "comparacao_descricao",
+      terms: [...extractSharedTerms(
+        records.find((r) => r.course_id === p.a)?.descricao_curta || "",
+        records.find((r) => r.course_id === p.b)?.descricao_curta || ""
+      )],
+    })),
+  };
+
+  for (const p of warningsAnalysis.visualPairs) {
+    warningsAnalysis.byField[p.field] = (warningsAnalysis.byField[p.field] || 0) + 1;
+    warningsAnalysis.byClassification[p.classification] = (warningsAnalysis.byClassification[p.classification] || 0) + 1;
+  }
+  for (const p of warningsAnalysis.descriptionPairs) {
+    warningsAnalysis.byField[p.field] = (warningsAnalysis.byField[p.field] || 0) + 1;
+    warningsAnalysis.byClassification[p.classification] = (warningsAnalysis.byClassification[p.classification] || 0) + 1;
+  }
+
   return {
     ok,
     summary: {
@@ -636,6 +855,7 @@ function audit(records, referenceRecords = []) {
       repeatedActivities: ativReps,
       topVisualSimilarities: topVisualPairs,
       demographicStats: demo,
+      warningsAnalysis,
     },
   };
 }
@@ -743,6 +963,37 @@ function generateMarkdown(audit, inputPath) {
     }
     md += "\n";
   }
+
+  md += `### Análise Agrupada dos Avisos de Similaridade\n\n`;
+  if (details.warningsAnalysis) {
+    const wa = details.warningsAnalysis;
+    md += `- Total de avisos de similaridade: ${wa.totalWarnings}\n`;
+    md += `- Por campo:\n`;
+    for (const [field, count] of Object.entries(wa.byField)) {
+      md += `  - \`${field}\`: ${count}\n`;
+    }
+    md += `- Por classificação:\n`;
+    for (const [cls, count] of Object.entries(wa.byClassification)) {
+      md += `  - \`${cls}\`: ${count}\n`;
+    }
+    if (wa.visualPairs.length > 0) {
+      md += `- Pares visuais:\n`;
+      for (const p of wa.visualPairs) {
+        md += `  - \`${p.a}\` ↔ \`${p.b}\` | \`${p.field}\` | score ${p.score} | \`${p.classification}\` | termos: ${p.terms.slice(0, 5).join(", ")}${p.terms.length > 5 ? "..." : ""}\n`;
+      }
+    } else {
+      md += `- Nenhum par visual acima do limiar após remoção de descritores genéricos/demográficos.\n`;
+    }
+    if (wa.descriptionPairs.length > 0) {
+      md += `- Pares de descrição curta:\n`;
+      for (const p of wa.descriptionPairs) {
+        md += `  - \`${p.a}\` ↔ \`${p.b}\` | score ${p.score} | \`${p.classification}\` | termos: ${p.terms.slice(0, 5).join(", ")}${p.terms.length > 5 ? "..." : ""}\n`;
+      }
+    }
+  } else {
+    md += `Análise agrupada não disponível.\n`;
+  }
+  md += `\n`;
 
   md += `### Distribuição Declarada\n\n`;
   const demo = details.demographicStats;
