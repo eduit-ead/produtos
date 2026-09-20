@@ -21,6 +21,28 @@
       "type": "string",
       "defaultValue": "Bacharelado | 8 semestres",
       "required": false
+    },
+    {
+      "key": "imagemFundo",
+      "label": "Imagem de fundo",
+      "type": "image",
+      "defaultValue": "demo-bg.jpg",
+      "required": false,
+      "binding": {
+        "layerId": "bg-image",
+        "property": "assetId"
+      }
+    },
+    {
+      "key": "corDestaque",
+      "label": "Cor de destaque",
+      "type": "color",
+      "defaultValue": "#6EA0FF",
+      "required": false,
+      "binding": {
+        "layerId": "subtitle",
+        "property": "fill"
+      }
     }
   ],
   "assets": [

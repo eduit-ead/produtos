@@ -6,6 +6,7 @@ const tests = [
   "test-save-reload.js",
   "test-template-api.js",
   "test-upload.js",
+  "test-studio-bindings.js",
 ];
 
 let failed = false;

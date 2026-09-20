@@ -3,56 +3,45 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Compositor de Templates</title>
-  <link rel="stylesheet" href="/app.css">
+  <title>Estúdio de Criação</title>
+  <link rel="stylesheet" href="/studio.css">
 </head>
 <body>
   <div id="app">
-    <header class="toolbar">
-      <h1>Compositor de Templates</h1>
-      <div class="actions">
-        <select id="templateSelect"></select>
-        <button id="btnNew">Novo</button>
-        <button id="btnSave">Salvar</button>
-        <button id="btnRender">Exportar PNG</button>
-      </div>
+    <header class="studio-header">
+      <h1>Estúdio de Criação</h1>
+      <a href="/editor.html" class="link-button">Editor avançado</a>
     </header>
 
-    <main class="workspace">
-      <aside class="panel" id="layersPanel">
-        <h2>Camadas</h2>
-        <div id="layerList"></div>
-        <div class="panel-actions">
-          <button id="btnAddText">+ Texto</button>
-          <button id="btnAddImage">+ Imagem</button>
-          <button id="btnAddShape">+ Forma</button>
-        </div>
-      </aside>
-
-      <section class="canvas-area">
-        <div id="canvasWrap">
-          <canvas id="editorCanvas"></canvas>
-        </div>
+    <main class="studio-workspace">
+      <section id="stageSelect" class="stage-select">
+        <h2>Escolha um template</h2>
+        <div id="templateCards" class="template-cards"></div>
       </section>
 
-      <aside class="panel" id="propsPanel">
-        <h2>Propriedades</h2>
-        <div id="properties"></div>
+      <section id="stageEditor" class="stage-editor hidden">
+        <aside class="form-panel">
+          <div class="form-header">
+            <button id="btnBack" class="secondary">Voltar</button>
+            <button id="btnReset" class="secondary">Restaurar</button>
+          </div>
+          <h2 id="templateName">Template</h2>
+          <form id="variablesForm" class="variables-form"></form>
+          <div class="form-actions">
+            <button id="btnDownload" class="primary">Baixar PNG</button>
+          </div>
+          <div id="status" class="status ready">Pronto</div>
+        </aside>
 
-        <h2>Variáveis</h2>
-        <div id="variables"></div>
-
-        <h2>Assets</h2>
-        <form id="uploadForm" enctype="multipart/form-data">
-          <input type="file" name="file" accept=".png,.jpg,.jpeg,.svg" required>
-          <button type="submit">Upload</button>
-        </form>
-        <ul id="assetList"></ul>
-      </aside>
+        <section class="preview-panel">
+          <div id="previewWrap" class="preview-wrap">
+            <img id="previewImg" alt="Preview" class="preview-img hidden">
+          </div>
+        </section>
+      </section>
     </main>
   </div>
 
-  <script src="/fabric.min.js?v=530"></script>
-  <script src="/app.js"></script>
+  <script src="/studio.js"></script>
 </body>
 </html>

@@ -11,7 +11,7 @@ const VALID_TYPES = new Set([
   "overlay",
 ]);
 
-const VARIABLE_TYPES = new Set(["string", "number", "boolean"]);
+const VARIABLE_TYPES = new Set(["string", "number", "boolean", "image", "color"]);
 
 // IDs estritos: alfanumérico, hífen e underscore; 1-64 caracteres.
 const ID_REGEX = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -277,6 +277,40 @@ function validateTemplate(template, { routeId } = {}) {
       if (!VARIABLE_TYPES.has(v.type)) {
         errors.push(`${prefix}.type inválido.`);
       }
+      if (Object.hasOwn(v, "binding")) {
+        const b = v.binding;
+        if (!b || typeof b !== "object" || Array.isArray(b)) {
+          errors.push(`${prefix}.binding deve ser um objeto.`);
+        } else {
+          if (!isValidString(b.layerId)) {
+            errors.push(`${prefix}.binding.layerId deve ser uma string.`);
+          } else if (Array.isArray(template.layers) && !template.layers.some((l) => l.id === b.layerId)) {
+            errors.push(`${prefix}.binding.layerId (${b.layerId}) não encontrado em layers.`);
+          }
+          if (!isValidString(b.property)) {
+            errors.push(`${prefix}.binding.property deve ser uma string.`);
+          }
+          const allowedBindings = {
+            image: { assetId: ["background", "image", "overlay"] },
+            color: {
+              color: ["background"],
+              fill: ["shape", "text"],
+            },
+          };
+          if (allowedBindings[v.type] && b.property && b.layerId && Array.isArray(template.layers)) {
+            const layer = template.layers.find((l) => l.id === b.layerId);
+            if (layer) {
+              const validProps = allowedBindings[v.type];
+              const allowedTypes = validProps[b.property];
+              if (!allowedTypes || !allowedTypes.includes(layer.type)) {
+                errors.push(
+                  `${prefix}.binding inválido: ${v.type}.${b.property} não pode ser aplicado em ${layer.type}.`
+                );
+              }
+            }
+          }
+        }
+      }
       if (Object.hasOwn(v, "defaultValue") && v.defaultValue === undefined) {
         errors.push(`${prefix}.defaultValue não pode ser undefined.`);
       }
@@ -383,6 +417,41 @@ function replaceVariables(text, resolved) {
   });
 }
 
+function applyVariableBindings(template, values = {}) {
+  if (!template || typeof template !== "object" || Array.isArray(template)) {
+    return template;
+  }
+  const copy = structuredClone(template);
+  const variableMap = new Map((copy.variables || []).map((v) => [v.key, v]));
+
+  for (const [key, variable] of variableMap) {
+    const binding = variable.binding;
+    if (!binding || !binding.layerId || !binding.property) continue;
+
+    let value = Object.hasOwn(values, key) ? values[key] : undefined;
+    if (value === undefined || value === null || value === "") {
+      value = variable.defaultValue;
+    }
+    if (value === undefined || value === null || value === "") continue;
+    value = String(value);
+
+    const layer = copy.layers.find((l) => l.id === binding.layerId);
+    if (!layer) continue;
+
+    if (variable.type === "image" && binding.property === "assetId" && ["background", "image", "overlay"].includes(layer.type)) {
+      layer.properties = { ...layer.properties, assetId: value };
+    } else if (variable.type === "color") {
+      if (binding.property === "color" && layer.type === "background") {
+        layer.properties = { ...layer.properties, color: value };
+      } else if (binding.property === "fill" && ["shape", "text"].includes(layer.type)) {
+        layer.properties = { ...layer.properties, fill: value };
+      }
+    }
+  }
+
+  return copy;
+}
+
 module.exports = {
   COMMON_LAYER_DEFAULTS,
   createLayerDefaults,
@@ -390,5 +459,6 @@ module.exports = {
   validateTemplate,
   resolveVariables,
   replaceVariables,
+  applyVariableBindings,
   VALID_TYPES,
 };

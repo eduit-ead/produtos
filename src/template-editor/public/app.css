@@ -229,3 +229,24 @@ button:hover {
   color: #94a3b8;
   font-size: 12px;
 }
+
+.link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #334155;
+  color: #e2e8f0;
+  text-decoration: none;
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+
+.link-button:hover {
+  background: #475569;
+}
+
+.actions {
+  align-items: center;
+}

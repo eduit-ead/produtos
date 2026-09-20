@@ -140,16 +140,18 @@ async function renderLayer(layer, resolvedVariables) {
 }
 
 async function renderTemplate(template, values = {}) {
-  const { validateTemplate, resolveVariables } = require("../schema/template-schema");
+  const { validateTemplate, resolveVariables, applyVariableBindings } = require("../schema/template-schema");
 
   const errors = validateTemplate(template);
   if (errors.length > 0) {
     throw new Error(`Template inválido:\n${errors.join("\n")}`);
   }
 
-  const resolved = resolveVariables(template, values);
+  // Aplica bindings de variáveis sobre uma cópia, sem mutar o template original.
+  const boundTemplate = applyVariableBindings(template, values);
+  const resolved = resolveVariables(boundTemplate, values);
 
-  const canvas = template.canvas || { width: 1080, height: 1080 };
+  const canvas = boundTemplate.canvas || { width: 1080, height: 1080 };
   let base = sharp({
     create: {
       width: Math.max(1, canvas.width),
@@ -159,7 +161,7 @@ async function renderTemplate(template, values = {}) {
     },
   });
 
-  const layers = [...template.layers].sort((a, b) => a.zIndex - b.zIndex);
+  const layers = [...boundTemplate.layers].sort((a, b) => a.zIndex - b.zIndex);
   const composites = [];
 
   for (const layer of layers) {
