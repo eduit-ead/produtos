@@ -30,8 +30,9 @@ const { courseFiles } = require("../batch/naming");
 const { convertCardToWhatsAppJpeg } = require("../whatsapp-image");
 const xlsxSync = require("../xlsx-sync");
 const { loadCourseBySlug, loadAllCourses, INPUT_FILE } = require("../read-courses");
-const { listCollections, loadCollection, saveCollection, deleteCollection } = require("../collections/manager");
-const { validateCollection } = require("../collections/schema");
+const { listCollections, loadCollection, saveCollection, deleteCollection, archiveCollection } = require("../collections/manager");
+const ExcelJS = require("exceljs");
+const { validateCollection, isSafeRelative, ROOT } = require("../collections/schema");
 const { getDataSource } = require("../data-sources");
 
 const DATA_DIR = path.join(__dirname, "..", "..", "data");
@@ -264,6 +265,24 @@ function createRouter() {
     }
   });
 
+  router.post("/render-whatsapp", express.json({ limit: "2mb" }), async (req, res) => {
+    const { template, values } = req.body || {};
+    const errors = validateTemplate(template);
+    if (errors.length > 0) {
+      return res.status(400).json({ error: "Template inválido.", details: errors });
+    }
+    try {
+      const png = await renderTemplate(template, values || {});
+      const buffer = await convertCardToWhatsAppJpeg(png);
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "no-cache");
+      res.send(buffer);
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ error: err.message || "Erro ao renderizar WhatsApp." });
+    }
+  });
+
   // ============================================================
   // Controlled output file serving
   // ============================================================
@@ -433,6 +452,120 @@ function createRouter() {
       }
       fs.writeFileSync(destPath, buffer);
       res.json({ ok: true, collectionId: id, path: path.relative(process.cwd(), destPath), filename: destName });
+    } catch (err) {
+      console.error(err);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Lista abas de uma planilha XLSX.
+  router.get("/collections/:id/sheets", async (req, res) => {
+    try {
+      const relPath = req.query.path;
+      if (!relPath) return res.status(400).json({ error: "Caminho do arquivo não informado." });
+      const resolved = path.resolve(ROOT, relPath);
+      if (!isSafeRelative(relPath) || !resolved.startsWith(ROOT + path.sep)) {
+        return res.status(400).json({ error: "Caminho inválido." });
+      }
+      if (!fs.existsSync(resolved)) return res.status(404).json({ error: "Arquivo não encontrado." });
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.readFile(resolved);
+      res.json(workbook.worksheets.map((s) => s.name));
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao ler abas." });
+    }
+  });
+
+  // Prévia de registros a partir de fonte temporária (ainda não salva como coleção).
+  router.post("/collections/:id/preview", express.json({ limit: "1mb" }), async (req, res) => {
+    try {
+      const source = req.body?.source;
+      if (!source?.type || !source?.path) return res.status(400).json({ error: "Fonte não informada." });
+      const resolved = path.resolve(ROOT, source.path);
+      if (!isSafeRelative(source.path) || !resolved.startsWith(ROOT + path.sep)) {
+        return res.status(400).json({ error: "Caminho inválido." });
+      }
+      if (!fs.existsSync(resolved)) return res.status(404).json({ error: "Arquivo não encontrado." });
+
+      const tempCollection = {
+        id: req.params.id,
+        primaryKey: "id",
+        source: {
+          type: source.type,
+          path: source.path,
+          sheet: source.sheet,
+        },
+        fieldMappings: { slug: "id" },
+      };
+      const ds = getDataSource(tempCollection);
+      const records = await ds.listRecords();
+      const fields = await ds.getFields();
+
+      const ids = records.map((r) => r.id || r.record_id || r.slug).map(String);
+      const seen = new Set();
+      const duplicateIds = [];
+      let emptyIds = 0;
+      for (const id of ids) {
+        if (!id || id.trim() === "") {
+          emptyIds++;
+          continue;
+        }
+        if (seen.has(id)) duplicateIds.push(id);
+        else seen.add(id);
+      }
+
+      res.json({
+        headers: fields,
+        records: records.slice(0, 5),
+        total: records.length,
+        issues: { emptyIds, duplicateIds },
+      });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao gerar prévia." });
+    }
+  });
+
+  // Arquiva/reativa uma coleção.
+  router.post("/collections/:id/archive", async (req, res) => {
+    try {
+      const archived = req.body?.archived !== false;
+      const collection = archiveCollection(req.params.id, archived);
+      res.json({ ok: true, collection });
+    } catch (err) {
+      console.error(err);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Duplica uma coleção existente.
+  router.post("/collections/:id/duplicate", async (req, res) => {
+    try {
+      const original = loadCollection(req.params.id);
+      const newId = `${original.id}-copia-${Date.now()}`;
+      const copy = {
+        ...original,
+        id: newId,
+        name: `${original.name} (cópia)`,
+        archived: false,
+        updatedAt: new Date().toISOString(),
+      };
+      saveCollection(copy);
+      res.status(201).json({ ok: true, collection: copy });
+    } catch (err) {
+      console.error(err);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Exporta configuração de uma coleção.
+  router.get("/collections/:id/export-config", async (req, res) => {
+    try {
+      const collection = loadCollection(req.params.id);
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader("Content-Disposition", `attachment; filename="${collection.id}.json"`);
+      res.send(JSON.stringify(collection, null, 2));
     } catch (err) {
       console.error(err);
       res.status(400).json({ error: err.message });

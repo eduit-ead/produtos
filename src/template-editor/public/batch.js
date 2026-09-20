@@ -1,710 +1,542 @@
-/**
- * Painel de Produção em Lote genérico.
- * Suporta múltiplas coleções e templates.
- */
-
 const state = {
   collections: [],
   templates: [],
   collectionId: null,
   collection: null,
-  courses: [],
+  items: [],
+  filtered: [],
   selected: new Set(),
-  filters: { query: "" },
-  filterDefs: [],
-  currentJobId: null,
-  pollInterval: null,
-  loading: false,
-  error: null,
+  filters: {},
+  query: "",
+  jobId: null,
+  job: null,
+  pollTimer: null,
+  reviewSelected: new Set(),
 };
 
-function byId(id) {
-  return document.getElementById(id);
+const LEGACY_ID = "graduacao-cruzeiro";
+const COST_PER_CALL = 0.03;
+
+function init() {
+  registerNav("lote");
+  setupEvents();
+  loadInitial();
 }
 
-async function apiJson(url, options = {}) {
-  const res = await fetch(url, options);
-  const text = await res.text().catch(() => "Erro desconhecido");
-  if (!res.ok) {
-    let message = text;
-    try {
-      const parsed = JSON.parse(text);
-      message = parsed.error || JSON.stringify(parsed);
-    } catch {}
-    throw new Error(`${res.status}: ${message}`);
-  }
+async function loadInitial() {
   try {
-    return JSON.parse(text);
-  } catch {
-    return { raw: text };
+    const [collections, templates] = await Promise.all([
+      api.json("/api/collections"),
+      api.json("/api/templates"),
+    ]);
+    state.collections = collections;
+    state.templates = templates;
+
+    const params = new URLSearchParams(window.location.search);
+    const requestedCollection = params.get("collection");
+    const requestedJob = params.get("job");
+
+    if (requestedJob) {
+      state.jobId = requestedJob;
+      await loadJob();
+      if (state.job?.collectionId) {
+        state.collectionId = state.job.collectionId;
+        state.collection = state.collections.find((c) => c.id === state.collectionId) || null;
+        await loadItems();
+      }
+      goStep("review");
+      return;
+    }
+
+    if (requestedCollection && state.collections.some((c) => c.id === requestedCollection)) {
+      state.collectionId = requestedCollection;
+    } else {
+      state.collectionId = state.collections.find((c) => c.id === LEGACY_ID)?.id || state.collections[0]?.id || null;
+    }
+
+    renderBaseStep();
+    if (params.get("autostart") === "1" && state.collectionId) {
+      await selectCollection(state.collectionId);
+    }
+  } catch (err) {
+    handleApiError(err, "status");
   }
 }
 
-function setStatus(type, message) {
-  const el = byId("status");
-  if (!el) return;
-  el.className = `status ${type}`;
-  el.textContent = message;
+function setupEvents() {
+  byId("btnSelectFiltered").addEventListener("click", () => {
+    for (const item of state.filtered) state.selected.add(item.slug);
+    renderItems();
+  });
+  byId("btnClearSelection").addEventListener("click", () => {
+    state.selected.clear();
+    renderItems();
+  });
+  byId("searchInput").addEventListener("input", () => {
+    state.query = byId("searchInput").value.trim().toLowerCase();
+    renderItems();
+  });
+  byId("btnItemsBack").addEventListener("click", () => goStep("base"));
+  byId("btnItemsNext").addEventListener("click", () => goStep("config"));
+  byId("btnConfigBack").addEventListener("click", () => goStep("items"));
+  byId("btnConfigTest").addEventListener("click", () => createBatch(true));
+  byId("btnConfigReal").addEventListener("click", () => createBatch(false));
+  byId("btnReviewBack").addEventListener("click", () => {
+    stopPolling();
+    goStep("config");
+  });
+  byId("btnApproveSelected").addEventListener("click", () => bulkAction("approve"));
+  byId("btnRejectSelected").addEventListener("click", () => bulkAction("reject"));
+  byId("btnExportXlsx").addEventListener("click", exportXlsx);
+  byId("btnSyncXlsx").addEventListener("click", syncXlsx);
+
+  document.querySelectorAll('input[name="dryRun"], input[name="bgSource"], #batchSize, #maxCalls, #maxCostUsd').forEach((el) => {
+    el.addEventListener("change", updateEstimate);
+  });
+  byId("templateSelect").addEventListener("change", updateEstimate);
 }
 
-function formatStatus(status) {
-  const map = {
-    pendente: "Pendente",
-    gerando_fundo: "Gerando fundo",
-    fundo_gerado: "Fundo gerado",
-    renderizando_card: "Renderizando card",
-    gerando_whatsapp: "Gerando WhatsApp",
-    pronto_revisao: "Pronto para revisão",
-    aprovado: "Aprovado",
-    rejeitado: "Rejeitado",
-    erro: "Erro",
-    cancelado: "Cancelado",
-  };
-  return map[status] || status;
+function goStep(step) {
+  document.querySelectorAll(".wizard-step").forEach((el) => {
+    el.classList.toggle("active", el.dataset.step === step);
+    el.classList.toggle("done", stepOrder(el.dataset.step) < stepOrder(step));
+  });
+  document.querySelectorAll(".step-panel").forEach((el) => {
+    el.classList.toggle("active", el.id === `step-${step}`);
+  });
+  window.scrollTo({ top: 0, behavior: "smooth" });
+
+  if (step === "items") renderItems();
+  if (step === "config") renderConfig();
+  if (step === "review") renderReview();
 }
 
-function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-function initials(text) {
-  if (!text) return "?";
-  const words = text.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
-  return (words[0][0] + words[1][0]).toUpperCase();
+function stepOrder(name) {
+  return ["base", "items", "config", "review"].indexOf(name);
 }
 
 function getItemTitle(item) {
-  return item.title || item.curso || item.slug || "Sem título";
+  return item.title || item.curso || item.slug;
 }
 
-function getFilterFields() {
-  if (state.collection?.filters?.length > 0) {
-    return state.collection.filters.map((f) => f.field);
-  }
-  return ["modalidade", "formacao", "conteudo_status"];
-}
+// ============================================================
+// Step: Base
+// ============================================================
 
-function matchesFilters(item) {
-  const q = state.filters.query.trim().toLowerCase();
-  const title = getItemTitle(item);
-  const matchesQuery = !q || title.toLowerCase().includes(q) || item.slug.toLowerCase().includes(q);
-  if (!matchesQuery) return false;
-  for (const field of getFilterFields()) {
-    const value = state.filters[field] || "";
-    if (!value) continue;
-    if ((item[field] || item.fields?.[field] || "") !== value) return false;
-  }
-  return true;
-}
-
-function filteredCourses() {
-  return state.courses.filter(matchesFilters);
-}
-
-function populateFilters() {
-  const fields = getFilterFields();
-  const container = byId("filtersBar");
-  if (!container) return;
-
-  // Limpa selects dinâmicos antigos, mantendo busca e botões.
-  const keep = ["searchInput", "btnSelectAll", "btnClearSelection"];
-  for (const child of Array.from(container.children)) {
-    if (!keep.includes(child.id)) child.remove();
-  }
-
-  for (const field of fields) {
-    const label = state.collection?.filters?.find((f) => f.field === field)?.label || field;
-    const values = new Set(state.courses.map((c) => c[field] || c.fields?.[field]).filter(Boolean));
-    const select = document.createElement("select");
-    select.id = `filter-${field}`;
-    select.innerHTML =
-      `<option value="">Todas(os) ${escapeHtml(label)}</option>` +
-      [...values].sort().map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join("");
-    select.value = state.filters[field] || "";
-    select.addEventListener("change", (e) => {
-      state.filters[field] = e.target.value;
-      renderCatalog();
+function renderBaseStep() {
+  const container = byId("baseCards");
+  const empty = byId("baseEmpty");
+  if (state.collections.length === 0) {
+    container.innerHTML = "";
+    empty.classList.remove("hidden");
+    showEmpty(empty, "Nenhuma base", "Importe uma base de conteúdo primeiro.", {
+      label: "Importar base",
+      onClick: () => (window.location.href = "/importar.html"),
     });
-    container.insertBefore(select, byId("btnSelectAll"));
+    return;
   }
-}
 
-function renderSkeletonGrid(count = 20) {
-  const grid = byId("courseGrid");
-  grid.innerHTML = "";
-  for (let i = 0; i < count; i++) {
+  container.innerHTML = "";
+  empty.classList.add("hidden");
+  for (const c of state.collections) {
     const card = document.createElement("div");
-    card.className = "skeleton-card";
+    card.className = "card base-card card-hover";
     card.innerHTML = `
-      <div class="skeleton-thumb"></div>
-      <div class="skeleton-lines">
-        <div class="skeleton-line"></div>
-        <div class="skeleton-line short"></div>
-      </div>
+      <div class="meta"><span class="badge badge-primary">${escapeHtml(c.sourceType?.toUpperCase() || "—")}</span></div>
+      <h4>${escapeHtml(c.name)}</h4>
+      <p class="hint">${escapeHtml(c.description || "Sem descrição.")}</p>
+      <div class="meta">Template padrão: ${escapeHtml(c.defaultTemplateId || "—")}</div>
     `;
-    grid.appendChild(card);
-  }
-}
-
-function renderGridError(message) {
-  const grid = byId("courseGrid");
-  grid.innerHTML = "";
-  const msg = byId("gridMessage");
-  msg.className = "grid-message error";
-  msg.innerHTML = `
-    <p>${escapeHtml(message)}</p>
-    <button id="btnRetryLoad" class="secondary" style="margin-top:12px">Tentar novamente</button>
-  `;
-  msg.classList.remove("hidden");
-  byId("btnRetryLoad").addEventListener("click", loadCatalog);
-}
-
-function hideGridMessage() {
-  const msg = byId("gridMessage");
-  msg.className = "grid-message hidden";
-  msg.innerHTML = "";
-}
-
-function thumbnailUrl(item) {
-  return item.current_card_url || item.ai_card_url || item.current_background_url || item.ai_background_url || null;
-}
-
-function metaText(item) {
-  if (item.modalidade || item.formacao || item.duracao) {
-    return [item.modalidade, item.formacao, item.duracao].filter(Boolean).join(" · ");
-  }
-  const fields = state.collection?.filters?.map((f) => item.fields?.[f.field]).filter(Boolean) || [];
-  if (fields.length > 0) return fields.join(" · ");
-  return item.slug;
-}
-
-function renderCatalog() {
-  const grid = byId("courseGrid");
-  grid.innerHTML = "";
-  hideGridMessage();
-
-  if (state.loading) {
-    renderSkeletonGrid(20);
-    return;
-  }
-
-  if (state.error) {
-    renderGridError(state.error);
-    return;
-  }
-
-  const list = filteredCourses();
-  byId("summaryFiltered").textContent = list.length;
-
-  if (list.length === 0) {
-    grid.innerHTML = "<p class='grid-message'>Nenhum item encontrado.</p>";
-    return;
-  }
-
-  for (const c of list) {
-    const card = document.createElement("div");
-    card.className = "course-card" + (state.selected.has(c.slug) ? " selected" : "");
-    card.dataset.slug = c.slug;
-
-    const selectWrap = document.createElement("div");
-    selectWrap.className = "select-wrap";
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.checked = state.selected.has(c.slug);
-    checkbox.addEventListener("click", (e) => e.stopPropagation());
-    checkbox.addEventListener("change", (e) => toggleSelection(c.slug, e.target.checked));
-    selectWrap.appendChild(checkbox);
-
-    const thumb = document.createElement("div");
-    thumb.className = "thumb";
-    const url = thumbnailUrl(c);
-    if (url) {
-      const img = document.createElement("img");
-      img.src = url;
-      img.alt = getItemTitle(c);
-      img.loading = "lazy";
-      img.addEventListener("error", () => {
-        thumb.innerHTML = "";
-        thumb.appendChild(placeholderThumb(getItemTitle(c)));
-      });
-      thumb.appendChild(img);
-    } else {
-      thumb.appendChild(placeholderThumb(getItemTitle(c)));
-    }
-
-    const overlay = document.createElement("div");
-    overlay.className = "card-overlay";
-    overlay.innerHTML = `
-      <h3>${escapeHtml(getItemTitle(c))}</h3>
-      <div class="meta">${escapeHtml(metaText(c))}</div>
-      <span class="status status-${c.status}">${formatStatus(c.status)}</span>
-    `;
-
-    card.appendChild(selectWrap);
-    card.appendChild(thumb);
-    card.appendChild(overlay);
-    card.addEventListener("click", () => {
-      const checked = !state.selected.has(c.slug);
-      toggleSelection(c.slug, checked);
-      checkbox.checked = checked;
-    });
-
-    grid.appendChild(card);
-  }
-}
-
-function placeholderThumb(name) {
-  const div = document.createElement("div");
-  div.className = "placeholder";
-  div.innerHTML = `<div class="initial">${escapeHtml(initials(name))}</div>`;
-  return div;
-}
-
-function updateSummary() {
-  byId("summaryTotal").textContent = state.courses.length;
-  byId("summarySelected").textContent = state.selected.size;
-  updateSelectionSummary();
-}
-
-function updateSelectionSummary() {
-  const count = state.selected.size;
-  const text = count === 0 ? "Nenhum item selecionado" : `${count} item(s) selecionado(s)`;
-  byId("summarySelected").textContent = count;
-  byId("selectionSummary").textContent = text;
-  byId("btnCreateBatch").disabled = count === 0;
-
-  const bar = byId("selectionBar");
-  const barText = byId("selectionBarText");
-  if (count === 0) {
-    bar.classList.add("hidden");
-  } else {
-    bar.classList.remove("hidden");
-    barText.textContent = `${count} selecionado(s)`;
-  }
-  updateEstimate();
-}
-
-function updateEstimate() {
-  const selectedCount = state.selected.size;
-  const dryRun = byId("dryRun").checked;
-  const maxCallsInput = byId("maxCalls").value.trim();
-  const costPerCall = 0.03;
-  const calls = dryRun
-    ? 0
-    : maxCallsInput
-    ? Math.min(parseInt(maxCallsInput, 10) || 0, selectedCount)
-    : selectedCount;
-  const cost = dryRun ? 0 : calls * costPerCall;
-  byId("estimate").textContent = `${selectedCount} item(s) · até ${calls} chamada(s) · estimativa US$ ${cost.toFixed(2)}`;
-}
-
-async function loadCollections() {
-  try {
-    state.collections = await apiJson("/api/collections");
-    const params = new URLSearchParams(window.location.search);
-    const requested = params.get("collection");
-    const found =
-      state.collections.find((c) => c.id === requested) ||
-      state.collections.find((c) => c.id === "graduacao-cruzeiro") ||
-      state.collections[0];
-
-    const select = byId("collectionSelect");
-    select.innerHTML = state.collections
-      .map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`)
-      .join("");
-    select.value = found?.id || "";
-    select.addEventListener("change", () => selectCollection(select.value));
-    await selectCollection(select.value);
-  } catch (err) {
-    state.error = err.message;
-    renderCatalog();
-    updateSummary();
-  }
-}
-
-async function loadTemplates() {
-  try {
-    state.templates = await apiJson("/api/templates");
-    const select = byId("templateSelect");
-    select.innerHTML = state.templates
-      .map((t) => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name || t.id)}</option>`)
-      .join("");
-    select.addEventListener("change", updateEstimate);
-  } catch (err) {
-    console.error("Erro ao carregar templates:", err);
+    card.addEventListener("click", () => selectCollection(c.id));
+    container.appendChild(card);
   }
 }
 
 async function selectCollection(id) {
   state.collectionId = id;
-  state.collection = state.collections.find((c) => c.id === id) || null;
-  if (state.collection?.defaultTemplateId) {
-    byId("templateSelect").value = state.collection.defaultTemplateId;
-  }
-  state.filters = { query: "" };
+  state.collection = state.collections.find((c) => c.id === id);
   state.selected.clear();
-  await loadCatalog();
+  state.filters = {};
+  state.query = "";
+  setStatus("status", "loading", "Carregando itens...");
+  await loadItems();
+  goStep("items");
+  setStatus("status", "ready", `${state.items.length} itens carregados.`);
 }
 
-async function loadCatalog() {
-  state.loading = true;
-  state.error = null;
-  renderCatalog();
-  try {
-    state.courses = await apiJson(`/api/items?collection=${encodeURIComponent(state.collectionId || "graduacao-cruzeiro")}`);
-    state.loading = false;
-    populateFilters();
-    renderCatalog();
-    updateSummary();
-  } catch (err) {
-    state.loading = false;
-    state.error = err.message;
-    renderCatalog();
-    updateSummary();
-  }
+async function loadItems() {
+  state.items = await api.json(`/api/items?collection=${encodeURIComponent(state.collectionId || LEGACY_ID)}`);
 }
 
-async function loadBatches() {
-  try {
-    const batches = await apiJson("/api/batches");
-    const list = byId("batchList");
-    list.innerHTML = "";
-    if (batches.length === 0) {
-      list.innerHTML = "<p class='grid-message'>Nenhum lote criado.</p>";
-      return;
+// ============================================================
+// Step: Items
+// ============================================================
+
+function applyFilters() {
+  const q = state.query;
+  state.filtered = state.items.filter((item) => {
+    const title = getItemTitle(item).toLowerCase();
+    const slug = item.slug.toLowerCase();
+    if (q && !title.includes(q) && !slug.includes(q)) return false;
+    for (const field of Object.keys(state.filters)) {
+      const value = state.filters[field];
+      if (!value) continue;
+      const itemValue = item[field] || item.fields?.[field] || "";
+      if (itemValue !== value) return false;
     }
-    for (const b of batches.slice().reverse()) {
-      const row = document.createElement("div");
-      row.className = "batch-row";
-      const collectionName = state.collections.find((c) => c.id === b.collectionId)?.name || b.collectionId || "padrão";
-      row.innerHTML = `
-        <div class="batch-id">${escapeHtml(b.id)}</div>
-        <div class="batch-meta">
-          ${escapeHtml(formatStatus(b.status))} · ${b.courses?.length || 0} itens · ${escapeHtml(collectionName)}
-          ${b.dryRun ? "· dry-run" : ""}
-        </div>
-      `;
-      row.addEventListener("click", () => openBatch(b.id));
-      list.appendChild(row);
-    }
-  } catch (err) {
-    byId("batchList").innerHTML = `<p class='grid-message error'>Erro ao listar lotes: ${escapeHtml(err.message)}</p>`;
+    return true;
+  });
+}
+
+function renderItems() {
+  applyFilters();
+
+  const filtersContainer = byId("itemsFilters");
+  filtersContainer.innerHTML = "";
+  const filterDefs = state.collection?.filters || [];
+  for (const def of filterDefs) {
+    const values = new Set(state.items.map((i) => i.fields?.[def.field] || i[def.field]).filter(Boolean));
+    const select = document.createElement("select");
+    select.innerHTML = `<option value="">${escapeHtml(def.label)}</option>` +
+      [...values].sort().map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("");
+    select.value = state.filters[def.field] || "";
+    select.addEventListener("change", () => {
+      state.filters[def.field] = select.value;
+      renderItems();
+    });
+    filtersContainer.appendChild(select);
   }
+
+  const grid = byId("itemsGrid");
+  grid.innerHTML = "";
+  for (const item of state.filtered) {
+    const card = document.createElement("div");
+    card.className = "item-card" + (state.selected.has(item.slug) ? " selected" : "");
+    card.innerHTML = `
+      <div class="select-marker"></div>
+      <div class="thumb">
+        ${item.current_card_url
+          ? `<img src="${escapeHtml(item.current_card_url)}" alt="" loading="lazy">`
+          : `<span class="placeholder">${initials(getItemTitle(item))}</span>`}
+      </div>
+      <div class="info">
+        <h4>${escapeHtml(getItemTitle(item))}</h4>
+        <div class="meta">${escapeHtml(item.modalidade || item.formacao || item.source_status || "")}</div>
+      </div>
+    `;
+    card.addEventListener("click", () => {
+      if (state.selected.has(item.slug)) state.selected.delete(item.slug);
+      else state.selected.add(item.slug);
+      renderItems();
+    });
+    grid.appendChild(card);
+  }
+
+  const bar = byId("selectionBar");
+  const count = state.selected.size;
+  byId("selectionText").textContent = count === 0
+    ? "Nenhum item selecionado"
+    : `${count} item${count === 1 ? "" : "s"} selecionado${count === 1 ? "" : "s"}`;
+  bar.classList.toggle("hidden", count === 0);
+  byId("btnItemsNext").disabled = count === 0;
 }
 
-function toggleSelection(slug, checked) {
-  if (checked) state.selected.add(slug);
-  else state.selected.delete(slug);
-  renderCatalog();
-  updateSelectionSummary();
+// ============================================================
+// Step: Config
+// ============================================================
+
+function renderConfig() {
+  const select = byId("templateSelect");
+  select.innerHTML = state.templates.map((t) => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name || t.id)}</option>`).join("");
+  const defaultTemplate = state.collection?.defaultTemplateId;
+  if (defaultTemplate && state.templates.some((t) => t.id === defaultTemplate)) {
+    select.value = defaultTemplate;
+  }
+  updateEstimate();
 }
 
-async function createBatch() {
-  const selectedCourses = state.courses.filter((c) => state.selected.has(c.slug));
-  if (selectedCourses.length === 0) return;
+function updateEstimate() {
+  const count = state.selected.size;
+  const dryRun = document.querySelector('input[name="dryRun"]:checked')?.value === "true";
+  const maxCalls = byId("maxCalls").value.trim();
+  const calls = dryRun
+    ? 0
+    : maxCalls
+    ? Math.min(parseInt(maxCalls, 10) || 0, count)
+    : count;
+  const cost = dryRun ? 0 : calls * COST_PER_CALL;
+  byId("estimateSummary").textContent = `${count} item${count === 1 ? "" : "s"} · até ${calls} chamada${calls === 1 ? "" : "s"} · ${formatCurrency(cost)}`;
+  byId("estimateHint").textContent = dryRun
+    ? "Modo de teste: nenhuma chamada real à OpenAI."
+    : "Geração real: as chamadas só começam após confirmação.";
+}
 
-  const dryRun = byId("dryRun").checked;
+async function createBatch(dryRun) {
+  if (state.selected.size === 0) return;
+
+  if (!dryRun) {
+    const ok = await confirmModal(
+      `Você está prestes a gerar imagens reais para ${state.selected.size} item(s). Isso consumirá créditos da OpenAI. Deseja continuar?`,
+      { confirmText: "Confirmar geração", danger: true }
+    );
+    if (!ok) return;
+  }
+
+  const templateId = byId("templateSelect").value;
+  const backgroundSource = document.querySelector('input[name="bgSource"]:checked')?.value || "ia";
+  const batchSize = parseInt(byId("batchSize").value, 10) || 1;
   const maxCalls = byId("maxCalls").value.trim();
   const maxCostUsd = byId("maxCostUsd").value.trim();
+  const model = byId("modelInput").value;
+  const quality = byId("qualitySelect").value;
+  const size = byId("sizeSelect").value;
 
-  const body = {
-    collection_id: state.collectionId || "graduacao-cruzeiro",
-    courses: selectedCourses.map((c) => ({ course_id: c.course_id || c.record_id || c.slug, slug: c.slug })),
-    template_id: byId("templateSelect").value.trim() || state.collection?.defaultTemplateId || "demo",
-    background_source: byId("backgroundSource").value,
-    batch_size: parseInt(byId("batchSize").value, 10) || 1,
-    max_calls: maxCalls ? parseInt(maxCalls, 10) : null,
-    max_cost_usd: maxCostUsd ? parseFloat(maxCostUsd) : null,
-    model: byId("model").value.trim(),
-    quality: byId("quality").value,
-    size: byId("size").value,
-    dryRun,
-  };
+  const courses = state.items
+    .filter((i) => state.selected.has(i.slug))
+    .map((i) => ({ course_id: i.course_id || i.record_id || i.slug, slug: i.slug }));
 
-  setStatus("loading", "Criando lote...");
+  setStatus("status", "loading", dryRun ? "Criando lote de teste..." : "Criando lote de produção...");
+
   try {
-    const result = await apiJson("/api/batches", {
+    const create = await api.json("/api/batches", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        collection_id: state.collectionId,
+        courses,
+        template_id: templateId,
+        background_source: backgroundSource,
+        batch_size: batchSize,
+        max_calls: maxCalls ? parseInt(maxCalls, 10) : null,
+        max_cost_usd: maxCostUsd ? parseFloat(maxCostUsd) : null,
+        model,
+        quality,
+        size,
+        dryRun,
+      }),
     });
-    state.selected.clear();
-    updateSummary();
-    renderCatalog();
-    await loadBatches();
-    openBatch(result.job.id);
+
+    state.jobId = create.job.id;
+    const start = await api.json(`/api/batches/${encodeURIComponent(state.jobId)}/start`, { method: "POST" });
+    state.job = start.job;
+    state.reviewSelected.clear();
+    goStep("review");
+    startPolling();
   } catch (err) {
-    setStatus("error", `Erro ao criar lote: ${err.message}`);
+    handleApiError(err, "status");
   }
 }
 
-function showCatalog() {
-  stopPolling();
-  state.currentJobId = null;
-  byId("batchStage").classList.add("hidden");
-  byId("batchPage").classList.remove("hidden");
-  loadCatalog();
-  loadBatches();
-}
+// ============================================================
+// Step: Review
+// ============================================================
 
-function openBatch(jobId) {
-  state.currentJobId = jobId;
-  byId("batchPage").classList.add("hidden");
-  byId("batchStage").classList.remove("hidden");
-  byId("batchTitle").textContent = jobId;
-  startPolling();
-}
-
-async function refreshBatch() {
-  if (!state.currentJobId) return;
-  try {
-    const job = await apiJson(`/api/batches/${state.currentJobId}`);
-    renderBatch(job);
-  } catch (err) {
-    setStatus("error", `Erro ao carregar lote: ${err.message}`);
-  }
+async function loadJob() {
+  state.job = await api.json(`/api/batches/${encodeURIComponent(state.jobId)}`);
 }
 
 function startPolling() {
   stopPolling();
-  refreshBatch();
-  state.pollInterval = setInterval(refreshBatch, 2000);
+  refreshReview();
+  state.pollTimer = setInterval(refreshReview, 2000);
 }
 
 function stopPolling() {
-  if (state.pollInterval) {
-    clearInterval(state.pollInterval);
-    state.pollInterval = null;
+  if (state.pollTimer) {
+    clearInterval(state.pollTimer);
+    state.pollTimer = null;
   }
 }
 
-function renderBatch(job) {
-  byId("batchStatusBadge").textContent = formatStatus(job.status);
-  byId("batchStatusBadge").className = `status-badge status-${job.status}`;
-
-  const stats = job.stats || {};
-  const total = job.courses?.length || 0;
-  const completed = stats.completed || 0;
-  const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
-
-  byId("batchProgressText").textContent = `${completed} / ${total}`;
-  byId("progressFill").style.width = `${progress}%`;
-
-  byId("statCompleted").textContent = completed;
-  byId("statErrors").textContent = stats.errors || 0;
-  byId("statApproved").textContent = stats.approved || 0;
-  byId("statRejected").textContent = stats.rejected || 0;
-  byId("statCalls").textContent = stats.calls || 0;
-  byId("statCost").textContent = (stats.cost_usd || 0).toFixed(2);
-
-  const running = job.status === "executando";
-  const createdOrPaused = job.status === "criado" || job.status === "pausado";
-  const final = ["concluido", "concluido_com_erros", "cancelado", "bloqueado"].includes(job.status);
-  byId("btnStart").disabled = !createdOrPaused;
-  byId("btnResume").disabled = !createdOrPaused;
-  byId("btnPause").disabled = !running;
-  byId("btnCancel").disabled = final;
-  byId("btnRetryErrors").disabled = running;
-  byId("btnRetryRejected").disabled = running;
-
-  renderItems(job);
-}
-
-function catalogFileUrl(item, file) {
-  if (item.ai_background_url) {
-    const url = new URL(item.ai_background_url, window.location.origin);
-    const parts = url.pathname.split("/").filter(Boolean);
-    if (parts.length === 4) {
-      return `/api/catalog/${encodeURIComponent(parts[2])}/${encodeURIComponent(item.slug)}/${encodeURIComponent(file)}`;
-    }
-    return `/api/catalog/${encodeURIComponent(item.slug)}/${encodeURIComponent(file)}`;
+async function refreshReview() {
+  try {
+    await loadJob();
+    renderReview();
+  } catch (err) {
+    handleApiError(err, "status");
   }
-  return `/api/catalog/${encodeURIComponent(item.slug)}/${encodeURIComponent(file)}`;
 }
 
-function renderItems(job) {
-  const list = byId("itemsList");
-  list.innerHTML = "";
-  const courses = job.courses || [];
+function getCatalogUrl(slug, file) {
+  if (state.collectionId && state.collectionId !== LEGACY_ID) {
+    return `/api/catalog/${encodeURIComponent(state.collectionId)}/${encodeURIComponent(slug)}/${encodeURIComponent(file)}`;
+  }
+  return `/api/catalog/${encodeURIComponent(slug)}/${encodeURIComponent(file)}`;
+}
+
+function renderReview() {
+  const job = state.job;
+  const stats = job?.stats || {};
+  byId("reviewStats").innerHTML = `
+    <div class="stat"><strong>${stats.total || 0}</strong> total</div>
+    <div class="stat"><strong>${stats.completed || 0}</strong> concluídos</div>
+    <div class="stat"><strong>${stats.approved || 0}</strong> aprovados</div>
+    <div class="stat"><strong>${stats.rejected || 0}</strong> rejeitados</div>
+    <div class="stat"><strong>${stats.errors || 0}</strong> erros</div>
+    <div class="stat"><strong>${stats.calls || 0}</strong> chamadas</div>
+    <div class="stat"><strong>${formatCurrency(stats.cost_usd)}</strong> custo</div>
+    <div class="stat"><span class="badge ${statusClass(job?.status)}">${formatStatus(job?.status)}</span></div>
+  `;
+
+  const running = job?.status === "executando";
+  byId("btnApproveSelected").disabled = state.reviewSelected.size === 0;
+  byId("btnRejectSelected").disabled = state.reviewSelected.size === 0;
+
+  const container = byId("reviewItems");
+  container.innerHTML = "";
+
+  const courses = job?.courses || [];
   if (courses.length === 0) {
-    list.innerHTML = "<p class='grid-message'>Nenhum item no lote.</p>";
+    container.innerHTML = "<p class='hint'>Nenhum item no lote.</p>";
     return;
   }
 
   for (const item of courses) {
-    const card = document.createElement("div");
-    card.className = "item-card";
-    const course = state.courses.find((c) => c.slug === item.slug);
-    const name = course ? getItemTitle(course) : item.slug;
+    const record = state.items.find((i) => i.slug === item.slug);
+    const title = record ? getItemTitle(record) : item.slug;
+    const isFinal = ["pronto_revisao", "aprovado", "rejeitado", "erro"].includes(item.status);
+    const hasCard = isFinal;
+    const hasBg = ["fundo_gerado", "renderizando_card", "gerando_whatsapp", "pronto_revisao", "aprovado", "rejeitado", "erro"].includes(item.status);
 
-    const header = document.createElement("div");
-    header.className = "item-header";
-    header.innerHTML = `
-      <span class="item-name">${escapeHtml(name)}</span>
-      <span class="item-status status-${item.status}">${formatStatus(item.status)}</span>
+    const div = document.createElement("div");
+    div.className = "review-item";
+    div.innerHTML = `
+      <div class="review-item-header">
+        <input type="checkbox" class="review-select" data-slug="${escapeHtml(item.slug)}" ${state.reviewSelected.has(item.slug) ? "checked" : ""}>
+        <h4>${escapeHtml(title)}</h4>
+        <span class="badge ${statusClass(item.status)}">${formatStatus(item.status)}</span>
+        ${item.error ? `<span class="hint">${escapeHtml(item.error)}</span>` : ""}
+        <span class="spacer"></span>
+        <div class="review-item-actions">
+          ${hasCard ? `<button class="btn-secondary download-png" data-slug="${escapeHtml(item.slug)}">PNG</button>` : ""}
+          ${hasCard ? `<button class="btn-secondary download-wa" data-slug="${escapeHtml(item.slug)}">WhatsApp</button>` : ""}
+          ${item.status === "pronto_revisao" || item.status === "gerando_whatsapp"
+            ? `<button class="btn-success approve-item" data-slug="${escapeHtml(item.slug)}">Aprovar</button>
+               <button class="btn-danger reject-item" data-slug="${escapeHtml(item.slug)}">Rejeitar</button>`
+            : ""}
+          ${item.status === "erro" || item.status === "rejeitado"
+            ? `<button class="btn-secondary retry-item" data-slug="${escapeHtml(item.slug)}">Gerar novamente</button>`
+            : ""}
+        </div>
+      </div>
+      <div class="review-comparison">
+        <div class="review-column">
+          <h5>Atual</h5>
+          <div class="thumb">
+            ${record?.current_card_url
+              ? `<img src="${escapeHtml(record.current_card_url)}" alt="Card atual">`
+              : `<div class="missing">Sem imagem atual</div>`}
+          </div>
+        </div>
+        <div class="review-column">
+          <h5>Novo</h5>
+          <div class="thumb">
+            ${hasCard
+              ? `<img src="${getCatalogUrl(item.slug, `${item.slug}-card.png`)}" alt="Novo card">`
+              : hasBg
+              ? `<img src="${getCatalogUrl(item.slug, `${item.slug}-fundo.png`)}" alt="Novo fundo">`
+              : `<div class="missing">Aguardando processamento</div>`}
+          </div>
+        </div>
+      </div>
     `;
-    card.appendChild(header);
+    container.appendChild(div);
+  }
 
-    if (item.error) {
-      const err = document.createElement("div");
-      err.className = "item-error";
-      err.textContent = item.error;
-      card.appendChild(err);
-    }
+  document.querySelectorAll(".review-select").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      if (cb.checked) state.reviewSelected.add(cb.dataset.slug);
+      else state.reviewSelected.delete(cb.dataset.slug);
+      renderReview();
+    });
+  });
 
-    const actions = document.createElement("div");
-    actions.className = "item-actions";
+  document.querySelectorAll(".approve-item").forEach((btn) => btn.addEventListener("click", () => itemAction(btn.dataset.slug, "approve")));
+  document.querySelectorAll(".reject-item").forEach((btn) => btn.addEventListener("click", () => itemAction(btn.dataset.slug, "reject")));
+  document.querySelectorAll(".retry-item").forEach((btn) => btn.addEventListener("click", () => itemAction(btn.dataset.slug, "regenerate")));
+  document.querySelectorAll(".download-png").forEach((btn) => btn.addEventListener("click", () => downloadItem(btn.dataset.slug, "card")));
+  document.querySelectorAll(".download-wa").forEach((btn) => btn.addEventListener("click", () => downloadItem(btn.dataset.slug, "whatsapp")));
 
-    const hasBackground = ["fundo_gerado", "renderizando_card", "gerando_whatsapp", "pronto_revisao", "aprovado", "rejeitado"].includes(item.status);
-    const hasCard = ["pronto_revisao", "aprovado", "rejeitado", "gerando_whatsapp"].includes(item.status);
-
-    if (hasBackground) {
-      actions.appendChild(linkButton("Fundo", catalogFileUrl(course || item, `${item.slug}-fundo.png`)));
-    }
-    if (hasCard) {
-      actions.appendChild(linkButton("Card", catalogFileUrl(course || item, `${item.slug}-card.png`)));
-      actions.appendChild(linkButton("WhatsApp", catalogFileUrl(course || item, `${item.slug}-whatsapp.jpg`)));
-    }
-    if (item.status === "pronto_revisao" || item.status === "gerando_whatsapp") {
-      actions.appendChild(actionButton("Aprovar", () => approveItem(item.slug), "success"));
-      actions.appendChild(actionButton("Rejeitar", () => rejectItem(item.slug), "danger"));
-    }
-
-    if (actions.children.length === 0) {
-      actions.innerHTML = `<span style="font-size:12px;color:#64748b">Aguardando processamento</span>`;
-    }
-
-    card.appendChild(actions);
-    list.appendChild(card);
+  if (running) {
+    setStatus("status", "loading", `Produção em andamento · ${stats.completed}/${stats.total}`);
+  } else {
+    setStatus("status", "ready", "Produção concluída.");
   }
 }
 
-function linkButton(label, url) {
-  const a = document.createElement("a");
-  a.href = url;
-  a.target = "_blank";
-  a.textContent = label;
-  a.className = "secondary button-link";
-  return a;
-}
-
-function actionButton(label, onClick, cls) {
-  const btn = document.createElement("button");
-  btn.textContent = label;
-  btn.className = cls || "secondary";
-  btn.addEventListener("click", onClick);
-  return btn;
-}
-
-async function batchAction(method, pathSuffix, confirmMsg) {
-  if (!state.currentJobId) return;
-  if (confirmMsg && !window.confirm(confirmMsg)) return;
-  setStatus("loading", "Aguarde...");
+async function itemAction(slug, action) {
+  let url;
+  if (action === "regenerate") {
+    url = `/api/items/${encodeURIComponent(slug)}/generate?collection=${encodeURIComponent(state.collectionId || LEGACY_ID)}`;
+  } else {
+    url = `/api/items/${encodeURIComponent(slug)}/${action}?collection=${encodeURIComponent(state.collectionId || LEGACY_ID)}`;
+  }
+  setStatus("status", "loading", "Atualizando item...");
   try {
-    const result = await apiJson(`/api/batches/${state.currentJobId}/${pathSuffix}`, { method });
-    renderBatch(result.job || result);
-    setStatus("ready", "Ação concluída");
+    await api.json(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dryRun: action === "regenerate" }) });
+    setStatus("status", "success", "Item atualizado.");
+    await refreshReview();
   } catch (err) {
-    setStatus("error", `Erro: ${err.message}`);
+    handleApiError(err, "status");
   }
 }
 
-async function approveItem(slug) {
-  if (!window.confirm(`Aprovar card de "${slug}"?`)) return;
-  await apiJson(`/api/items/${encodeURIComponent(slug)}/approve?collection=${encodeURIComponent(state.collectionId || "graduacao-cruzeiro")}`, { method: "POST" });
-  await refreshBatch();
-}
+async function bulkAction(action) {
+  if (state.reviewSelected.size === 0) return;
+  const label = action === "approve" ? "aprovar" : "rejeitar";
+  const ok = await confirmModal(`${state.reviewSelected.size} item(s) serão ${label}(s). Continuar?`, { danger: action === "reject" });
+  if (!ok) return;
 
-async function rejectItem(slug) {
-  if (!window.confirm(`Rejeitar card de "${slug}"?`)) return;
-  await apiJson(`/api/items/${encodeURIComponent(slug)}/reject?collection=${encodeURIComponent(state.collectionId || "graduacao-cruzeiro")}`, { method: "POST" });
-  await refreshBatch();
-}
-
-async function dryRunSync() {
-  setStatus("loading", "Analisando sincronização...");
+  setStatus("status", "loading", "Atualizando itens...");
   try {
-    const result = await apiJson("/api/xlsx/sync-preview", { method: "POST" });
-    const report = result.report;
-    const msg = `Dry-run: ${report.summary.wouldChange} alterações, ${report.summary.skipped} ignorados, ${report.summary.notFound} não encontrados.`;
-    setStatus(report.summary.wouldChange > 0 ? "loading" : "ready", msg);
+    for (const slug of state.reviewSelected) {
+      await api.json(`/api/items/${encodeURIComponent(slug)}/${action}?collection=${encodeURIComponent(state.collectionId || LEGACY_ID)}`, { method: "POST" });
+    }
+    state.reviewSelected.clear();
+    setStatus("status", "success", "Itens atualizados.");
+    await refreshReview();
   } catch (err) {
-    setStatus("error", `Erro no dry-run: ${err.message}`);
+    handleApiError(err, "status");
   }
 }
 
-async function syncSpreadsheet() {
-  if (!window.confirm("Sincronizar a planilha input/cursos.xlsx com os itens aprovados? Será feito backup antes.")) return;
-  setStatus("loading", "Sincronizando planilha...");
+async function downloadItem(slug, type) {
+  const file = type === "whatsapp" ? `${slug}-whatsapp.jpg` : `${slug}-card.png`;
+  const url = getCatalogUrl(slug, file);
+  const filename = file;
+  setStatus("status", "loading", "Preparando download...");
   try {
-    const result = await apiJson("/api/xlsx/sync", {
+    await downloadUrl(url, filename);
+    setStatus("status", "success", "Download iniciado.");
+  } catch (err) {
+    handleApiError(err, "status");
+  }
+}
+
+async function exportXlsx() {
+  setStatus("status", "loading", "Exportando planilha...");
+  try {
+    const result = await api.json("/api/xlsx/export", { method: "POST" });
+    setStatus("status", "success", `Exportado para ${result.outputPath || "output/ai-catalog/cursos-export.xlsx"}.`);
+  } catch (err) {
+    handleApiError(err, "status");
+  }
+}
+
+async function syncXlsx() {
+  const ok = await confirmModal("Isso atualizará a planilha fonte com os itens aprovados. Um backup será feito antes. Continuar?", { danger: true });
+  if (!ok) return;
+  setStatus("status", "loading", "Sincronizando planilha...");
+  try {
+    const result = await api.json("/api/xlsx/sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ confirm: true }),
     });
-    const report = result.report;
-    setStatus("ready", `Sincronizado: ${report.summary.wouldChange} alterações. Backup: ${result.backup || "nenhum"}`);
+    setStatus("status", "success", `${result.report?.summary?.wouldChange || 0} alterações sincronizadas.`);
   } catch (err) {
-    setStatus("error", `Erro ao sincronizar: ${err.message}`);
+    handleApiError(err, "status");
   }
-}
-
-async function exportSpreadsheet() {
-  setStatus("loading", "Exportando planilha...");
-  try {
-    const result = await apiJson("/api/xlsx/export", { method: "POST" });
-    setStatus("ready", `Exportado para: ${result.outputPath || "output/ai-catalog/cursos-export.xlsx"}`);
-  } catch (err) {
-    setStatus("error", `Erro ao exportar: ${err.message}`);
-  }
-}
-
-async function init() {
-  byId("searchInput").addEventListener("input", (e) => {
-    state.filters.query = e.target.value;
-    renderCatalog();
-  });
-
-  byId("btnSelectAll").addEventListener("click", () => {
-    for (const c of filteredCourses()) state.selected.add(c.slug);
-    renderCatalog();
-    updateSelectionSummary();
-  });
-  byId("btnClearSelection").addEventListener("click", () => {
-    state.selected.clear();
-    renderCatalog();
-    updateSelectionSummary();
-  });
-  byId("btnBarClear").addEventListener("click", () => {
-    state.selected.clear();
-    renderCatalog();
-    updateSelectionSummary();
-  });
-
-  byId("btnCreateBatch").addEventListener("click", createBatch);
-  byId("dryRun").addEventListener("change", updateEstimate);
-  byId("maxCalls").addEventListener("input", updateEstimate);
-  byId("maxCostUsd").addEventListener("input", updateEstimate);
-  byId("batchSize").addEventListener("input", updateEstimate);
-
-  byId("btnBackToCatalog").addEventListener("click", showCatalog);
-  byId("btnStart").addEventListener("click", () => batchAction("POST", "start"));
-  byId("btnPause").addEventListener("click", () => batchAction("POST", "pause"));
-  byId("btnResume").addEventListener("click", () => batchAction("POST", "resume"));
-  byId("btnCancel").addEventListener("click", () => batchAction("POST", "cancel", "Cancelar este lote?"));
-  byId("btnRetryErrors").addEventListener("click", () => batchAction("POST", "retry-errors", "Reprocessar itens com erro?"));
-  byId("btnRetryRejected").addEventListener("click", () => batchAction("POST", "retry-rejected", "Reprocessar itens rejeitados?"));
-
-  byId("btnDryRunSync").addEventListener("click", dryRunSync);
-  byId("btnSync").addEventListener("click", syncSpreadsheet);
-  byId("btnExport").addEventListener("click", exportSpreadsheet);
-
-  await loadTemplates();
-  await loadCollections();
-  loadBatches();
 }
 
 if (document.readyState === "loading") {

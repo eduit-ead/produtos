@@ -1,0 +1,93 @@
+.base-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.base-card h3 { margin: 0; font-size: 15px; }
+.base-card .meta { color: var(--text-muted); font-size: 12px; }
+.base-card .description { color: var(--text-muted); font-size: 13px; margin: 0; }
+
+.base-card .actions {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.base-card .actions a, .base-card .actions button {
+  flex: 1 1 45%;
+  font-size: 12px;
+  padding: 8px;
+}
+
+.template-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.template-card h3 { margin: 0; font-size: 15px; }
+.template-card .meta { color: var(--text-muted); font-size: 12px; }
+
+.template-card .actions {
+  margin-top: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.asset-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.asset-card .thumb {
+  aspect-ratio: 1 / 1;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.asset-card .thumb img { width: 100%; height: 100%; object-fit: cover; }
+
+.asset-card .name {
+  font-size: 12px;
+  color: var(--text-muted);
+  word-break: break-all;
+}
+
+.menu {
+  position: relative;
+}
+
+.menu-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+}
+
+.menu-body {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  min-width: 160px;
+  display: none;
+  flex-direction: column;
+  z-index: 50;
+}
+
+.menu.open .menu-body { display: flex; }
+
+.menu-body button {
+  justify-content: flex-start;
+  background: transparent;
+  border-radius: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.menu-body button:last-child { border-bottom: none; }

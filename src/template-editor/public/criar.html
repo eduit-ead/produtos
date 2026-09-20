@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Criar imagem</title>
+  <link rel="stylesheet" href="/shared.css">
+  <link rel="stylesheet" href="/criar.css">
+</head>
+<body>
+  <header id="appHeader" class="app-header"></header>
+
+  <main class="container">
+    <div id="stageSelect">
+      <h1 class="page-title">Escolha um template</h1>
+      <p class="page-subtitle">Selecione o template que será usado para criar a imagem.</p>
+      <div id="templateCards" class="grid grid-4"></div>
+    </div>
+
+    <div id="stageEditor" class="hidden">
+      <div class="editor-layout">
+        <aside class="form-panel card">
+          <div class="form-header">
+            <button type="button" id="btnBack" class="btn-secondary">Voltar</button>
+            <button type="button" id="btnReset" class="btn-ghost">Restaurar</button>
+          </div>
+          <h2 id="templateName">Template</h2>
+          <p id="templateMeta" class="hint"></p>
+
+          <form id="variablesForm"></form>
+
+          <div class="form-actions">
+            <button type="button" id="btnDownload" class="btn-primary" disabled>Baixar PNG</button>
+            <button type="button" id="btnDownloadWhatsapp" class="btn-secondary" disabled>Baixar WhatsApp</button>
+          </div>
+
+          <div class="advanced-link">
+            <a href="/editor.html" target="_blank" class="btn-link">Precisa alterar o template? Abrir editor avançado</a>
+          </div>
+
+          <div id="status" class="status ready">Pronto</div>
+        </aside>
+
+        <section class="preview-panel card">
+          <h3>Preview</h3>
+          <div class="preview-wrap">
+            <img id="previewImg" alt="Preview" class="hidden">
+          </div>
+          <p class="hint">O preview é renderizado no servidor e reflete exatamente o arquivo que será baixado.</p>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <script src="/shared.js"></script>
+  <script src="/criar.js"></script>
+</body>
+</html>

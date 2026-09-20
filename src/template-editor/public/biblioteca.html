@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Biblioteca</title>
+  <link rel="stylesheet" href="/shared.css">
+  <link rel="stylesheet" href="/biblioteca.css">
+</head>
+<body>
+  <header id="appHeader" class="app-header"></header>
+
+  <main class="container">
+    <h1 class="page-title">Biblioteca</h1>
+    <p class="page-subtitle">Gerencie bases de conteúdo, templates e assets usados nas produções.</p>
+
+    <div class="tabs">
+      <div class="tab active" data-tab="bases">Bases de conteúdo</div>
+      <div class="tab" data-tab="templates">Templates</div>
+      <div class="tab" data-tab="assets">Assets</div>
+    </div>
+
+    <section id="tab-bases" class="tab-panel active">
+      <div class="action-bar">
+        <a href="/importar.html" class="btn-primary">Nova base de conteúdo</a>
+        <span class="spacer"></span>
+        <span id="basesCount" class="hint"></span>
+      </div>
+      <div id="basesList" class="grid grid-3"></div>
+    </section>
+
+    <section id="tab-templates" class="tab-panel">
+      <div class="action-bar">
+        <button type="button" id="btnNewTemplate" class="btn-primary">Novo template</button>
+        <span class="spacer"></span>
+        <a href="/editor.html" target="_blank" class="btn-secondary">Editor avançado</a>
+      </div>
+      <div id="templatesList" class="grid grid-4"></div>
+    </section>
+
+    <section id="tab-assets" class="tab-panel">
+      <div class="action-bar">
+        <label class="btn-primary">
+          <input type="file" id="assetUpload" accept=".png,.jpg,.jpeg,.svg" style="display:none">
+          Enviar asset
+        </label>
+        <span class="spacer"></span>
+        <input type="text" id="assetSearch" placeholder="Buscar assets..." style="max-width:260px">
+      </div>
+      <div id="assetsList" class="grid grid-6"></div>
+    </section>
+
+    <div id="status" class="status ready">Pronto</div>
+  </main>
+
+  <script src="/shared.js"></script>
+  <script src="/biblioteca.js"></script>
+</body>
+</html>

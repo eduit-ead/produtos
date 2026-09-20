@@ -3,167 +3,155 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Produção em Lote</title>
-  <link rel="stylesheet" href="/batch.css?v=3">
+  <title>Produção em lote</title>
+  <link rel="stylesheet" href="/shared.css">
+  <link rel="stylesheet" href="/batch.css">
 </head>
 <body>
-  <div id="app">
-    <header class="studio-header">
-      <h1>Produção em Lote</h1>
-      <nav class="nav-links">
-        <a href="/">Estúdio</a>
-        <a href="/collections.html">Coleções</a>
-        <a href="/cursos.html">Cursos</a>
-        <a href="/batch.html" class="active">Produção em lote</a>
-        <a href="/editor.html">Editor avançado</a>
-      </nav>
-    </header>
+  <header id="appHeader" class="app-header"></header>
 
-    <main class="batch-page" id="batchPage">
-      <section class="top-bar">
-        <div class="summary-compact">
-          <div class="summary-pill"><span id="summaryTotal">0</span><label>Total</label></div>
-          <div class="summary-pill"><span id="summarySelected">0</span><label>Selecionados</label></div>
-          <div class="summary-pill"><span id="summaryFiltered">0</span><label>Filtrados</label></div>
-        </div>
-      </section>
+  <main class="container">
+    <div class="page-header">
+      <h1 class="page-title">Produção em lote</h1>
+      <p class="page-subtitle">Gere várias imagens a partir de uma base de conteúdo.</p>
+    </div>
 
-      <section class="filters-bar">
+    <div class="wizard-steps" id="wizardSteps">
+      <div class="wizard-step" data-step="base"><span class="dot">1</span> Base</div>
+      <span class="line"></span>
+      <div class="wizard-step" data-step="items"><span class="dot">2</span> Itens</div>
+      <span class="line"></span>
+      <div class="wizard-step" data-step="config"><span class="dot">3</span> Configuração</div>
+      <span class="line"></span>
+      <div class="wizard-step" data-step="review"><span class="dot">4</span> Revisão</div>
+    </div>
+
+    <section id="step-base" class="step-panel">
+      <div class="card">
+        <h3>Escolha uma base de conteúdo</h3>
+        <p class="hint">A base define quais dados serão usados para gerar as imagens.</p>
+        <div id="baseCards" class="grid grid-3"></div>
+        <div id="baseEmpty" class="hidden"></div>
+      </div>
+    </section>
+
+    <section id="step-items" class="step-panel">
+      <div class="items-toolbar card">
         <input type="text" id="searchInput" placeholder="Buscar por nome...">
-        <select id="filterModalidade"><option value="">Todas as modalidades</option></select>
-        <select id="filterFormacao"><option value="">Todas as formações</option></select>
-        <select id="filterStatus"><option value="">Todos os status</option></select>
-        <button id="btnSelectAll" class="secondary">Selecionar todos os filtrados</button>
-        <button id="btnClearSelection" class="secondary">Limpar seleção</button>
-      </section>
+        <span class="spacer"></span>
+        <button type="button" id="btnSelectFiltered" class="btn-secondary">Selecionar filtrados</button>
+        <button type="button" id="btnClearSelection" class="btn-ghost">Limpar</button>
+      </div>
 
-      <div class="batch-layout">
-        <section class="courses-area">
-          <div id="courseGrid" class="course-grid"></div>
-          <div id="gridMessage" class="grid-message hidden"></div>
+      <div id="itemsFilters" class="items-filters"></div>
+      <div id="itemsGrid" class="items-grid"></div>
 
-          <section class="existing-batches">
-            <h2>Lotes existentes</h2>
-            <div id="batchList" class="batch-list"></div>
-          </section>
-        </section>
+      <div id="selectionBar" class="selection-bar hidden">
+        <span id="selectionText">0 item selecionado</span>
+        <span class="spacer"></span>
+        <button type="button" id="btnItemsBack" class="btn-secondary">Voltar</button>
+        <button type="button" id="btnItemsNext" class="btn-primary" disabled>Continuar</button>
+      </div>
+    </section>
 
-        <aside class="config-panel" id="configPanel">
-          <h2>Novo lote</h2>
-          <div id="selectionSummary" class="selection-summary">Nenhum curso selecionado</div>
+    <section id="step-config" class="step-panel">
+      <div class="config-layout">
+        <div class="card config-main">
+          <h3>Configuração da produção</h3>
 
-          <label>Coleção</label>
-          <select id="collectionSelect"></select>
+          <div class="field-group">
+            <label for="templateSelect">Template</label>
+            <select id="templateSelect"></select>
+          </div>
 
-          <label>Template</label>
-          <select id="templateSelect"></select>
+          <div class="field-group">
+            <label>Origem do fundo</label>
+            <div class="radio-list">
+              <label><input type="radio" name="bgSource" value="ia" checked> Gerar imagem com IA</label>
+              <label><input type="radio" name="bgSource" value="original"> Usar imagem existente da base</label>
+            </div>
+          </div>
 
-          <label>Origem do fundo</label>
-          <select id="backgroundSource">
-            <option value="ia">Geração por IA</option>
-            <option value="original">Imagem atual do item</option>
-          </select>
+          <div class="field-group">
+            <label>Modo</label>
+            <div class="radio-list">
+              <label><input type="radio" name="dryRun" value="true" checked> Teste sem gastar créditos</label>
+              <label><input type="radio" name="dryRun" value="false"> Gerar imagens com IA</label>
+            </div>
+            <div class="hint">No modo de teste nenhuma chamada real é feita à OpenAI.</div>
+          </div>
 
-          <label class="checkbox-label">
-            <input type="checkbox" id="dryRun" checked>
-            Dry-run (sem chamadas reais à OpenAI)
-          </label>
-
-          <details class="advanced-settings">
-            <summary>Configurações avançadas</summary>
+          <details class="advanced-details">
+            <summary>Opções avançadas</summary>
             <div class="advanced-content">
-              <label>Tamanho do lote</label>
-              <input type="number" id="batchSize" value="1" min="1" max="50">
-
-              <label>Limite de chamadas à API</label>
-              <input type="number" id="maxCalls" value="" placeholder="Opcional">
-
-              <label>Limite de custo (USD)</label>
-              <input type="number" id="maxCostUsd" value="" placeholder="Opcional" step="0.01">
-
-              <label>Modelo</label>
-              <input type="text" id="model" value="gpt-image-2.5-flare" readonly>
-
-              <label>Qualidade</label>
-              <select id="quality">
-                <option value="medium" selected>média</option>
-                <option value="high">alta</option>
-                <option value="low">baixa</option>
-              </select>
-
-              <label>Tamanho</label>
-              <select id="size">
-                <option value="1024x1024" selected>1024x1024</option>
-                <option value="1536x1024">1536x1024</option>
-                <option value="1024x1536">1024x1536</option>
-              </select>
+              <div class="field-group">
+                <label for="batchSize">Tamanho do lote</label>
+                <input type="number" id="batchSize" value="1" min="1" max="50">
+              </div>
+              <div class="field-group">
+                <label for="maxCalls">Limite de chamadas à API</label>
+                <input type="number" id="maxCalls" placeholder="Opcional" min="0">
+              </div>
+              <div class="field-group">
+                <label for="maxCostUsd">Limite de custo (USD)</label>
+                <input type="number" id="maxCostUsd" placeholder="Opcional" step="0.01" min="0">
+              </div>
+              <div class="field-group">
+                <label for="modelInput">Modelo</label>
+                <input type="text" id="modelInput" value="gpt-image-2.5-flare" readonly>
+              </div>
+              <div class="field-group">
+                <label for="qualitySelect">Qualidade</label>
+                <select id="qualitySelect">
+                  <option value="medium" selected>média</option>
+                  <option value="high">alta</option>
+                  <option value="low">baixa</option>
+                </select>
+              </div>
+              <div class="field-group">
+                <label for="sizeSelect">Tamanho da imagem</label>
+                <select id="sizeSelect">
+                  <option value="1024x1024" selected>1024×1024</option>
+                  <option value="1536x1024">1536×1024</option>
+                  <option value="1024x1536">1024×1536</option>
+                </select>
+              </div>
             </div>
           </details>
 
-          <div class="config-footer" id="configFooter">
-            <div class="estimate" id="estimate">0 cursos · 0 chamadas · US$ 0.00</div>
-            <button id="btnCreateBatch" class="primary" disabled>Criar lote</button>
-          </div>
-        </aside>
-      </div>
-    </main>
-
-    <div id="selectionBar" class="selection-bar hidden">
-      <span id="selectionBarText">0 curso(s) selecionado(s)</span>
-      <button id="btnBarClear" class="secondary">Limpar</button>
-    </div>
-
-    <section id="batchStage" class="batch-stage hidden">
-      <div class="batch-stage-inner">
-        <aside class="batch-detail-panel">
-          <div class="batch-detail-header">
-            <button id="btnBackToCatalog" class="secondary">Voltar ao catálogo</button>
-            <h2 id="batchTitle">Lote</h2>
+          <div class="estimate-box">
+            <div id="estimateSummary">0 itens · 0 chamadas · US$ 0.00</div>
+            <div id="estimateHint" class="hint">Estimativa baseada no modo selecionado.</div>
           </div>
 
-          <div class="batch-status-row">
-            <span id="batchStatusBadge" class="status-badge">-</span>
-            <span id="batchProgressText">0 / 0</span>
+          <div class="step-actions">
+            <button type="button" id="btnConfigBack" class="btn-secondary">Voltar</button>
+            <button type="button" id="btnConfigTest" class="btn-secondary">Testar sem gastar créditos</button>
+            <button type="button" id="btnConfigReal" class="btn-primary">Gerar imagens com IA</button>
           </div>
-
-          <div class="progress-bar"><div id="progressFill" class="progress-fill" style="width:0%"></div></div>
-
-          <div class="stats-grid">
-            <div class="stat"><span id="statCompleted">0</span><label>Concluídos</label></div>
-            <div class="stat"><span id="statErrors">0</span><label>Erros</label></div>
-            <div class="stat"><span id="statApproved">0</span><label>Aprovados</label></div>
-            <div class="stat"><span id="statRejected">0</span><label>Rejeitados</label></div>
-            <div class="stat"><span id="statCalls">0</span><label>Chamadas</label></div>
-            <div class="stat"><span id="statCost">0.00</span><label>Custo USD</label></div>
-          </div>
-
-          <div class="batch-actions">
-            <button id="btnStart" class="primary">Iniciar</button>
-            <button id="btnPause" class="secondary">Pausar</button>
-            <button id="btnResume" class="secondary">Continuar</button>
-            <button id="btnCancel" class="danger">Cancelar</button>
-            <button id="btnRetryErrors" class="secondary">Reprocessar erros</button>
-            <button id="btnRetryRejected" class="secondary">Reprocessar rejeitados</button>
-          </div>
-
-          <div class="xlsx-actions">
-            <h3>Planilha</h3>
-            <button id="btnDryRunSync" class="secondary">Dry-run sincronização</button>
-            <button id="btnSync" class="secondary">Sincronizar planilha</button>
-            <button id="btnExport" class="secondary">Exportar planilha</button>
-          </div>
-
-          <div id="status" class="status ready">Pronto</div>
-        </aside>
-
-        <section class="items-panel">
-          <h2>Itens do lote</h2>
-          <div id="itemsList" class="items-list"></div>
-        </section>
+        </div>
       </div>
     </section>
-  </div>
 
-  <script src="/batch.js?v=3"></script>
+    <section id="step-review" class="step-panel">
+      <div class="review-header card">
+        <div class="review-stats" id="reviewStats"></div>
+        <div class="review-actions">
+          <button type="button" id="btnReviewBack" class="btn-secondary">Voltar</button>
+          <button type="button" id="btnApproveSelected" class="btn-success" disabled>Aprovar selecionados</button>
+          <button type="button" id="btnRejectSelected" class="btn-danger" disabled>Rejeitar selecionados</button>
+          <button type="button" id="btnExportXlsx" class="btn-secondary">Exportar planilha</button>
+          <button type="button" id="btnSyncXlsx" class="btn-ghost">Sincronizar fonte</button>
+        </div>
+      </div>
+
+      <div id="reviewItems" class="review-items"></div>
+    </section>
+
+    <div id="status" class="status ready">Pronto</div>
+  </main>
+
+  <script src="/shared.js"></script>
+  <script src="/batch.js"></script>
 </body>
 </html>

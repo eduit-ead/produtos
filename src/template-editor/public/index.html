@@ -3,51 +3,99 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Estúdio de Criação</title>
-  <link rel="stylesheet" href="/studio.css">
+  <title>Produção Visual</title>
+  <link rel="stylesheet" href="/shared.css">
+  <link rel="stylesheet" href="/home.css">
 </head>
 <body>
-  <div id="app">
-    <header class="studio-header">
-      <h1>Estúdio de Criação</h1>
-      <nav class="nav-links">
-        <a href="/" class="active">Estúdio</a>
-        <a href="/collections.html">Coleções</a>
-        <a href="/cursos.html">Cursos</a>
-        <a href="/batch.html">Produção em lote</a>
-        <a href="/editor.html">Editor avançado</a>
-      </nav>
-    </header>
+  <header id="appHeader" class="app-header"></header>
 
-    <main class="studio-workspace">
-      <section id="stageSelect" class="stage-select">
-        <h2>Escolha um template</h2>
-        <div id="templateCards" class="template-cards"></div>
-      </section>
+  <main class="container">
+    <section class="hero">
+      <h1 class="page-title">Crie imagens individuais ou em lote</h1>
+      <p class="page-subtitle">
+        Escolha um template, preencha os dados e produza arquivos prontos para redes sociais e WhatsApp.
+      </p>
+    </section>
 
-      <section id="stageEditor" class="stage-editor hidden">
-        <aside class="form-panel">
-          <div class="form-header">
-            <button id="btnBack" class="secondary">Voltar</button>
-            <button id="btnReset" class="secondary">Restaurar</button>
-          </div>
-          <h2 id="templateName">Template</h2>
-          <form id="variablesForm" class="variables-form"></form>
-          <div class="form-actions">
-            <button id="btnDownload" class="primary">Baixar PNG</button>
-          </div>
-          <div id="status" class="status ready">Pronto</div>
-        </aside>
+    <section class="actions-grid grid grid-4">
+      <a href="/criar.html" class="card card-hover action-card">
+        <div class="action-icon primary">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+          </svg>
+        </div>
+        <h3>Criar uma imagem</h3>
+        <p>Preencha os campos de um template e baixe o resultado.</p>
+      </a>
 
-        <section class="preview-panel">
-          <div id="previewWrap" class="preview-wrap">
-            <img id="previewImg" alt="Preview" class="preview-img hidden">
-          </div>
-        </section>
-      </section>
-    </main>
-  </div>
+      <a href="/batch.html" class="card card-hover action-card">
+        <div class="action-icon success">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+          </svg>
+        </div>
+        <h3>Produzir em lote</h3>
+        <p>Use uma base de conteúdo para gerar várias imagens.</p>
+      </a>
 
-  <script src="/studio.js"></script>
+      <a href="/biblioteca.html?tab=bases" class="card card-hover action-card">
+        <div class="action-icon warning">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+          </svg>
+        </div>
+        <h3>Importar uma base</h3>
+        <p>Envie uma planilha, CSV ou JSON.</p>
+      </a>
+
+      <a href="/biblioteca.html?tab=templates" class="card card-hover action-card">
+        <div class="action-icon purple">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
+          </svg>
+        </div>
+        <h3>Gerenciar templates</h3>
+        <p>Cadastre logos, molduras, cores e campos variáveis.</p>
+      </a>
+    </section>
+
+    <section class="dashboard grid grid-3">
+      <div class="card stats-card">
+        <h3>Produções recentes</h3>
+        <div id="recentJobs" class="recent-list">
+          <div class="skeleton" style="height:40px;margin-bottom:8px"></div>
+          <div class="skeleton" style="height:40px;margin-bottom:8px"></div>
+        </div>
+      </div>
+
+      <div class="card stats-card">
+        <h3>Bases de conteúdo</h3>
+        <div id="recentCollections" class="recent-list">
+          <div class="skeleton" style="height:40px;margin-bottom:8px"></div>
+          <div class="skeleton" style="height:40px;margin-bottom:8px"></div>
+        </div>
+      </div>
+
+      <div class="card stats-card">
+        <h3>Resumo</h3>
+        <div class="stat-row">
+          <span class="stat-label">Aprovados</span>
+          <span id="statApproved" class="stat-value success">—</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Pendentes</span>
+          <span id="statPending" class="stat-value">—</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Com erro</span>
+          <span id="statErrors" class="stat-value danger">—</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/shared.js"></script>
+  <script src="/home.js"></script>
 </body>
 </html>

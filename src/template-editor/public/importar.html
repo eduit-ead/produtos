@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Importar base de conteúdo</title>
+  <link rel="stylesheet" href="/shared.css">
+  <link rel="stylesheet" href="/importar.css">
+</head>
+<body>
+  <header id="appHeader" class="app-header"></header>
+
+  <main class="container">
+    <h1 class="page-title">Nova base de conteúdo</h1>
+    <p class="page-subtitle">Importe uma planilha, CSV ou JSON e configure como os dados serão usados nas imagens.</p>
+
+    <div class="wizard-steps" id="wizardSteps">
+      <div class="wizard-step active" data-step="1"><span class="dot">1</span> Arquivo</div>
+      <span class="line"></span>
+      <div class="wizard-step" data-step="2"><span class="dot">2</span> Dados</div>
+      <span class="line"></span>
+      <div class="wizard-step" data-step="3"><span class="dot">3</span> Campos</div>
+      <span class="line"></span>
+      <div class="wizard-step" data-step="4"><span class="dot">4</span> Produção</div>
+    </div>
+
+    <section id="step-1" class="step-panel active">
+      <div class="card">
+        <div class="field-group">
+          <label for="baseName">Nome da base *</label>
+          <input type="text" id="baseName" placeholder="Ex: Produtos de verão">
+          <div class="hint">O identificador será criado automaticamente a partir do nome.</div>
+        </div>
+
+        <div class="field-group">
+          <label>Arquivo *</label>
+          <div class="drop-zone" id="dropZone">
+            <input type="file" id="baseFile" accept=".xlsx,.csv,.json" style="display:none">
+            <p>Arraste um arquivo ou clique para selecionar</p>
+            <div class="hint">XLSX, CSV ou JSON · máx. 5 MB</div>
+            <div id="fileInfo" class="file-info hidden"></div>
+          </div>
+        </div>
+
+        <div class="field-group hidden" id="sheetGroup">
+          <label for="sheetName">Aba da planilha</label>
+          <select id="sheetName"></select>
+        </div>
+
+        <div class="step-actions">
+          <a href="/biblioteca.html?tab=bases" class="btn-ghost">Cancelar</a>
+          <button type="button" id="btnStep1Next" class="btn-primary" disabled>Avançar</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="step-2" class="step-panel">
+      <div class="card">
+        <h3>Conferir dados</h3>
+        <p class="hint">Verifique se os cabeçalhos e as primeiras linhas estão corretas.</p>
+
+        <div id="previewStats" class="preview-stats"></div>
+        <div class="table-wrap">
+          <table id="previewTable" class="preview-table"></table>
+        </div>
+
+        <div id="previewIssues" class="preview-issues"></div>
+
+        <div class="step-actions">
+          <button type="button" id="btnStep2Back" class="btn-secondary">Voltar</button>
+          <button type="button" id="btnStep2Next" class="btn-primary">Avançar</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="step-3" class="step-panel">
+      <div class="card">
+        <h3>Mapear campos</h3>
+        <p class="hint">Indique qual coluna contém cada informação necessária para a produção.</p>
+
+        <div class="mapping-grid" id="mappingGrid"></div>
+
+        <div class="field-group">
+          <label>Campos extras para filtros (opcional)</label>
+          <div id="extraFields" class="extra-fields"></div>
+          <button type="button" id="btnAddExtra" class="btn-secondary">Adicionar campo</button>
+        </div>
+
+        <div class="step-actions">
+          <button type="button" id="btnStep3Back" class="btn-secondary">Voltar</button>
+          <button type="button" id="btnStep3Next" class="btn-primary">Avançar</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="step-4" class="step-panel">
+      <div class="card">
+        <h3>Configurar produção</h3>
+        <p class="hint">Escolha o template padrão, filtros e o padrão de nome dos arquivos.</p>
+
+        <div class="field-group">
+          <label for="templateId">Template padrão *</label>
+          <select id="templateId"></select>
+        </div>
+
+        <div class="field-group">
+          <label>Filtros disponíveis</label>
+          <div id="filterFields" class="checkbox-list"></div>
+          <div class="hint">Os filtros aparecerão na tela de produção em lote.</div>
+        </div>
+
+        <div class="field-group">
+          <label for="filenamePattern">Padrão do nome do arquivo</label>
+          <input type="text" id="filenamePattern" value="{{slug}}">
+          <div class="hint">Use {{slug}} para o identificador. O nome final será &lt;slug&gt;-fundo.png, &lt;slug&gt;-card.png etc.</div>
+        </div>
+
+        <div id="summaryBox" class="summary-box"></div>
+
+        <div class="step-actions">
+          <button type="button" id="btnStep4Back" class="btn-secondary">Voltar</button>
+          <button type="button" id="btnCreateBase" class="btn-primary">Criar base</button>
+        </div>
+      </div>
+    </section>
+
+    <div id="status" class="status ready">Pronto</div>
+  </main>
+
+  <script src="/shared.js"></script>
+  <script src="/importar.js"></script>
+</body>
+</html>
