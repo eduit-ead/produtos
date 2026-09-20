@@ -9,6 +9,7 @@ const state = {
   selectedLayerId: null,
   canvas: null,
   isSyncing: false,
+  syncToken: 0,
   assets: [],
 };
 
@@ -114,6 +115,12 @@ async function init() {
 
   document.getElementById("uploadForm").addEventListener("submit", uploadAsset);
 
+  document.getElementById("variables").addEventListener("input", (e) => {
+    if (e.target.classList.contains("var-input")) {
+      updateTextPreviews();
+    }
+  });
+
   window.addEventListener("resize", () => {
     applyZoom();
   });
@@ -193,26 +200,28 @@ async function loadTemplate(id) {
   if (!res.ok) return alert("Erro ao carregar template.");
   state.template = await res.json();
   state.selectedLayerId = null;
-  syncCanvasFromTemplate();
+  await syncCanvasFromTemplate();
   renderLayerList();
   renderProperties();
   renderVariables();
+  updateTextPreviews();
   document.getElementById("templateSelect").value = id;
 }
 
-function syncCanvasFromTemplate() {
+async function syncCanvasFromTemplate() {
   if (!state.template) return;
   state.isSyncing = true;
+  const token = ++state.syncToken;
 
   state.canvas.discardActiveObject();
   state.canvas.clear();
   state.canvas.setWidth(state.template.canvas.width);
   state.canvas.setHeight(state.template.canvas.height);
   state.canvas.backgroundColor = state.template.canvas.background || "#ffffff";
+  applyZoom();
 
   const layers = [...state.template.layers].sort((a, b) => a.zIndex - b.zIndex);
-
-  Promise.all(
+  const results = await Promise.all(
     layers.map(async (layer) => {
       const obj = await createFabricObject(layer);
       if (obj) {
@@ -221,15 +230,18 @@ function syncCanvasFromTemplate() {
       }
       return { layer, obj };
     })
-  ).then((results) => {
-    results.forEach(({ obj }) => {
-      if (obj) state.canvas.add(obj);
-    });
-    state.canvas.renderAll();
-    state.isSyncing = false;
-    restoreSelection();
-    applyZoom();
+  );
+
+  // A newer sync has started: discard stale results.
+  if (state.syncToken !== token) return;
+
+  results.forEach(({ obj }) => {
+    if (obj) state.canvas.add(obj);
   });
+  state.canvas.renderAll();
+  state.isSyncing = false;
+  restoreSelection();
+  updateTextPreviews();
 }
 
 function restoreSelection() {
@@ -264,26 +276,14 @@ function applyZoom() {
   const availH = Math.max(wrap.clientHeight - padding, 1);
   const scale = Math.max(0.1, Math.min(1, availW / width, availH / height));
 
-  // Keep the logical canvas at 1080x1080 for accurate editing,
-  // but set the CSS size to the fitted viewport so it fits the panel.
-  // Fabric's viewport zoom maps pointer coordinates correctly.
+  // Use only CSS scaling. The logical canvas stays at 1080x1080 (or whatever
+  // the template declares), while the element is rendered at the fitted size.
+  // Fabric maps pointer coordinates using the element's bounding rect, so
+  // coordinates remain logical 1:1 with the template.
   const cssW = `${Math.round(width * scale)}px`;
   const cssH = `${Math.round(height * scale)}px`;
-  const container = state.canvas.wrapperEl;
-  if (container) {
-    container.style.width = cssW;
-    container.style.height = cssH;
-  }
-  if (state.canvas.lowerCanvasEl) {
-    state.canvas.lowerCanvasEl.style.width = cssW;
-    state.canvas.lowerCanvasEl.style.height = cssH;
-  }
-  if (state.canvas.upperCanvasEl) {
-    state.canvas.upperCanvasEl.style.width = cssW;
-    state.canvas.upperCanvasEl.style.height = cssH;
-  }
-
-  state.canvas.setZoom(scale);
+  state.canvas.setDimensions({ width, height }, { cssOnly: false });
+  state.canvas.setDimensions({ width: cssW, height: cssH }, { cssOnly: true });
   state.canvas.renderAll();
 }
 
@@ -411,8 +411,8 @@ async function createFabricObject(layer) {
       if (layer.properties.assetId) {
         const img = await loadImage(`/api/assets/${layer.properties.assetId}`);
         if (img) {
+          img.set(common);
           applyImageFit(img, layer, "fill", "center");
-          img.set({ ...common });
           img.layerAssetId = layer.properties.assetId;
           return img;
         }
@@ -431,13 +431,13 @@ async function createFabricObject(layer) {
         const img = await loadImage(`/api/assets/${layer.properties.assetId}`);
         if (img) {
           const isOverlay = layer.type === "overlay";
+          img.set(common);
           applyImageFit(
             img,
             layer,
             isOverlay ? "fill" : layer.properties.fit || "cover",
             layer.properties.position || "center"
           );
-          img.set({ ...common });
           img.layerAssetId = layer.properties.assetId;
           if (layer.type === "image") {
             img.layerFit = layer.properties.fit;
@@ -463,7 +463,8 @@ async function createFabricObject(layer) {
 
     case "text": {
       const renderFont = await loadFontForPreview(layer.properties.fontFamily);
-      const tb = new fabric.Textbox(layer.properties.text || "", {
+      const rawText = layer.properties.text || "";
+      const tb = new fabric.Textbox(resolveVariables(rawText), {
         ...common,
         width: layer.width,
         fontFamily: renderFont,
@@ -473,9 +474,11 @@ async function createFabricObject(layer) {
         textAlign: layer.properties.align || "left",
         lineHeight: layer.properties.lineHeight || 1.2,
         charSpacing: (layer.properties.letterSpacing || 0) * 1000,
+        editable: false,
       });
       tb.set("height", layer.height);
       tb.layerFontFamily = layer.properties.fontFamily;
+      tb.layerRawText = rawText;
       return tb;
     }
 
@@ -1022,7 +1025,7 @@ async function syncObjectFromLayer(layer) {
   if (layer.type === "text") {
     const renderFont = await loadFontForPreview(layer.properties.fontFamily);
     obj.set({
-      text: layer.properties.text || "",
+      text: resolveVariables(layer.properties.text || ""),
       fontFamily: renderFont,
       fontSize: layer.properties.fontSize || 16,
       fontWeight: layer.properties.fontWeight || 400,
@@ -1031,6 +1034,7 @@ async function syncObjectFromLayer(layer) {
       lineHeight: layer.properties.lineHeight || 1.2,
     });
     obj.layerFontFamily = layer.properties.fontFamily;
+    obj.layerRawText = layer.properties.text || "";
   }
 
   if (layer.type === "shape") {
@@ -1071,16 +1075,19 @@ function renderVariables() {
     return;
   }
 
+  const current = collectVariables();
   container.innerHTML = vars
-    .map(
-      (v) => `
+    .map((v) => {
+      let value = Object.hasOwn(current, v.key) ? current[v.key] : undefined;
+      if (value === undefined || value === "") {
+        value = v.defaultValue !== undefined ? String(v.defaultValue) : "";
+      }
+      return `
       <div class="variable-row">
         <label>${escapeHtml(v.label)} (${escapeHtml(v.key)}) ${v.required ? "*" : ""}</label>
-        <input type="text" class="var-input" data-key="${v.key}" value="${escapeHtml(
-          v.defaultValue !== undefined ? String(v.defaultValue) : ""
-        )}">
-      </div>`
-    )
+        <input type="text" class="var-input" data-key="${v.key}" value="${escapeHtml(value)}">
+      </div>`;
+    })
     .join("");
 }
 
@@ -1090,6 +1097,39 @@ function collectVariables() {
     values[input.dataset.key] = input.value;
   });
   return values;
+}
+
+function resolveVariables(text) {
+  if (typeof text !== "string" || !state.template) return text;
+  const values = collectVariables();
+  const vars = state.template.variables || [];
+  return text.replace(/\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g, (match, key) => {
+    const variable = vars.find((v) => v.key === key);
+    let value = Object.hasOwn(values, key) ? values[key] : undefined;
+    if (value === undefined || value === "") {
+      value = variable?.defaultValue;
+    }
+    if (value === undefined || value === null) return match;
+    return String(value);
+  });
+}
+
+function updateTextPreviews() {
+  if (!state.template || !state.canvas) return;
+  let changed = false;
+  state.canvas.getObjects().forEach((obj) => {
+    if (!obj.layerId || obj.type !== "textbox") return;
+    const layer = state.template.layers.find((l) => l.id === obj.layerId);
+    if (!layer || layer.type !== "text") return;
+    const resolved = resolveVariables(layer.properties.text || "");
+    if (obj.text !== resolved) {
+      obj.set("text", resolved);
+      changed = true;
+    }
+  });
+  if (changed) {
+    state.canvas.renderAll();
+  }
 }
 
 async function saveTemplate() {
