@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Produção em Lote</title>
-  <link rel="stylesheet" href="/batch.css">
+  <link rel="stylesheet" href="/batch.css?v=3">
 </head>
 <body>
   <div id="app">
@@ -60,40 +60,46 @@
             <option value="original">Imagem atual do curso</option>
           </select>
 
-          <label>Tamanho do lote</label>
-          <input type="number" id="batchSize" value="1" min="1" max="50">
-
-          <label>Limite de chamadas à API</label>
-          <input type="number" id="maxCalls" value="" placeholder="Opcional">
-
-          <label>Limite de custo (USD)</label>
-          <input type="number" id="maxCostUsd" value="" placeholder="Opcional" step="0.01">
-
-          <label>Modelo</label>
-          <input type="text" id="model" value="gpt-image-2.5-flare" readonly>
-
-          <label>Qualidade</label>
-          <select id="quality">
-            <option value="medium" selected>média</option>
-            <option value="high">alta</option>
-            <option value="low">baixa</option>
-          </select>
-
-          <label>Tamanho</label>
-          <select id="size">
-            <option value="1024x1024" selected>1024x1024</option>
-            <option value="1536x1024">1536x1024</option>
-            <option value="1024x1536">1024x1536</option>
-          </select>
-
           <label class="checkbox-label">
             <input type="checkbox" id="dryRun" checked>
             Dry-run (sem chamadas reais à OpenAI)
           </label>
 
-          <div class="estimate" id="estimate">Estimativa: 0 chamadas · USD 0.00</div>
+          <details class="advanced-settings">
+            <summary>Configurações avançadas</summary>
+            <div class="advanced-content">
+              <label>Tamanho do lote</label>
+              <input type="number" id="batchSize" value="1" min="1" max="50">
 
-          <button id="btnCreateBatch" class="primary" disabled>Criar lote</button>
+              <label>Limite de chamadas à API</label>
+              <input type="number" id="maxCalls" value="" placeholder="Opcional">
+
+              <label>Limite de custo (USD)</label>
+              <input type="number" id="maxCostUsd" value="" placeholder="Opcional" step="0.01">
+
+              <label>Modelo</label>
+              <input type="text" id="model" value="gpt-image-2.5-flare" readonly>
+
+              <label>Qualidade</label>
+              <select id="quality">
+                <option value="medium" selected>média</option>
+                <option value="high">alta</option>
+                <option value="low">baixa</option>
+              </select>
+
+              <label>Tamanho</label>
+              <select id="size">
+                <option value="1024x1024" selected>1024x1024</option>
+                <option value="1536x1024">1536x1024</option>
+                <option value="1024x1536">1024x1536</option>
+              </select>
+            </div>
+          </details>
+
+          <div class="config-footer" id="configFooter">
+            <div class="estimate" id="estimate">0 cursos · 0 chamadas · US$ 0.00</div>
+            <button id="btnCreateBatch" class="primary" disabled>Criar lote</button>
+          </div>
         </aside>
       </div>
     </main>
@@ -154,6 +160,6 @@
     </section>
   </div>
 
-  <script src="/batch.js"></script>
+  <script src="/batch.js?v=3"></script>
 </body>
 </html>

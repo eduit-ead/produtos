@@ -259,10 +259,11 @@ function updateSelectionSummary() {
 function updateEstimate() {
   const selectedCount = state.selected.size;
   const dryRun = byId("dryRun").checked;
-  const calls = dryRun ? 0 : selectedCount;
+  const maxCallsInput = byId("maxCalls").value.trim();
   const costPerCall = 0.03;
-  const cost = dryRun ? 0 : selectedCount * costPerCall;
-  byId("estimate").textContent = `Estimativa: ${calls} chamada(s) · USD ${cost.toFixed(2)}`;
+  const calls = dryRun ? 0 : (maxCallsInput ? Math.min(parseInt(maxCallsInput, 10) || 0, selectedCount) : selectedCount);
+  const cost = dryRun ? 0 : calls * costPerCall;
+  byId("estimate").textContent = `${selectedCount} curso(s) · até ${calls} chamada(s) · estimativa US$ ${cost.toFixed(2)}`;
 }
 
 async function loadCatalog() {

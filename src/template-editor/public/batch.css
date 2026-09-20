@@ -343,25 +343,28 @@ body {
 .config-panel {
   position: sticky;
   top: 78px;
+  display: flex;
+  flex-direction: column;
   background: #1e293b;
   border: 1px solid #334155;
   border-radius: 10px;
-  padding: 20px;
-  height: auto;
-  overflow: visible;
+  padding: 12px;
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
 }
 
 .config-panel h2 {
-  margin: 0 0 16px 0;
-  font-size: 18px;
+  margin: 0 0 8px 0;
+  font-size: 15px;
   color: #f1f5f9;
+  flex-shrink: 0;
 }
 
 .config-panel label {
   display: block;
-  font-size: 13px;
+  font-size: 11px;
   color: #94a3b8;
-  margin: 14px 0 6px 0;
+  margin: 8px 0 3px 0;
 }
 
 .config-panel input,
@@ -370,9 +373,10 @@ body {
   background: #0f172a;
   border: 1px solid #334155;
   border-radius: 6px;
-  padding: 10px 12px;
+  padding: 6px 10px;
   color: #e2e8f0;
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 1.2;
 }
 
 .config-panel input[readonly] {
@@ -383,35 +387,93 @@ body {
 .checkbox-label {
   display: flex !important;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   cursor: pointer;
-  margin-top: 18px !important;
+  margin-top: 8px !important;
+  margin-bottom: 2px !important;
+  font-size: 12px;
 }
 
 .checkbox-label input {
   width: auto;
   min-width: auto;
-  width: 18px;
-  height: 18px;
+  width: 14px;
+  height: 14px;
 }
 
 .selection-summary {
   background: #0f172a;
   border: 1px solid #334155;
   border-radius: 6px;
-  padding: 12px;
-  font-size: 13px;
+  padding: 8px 10px;
+  font-size: 12px;
   color: #cbd5e1;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
+  flex-shrink: 0;
 }
 
-.estimate {
-  margin-top: 16px;
-  padding: 12px;
-  background: #0f172a;
+.advanced-settings {
+  margin-top: 6px;
+  border: 1px solid #334155;
   border-radius: 6px;
-  font-size: 13px;
+  background: #0f172a;
+  flex-shrink: 0;
+}
+
+.advanced-settings summary {
+  cursor: pointer;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: #94a3b8;
+  user-select: none;
+  list-style: none;
+}
+
+.advanced-settings summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced-settings summary::before {
+  content: "▸ ";
+  color: #6ea0ff;
+}
+
+.advanced-settings[open] summary::before {
+  content: "▾ ";
+}
+
+.advanced-content {
+  padding: 0 8px 8px 8px;
+}
+
+.advanced-content label:first-child {
+  margin-top: 2px;
+}
+
+.config-footer {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  padding: 8px 0 0 0;
+  background: #1e293b;
+  flex-shrink: 0;
+}
+
+.config-footer .estimate {
+  padding: 8px 10px;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  font-size: 12px;
   color: #93c5fd;
+  margin-bottom: 8px;
+  text-align: center;
+}
+
+.config-footer button {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 13px;
 }
 
 .existing-batches {
