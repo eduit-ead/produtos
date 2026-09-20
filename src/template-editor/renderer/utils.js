@@ -20,8 +20,9 @@ function escapeXml(value = "") {
     .replace(/'/g, "&apos;");
 }
 
-function loadAssetBuffer(assetId) {
+function loadAssetBuffer(assetId, runtimeAssets = {}) {
   if (!assetId) return null;
+  if (runtimeAssets[assetId]) return runtimeAssets[assetId];
   const safeId = path.basename(assetId);
   const assetPath = path.join(ASSETS_DIR, safeId);
   if (!fs.existsSync(assetPath)) return null;

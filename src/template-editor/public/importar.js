@@ -8,10 +8,11 @@ const state = {
   filename: null,
   sheet: null,
   sheets: [],
-  records: [],
+  preview: null,
   headers: [],
   total: 0,
-  issues: { emptyIds: 0, duplicateIds: [] },
+  primaryKey: "",
+  validation: { emptyIds: 0, duplicateIds: [], missingColumn: false },
   mappings: {
     primaryKey: "",
     title: "",
@@ -26,6 +27,7 @@ const state = {
   templates: [],
   filters: [],
   filenamePattern: "{{slug}}",
+  productionErrors: [],
 };
 
 const ESSENTIAL_FIELDS = [
@@ -159,10 +161,9 @@ async function uploadAndPreview() {
       }),
     });
 
+    state.preview = preview;
     state.headers = preview.headers || [];
-    state.records = preview.records || [];
     state.total = preview.total || 0;
-    state.issues = preview.issues || { emptyIds: 0, duplicateIds: [] };
     goToStep(2);
   } catch (err) {
     handleApiError(err, "status");
@@ -178,15 +179,13 @@ function renderStep2() {
   byId("previewStats").innerHTML = `
     <div class="stat"><strong>${state.total}</strong> registros</div>
     <div class="stat"><strong>${state.headers.length}</strong> colunas</div>
-    <div class="stat"><strong>${state.issues.emptyIds || 0}</strong> IDs vazios</div>
-    <div class="stat"><strong>${(state.issues.duplicateIds || []).length}</strong> IDs duplicados</div>
   `;
 
   const table = byId("previewTable");
   let html = "<tr>";
   for (const h of state.headers) html += `<th>${escapeHtml(h)}</th>`;
   html += "</tr>";
-  for (const row of state.records.slice(0, 5)) {
+  for (const row of state.preview?.rows || []) {
     html += "<tr>";
     for (const h of state.headers) {
       const cell = row[h];
@@ -196,15 +195,7 @@ function renderStep2() {
   }
   table.innerHTML = html;
 
-  const issuesEl = byId("previewIssues");
-  const parts = [];
-  if (state.issues.emptyIds > 0) parts.push(`${state.issues.emptyIds} registro(s) sem identificador. Eles serão ignorados.`);
-  if ((state.issues.duplicateIds || []).length > 0) parts.push(`IDs duplicados: ${escapeHtml(state.issues.duplicateIds.join(", "))}. Apenas o primeiro será usado.`);
-  if (parts.length === 0) {
-    issuesEl.innerHTML = `<div class="status success">Nenhum problema detectado.</div>`;
-  } else {
-    issuesEl.innerHTML = parts.map((p) => `<div class="status warning">${p}</div>`).join("");
-  }
+  byId("previewIssues").innerHTML = `<div class="status ready">Revise os cabeçalhos e avance para mapear os campos.</div>`;
 }
 
 function setupStep3() {
@@ -236,10 +227,56 @@ function renderStep3() {
     if (state.mappings[f.key]) el.value = state.mappings[f.key];
     el.addEventListener("change", () => {
       state.mappings[f.key] = el.value;
+      if (f.key === "primaryKey") {
+        validatePrimaryKeyField();
+      }
     });
   }
 
   renderExtraFields();
+  validatePrimaryKeyField();
+}
+
+async function validatePrimaryKeyField() {
+  const pk = state.mappings.primaryKey;
+  if (!pk || !state.sourcePath) {
+    state.validation = { emptyIds: 0, duplicateIds: [], missingColumn: !pk };
+    renderValidation();
+    return;
+  }
+  setStatus("status", "loading", "Validando identificador...");
+  try {
+    const result = await api.json(`/api/collections/${encodeURIComponent(state.id)}/validate-key`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: { type: state.sourceType, path: state.sourcePath, sheet: state.sheet },
+        primaryKey: pk,
+      }),
+    });
+    state.validation = result;
+    renderValidation();
+    setStatus("status", "ready", "Pronto");
+  } catch (err) {
+    handleApiError(err, "status");
+  }
+}
+
+function renderValidation() {
+  const el = byId("previewIssues");
+  const v = state.validation;
+  if (v.missingColumn) {
+    el.innerHTML = `<div class="status warning">Escolha uma coluna como identificador único.</div>`;
+  } else if (v.emptyIds === 0 && v.duplicateIds.length === 0) {
+    el.innerHTML = `<div class="status success">Identificador válido: ${state.total} registros.</div>`;
+  } else {
+    el.innerHTML = `
+      <div class="status warning">
+        ${v.emptyIds} registro(s) com identificador vazio · ${v.duplicateIds.length} duplicado(s)
+        ${v.duplicateIds.length > 0 ? `<br><small>${escapeHtml(v.duplicateIds.slice(0, 10).join(", "))}</small>` : ""}
+      </div>
+    `;
+  }
 }
 
 function addExtraField(header = "") {
@@ -283,10 +320,10 @@ function setupStep4() {
   byId("btnCreateBase").addEventListener("click", createBase);
   byId("templateId").addEventListener("change", () => {
     state.templateId = byId("templateId").value;
+    validateProduction();
   });
   byId("filenamePattern").addEventListener("input", () => {
     state.filenamePattern = byId("filenamePattern").value;
-    renderSummary();
   });
 }
 
@@ -299,6 +336,23 @@ async function loadTemplates() {
     select.value = state.templateId;
   } catch (err) {
     handleApiError(err, "status");
+  }
+}
+
+async function validateProduction() {
+  if (!state.templateId || !state.mappings.title) return;
+  const collection = buildCollection(false);
+  try {
+    const result = await api.json("/api/collections/validate-production", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(collection),
+    });
+    state.productionErrors = result.errors || [];
+    renderSummary();
+  } catch (err) {
+    state.productionErrors = [err.message];
+    renderSummary();
   }
 }
 
@@ -318,10 +372,13 @@ function renderStep4() {
     });
     container.appendChild(label);
   }
-  renderSummary();
+  validateProduction();
 }
 
 function renderSummary() {
+  const errors = state.productionErrors.length > 0
+    ? `<div class="status error">${state.productionErrors.map((e) => escapeHtml(e)).join("<br>")}</div>`
+    : "";
   byId("summaryBox").innerHTML = `
     <h4>Resumo</h4>
     <p><strong>Nome:</strong> ${escapeHtml(state.name)}</p>
@@ -332,21 +389,11 @@ function renderSummary() {
     <p><strong>Título:</strong> ${escapeHtml(state.mappings.title || "—")}</p>
     <p><strong>Template:</strong> ${escapeHtml(state.templateId || "—")}</p>
     <p><strong>Nome do arquivo:</strong> ${escapeHtml(state.filenamePattern)}</p>
+    ${errors}
   `;
 }
 
-async function createBase() {
-  if (!state.mappings.primaryKey || !state.mappings.title) {
-    setStatus("status", "warning", "Preencha o identificador único e o título principal.");
-    return;
-  }
-  if (!state.templateId) {
-    setStatus("status", "warning", "Escolha um template padrão.");
-    return;
-  }
-
-  setStatus("status", "loading", "Criando base...");
-
+function buildCollection(includeProductionBinding = true) {
   const fieldMappings = {
     title: state.mappings.title,
     slug: state.mappings.slug || state.mappings.primaryKey,
@@ -398,6 +445,28 @@ async function createBase() {
     ],
   };
 
+  // Se o template tem uma variável de imagem chamada imagemFundo ou similar,
+  // preferimos binding automático. O usuário pode ajustar depois na configuração.
+  if (includeProductionBinding && state.templateId) {
+    collection.productionBackgroundBinding = { variable: "imagemFundo" };
+  }
+
+  return collection;
+}
+
+async function createBase() {
+  if (!state.mappings.primaryKey || !state.mappings.title) {
+    setStatus("status", "warning", "Preencha o identificador único e o título principal.");
+    return;
+  }
+  if (!state.templateId) {
+    setStatus("status", "warning", "Escolha um template padrão.");
+    return;
+  }
+
+  const collection = buildCollection();
+  setStatus("status", "loading", "Criando base...");
+
   try {
     await api.json("/api/collections", {
       method: "POST",
@@ -406,7 +475,7 @@ async function createBase() {
     });
     setStatus("status", "success", "Base criada com sucesso.");
     setTimeout(() => {
-      window.location.href = `/batch.html?collection=${encodeURIComponent(state.id)}`;
+      window.location.href = `/batch.html?collection=${encodeURIComponent(state.id)}&autostart=1`;
     }, 600);
   } catch (err) {
     handleApiError(err, "status");

@@ -92,6 +92,13 @@ function validateCollection(collection) {
     errors.push("filenamePattern é obrigatório.");
   }
 
+  const binding = collection.productionBackgroundBinding;
+  if (binding && typeof binding === "object") {
+    if (!binding.variable && !binding.layerId) {
+      errors.push("productionBackgroundBinding deve ter variable ou layerId.");
+    }
+  }
+
   const out = collection.outputColumns;
   if (!out || typeof out !== "object") {
     errors.push("outputColumns é obrigatório.");

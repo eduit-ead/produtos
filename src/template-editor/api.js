@@ -34,6 +34,7 @@ const { listCollections, loadCollection, saveCollection, deleteCollection, archi
 const ExcelJS = require("exceljs");
 const { validateCollection, isSafeRelative, ROOT } = require("../collections/schema");
 const { getDataSource } = require("../data-sources");
+const { readPreview, readXlsxSheets, validatePrimaryKey } = require("../data-sources/raw-source-reader");
 
 const DATA_DIR = path.join(__dirname, "..", "..", "data");
 const TEMPLATES_DIR = path.join(DATA_DIR, "templates");
@@ -42,11 +43,22 @@ const IMPORTS_DIR = path.join(DATA_DIR, "imports");
 const BACKUPS_DIR = path.join(__dirname, "..", "..", "input", "backups");
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
-const ALLOWED_MIMETYPES = {
+const IMAGE_MIMETYPES = {
   "image/png": "png",
   "image/jpeg": "jpg",
   "image/svg+xml": "svg",
 };
+
+const DATA_MIMETYPES = {
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/json": "json",
+  "text/json": "json",
+  "text/csv": "csv",
+  "application/csv": "csv",
+  "text/plain": "plain",
+};
+
+const DATA_EXTENSIONS = new Set([".xlsx", ".csv", ".json"]);
 
 const SAVED_MIMETYPES = {
   png: "png",
@@ -86,17 +98,37 @@ async function rasterizeSvg(buffer) {
   return sharp(buffer, { density: 144 }).png().toBuffer();
 }
 
-const upload = multer({
+function imageFileFilter(req, file, cb) {
+  const ext = IMAGE_MIMETYPES[file.mimetype];
+  if (!ext) {
+    return cb(new Error(`Tipo de imagem não permitido: ${file.mimetype}`));
+  }
+  cb(null, true);
+}
+
+function dataFileFilter(req, file, cb) {
+  const lowerExt = path.extname(file.originalname || "").toLowerCase();
+  const extFromMime = DATA_MIMETYPES[file.mimetype];
+  const isPlainCsv = file.mimetype === "text/plain" && lowerExt === ".csv";
+  if (!DATA_EXTENSIONS.has(lowerExt) || (!extFromMime && !isPlainCsv)) {
+    return cb(new Error(`Formato de dados não permitido. Use XLSX, CSV ou JSON.`));
+  }
+  cb(null, true);
+}
+
+const imageUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_FILE_SIZE },
-  fileFilter: (req, file, cb) => {
-    const ext = ALLOWED_MIMETYPES[file.mimetype];
-    if (!ext) {
-      return cb(new Error(`Tipo de arquivo não permitido: ${file.mimetype}`));
-    }
-    cb(null, true);
-  },
+  fileFilter: imageFileFilter,
 });
+
+const dataUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_FILE_SIZE },
+  fileFilter: dataFileFilter,
+});
+
+const upload = imageUpload;
 
 function createRouter() {
   const router = express.Router();
@@ -169,13 +201,13 @@ function createRouter() {
   // Assets
   // ============================================================
 
-  router.post("/upload", upload.single("file"), async (req, res) => {
+  router.post("/upload", imageUpload.single("file"), async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: "Nenhum arquivo enviado." });
     }
     try {
       let buffer = req.file.buffer;
-      let ext = ALLOWED_MIMETYPES[req.file.mimetype];
+      let ext = IMAGE_MIMETYPES[req.file.mimetype];
       let mimetype = req.file.mimetype;
       if (req.file.mimetype === "image/svg+xml") {
         buffer = await rasterizeSvg(buffer);
@@ -334,7 +366,8 @@ function createRouter() {
 
   router.get("/collections", (req, res) => {
     try {
-      res.json(listCollections());
+      const includeArchived = req.query.archived === "all";
+      res.json(listCollections({ includeArchived }));
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: err.message });
@@ -358,6 +391,10 @@ function createRouter() {
       if (errors.length > 0) {
         return res.status(400).json({ error: "Coleção inválida.", details: errors });
       }
+      const prodErrors = await genericProduction.validateCollectionProduction({ ...body, templateIds: body.templateIds || [body.defaultTemplateId] });
+      if (prodErrors.length > 0) {
+        return res.status(400).json({ error: "Configuração de produção inválida.", details: prodErrors });
+      }
       const collection = saveCollection({ ...body, createdAt: new Date().toISOString() });
       res.status(201).json({ ok: true, collection });
     } catch (err) {
@@ -375,6 +412,10 @@ function createRouter() {
       const errors = validateCollection(updated);
       if (errors.length > 0) {
         return res.status(400).json({ error: "Coleção inválida.", details: errors });
+      }
+      const prodErrors = await genericProduction.validateCollectionProduction(updated);
+      if (prodErrors.length > 0) {
+        return res.status(400).json({ error: "Configuração de produção inválida.", details: prodErrors });
       }
       const collection = saveCollection(updated);
       res.json({ ok: true, collection });
@@ -432,7 +473,7 @@ function createRouter() {
   });
 
   // Upload de arquivo de importação para uma coleção.
-  router.post("/collections/:id/import", upload.single("file"), async (req, res) => {
+  router.post("/collections/:id/import", dataUpload.single("file"), async (req, res) => {
     try {
       if (!req.file) return res.status(400).json({ error: "Nenhum arquivo enviado." });
       const id = path.basename(req.params.id);
@@ -463,67 +504,49 @@ function createRouter() {
     try {
       const relPath = req.query.path;
       if (!relPath) return res.status(400).json({ error: "Caminho do arquivo não informado." });
-      const resolved = path.resolve(ROOT, relPath);
-      if (!isSafeRelative(relPath) || !resolved.startsWith(ROOT + path.sep)) {
-        return res.status(400).json({ error: "Caminho inválido." });
-      }
-      if (!fs.existsSync(resolved)) return res.status(404).json({ error: "Arquivo não encontrado." });
-      const workbook = new ExcelJS.Workbook();
-      await workbook.xlsx.readFile(resolved);
-      res.json(workbook.worksheets.map((s) => s.name));
+      const sheets = await readXlsxSheets(relPath);
+      res.json(sheets);
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: err.message || "Erro ao ler abas." });
     }
   });
 
-  // Prévia de registros a partir de fonte temporária (ainda não salva como coleção).
+  // Prévia bruta de registros a partir de fonte temporária (sem depender de primaryKey).
   router.post("/collections/:id/preview", express.json({ limit: "1mb" }), async (req, res) => {
     try {
       const source = req.body?.source;
       if (!source?.type || !source?.path) return res.status(400).json({ error: "Fonte não informada." });
-      const resolved = path.resolve(ROOT, source.path);
-      if (!isSafeRelative(source.path) || !resolved.startsWith(ROOT + path.sep)) {
-        return res.status(400).json({ error: "Caminho inválido." });
-      }
-      if (!fs.existsSync(resolved)) return res.status(404).json({ error: "Arquivo não encontrado." });
-
-      const tempCollection = {
-        id: req.params.id,
-        primaryKey: "id",
-        source: {
-          type: source.type,
-          path: source.path,
-          sheet: source.sheet,
-        },
-        fieldMappings: { slug: "id" },
-      };
-      const ds = getDataSource(tempCollection);
-      const records = await ds.listRecords();
-      const fields = await ds.getFields();
-
-      const ids = records.map((r) => r.id || r.record_id || r.slug).map(String);
-      const seen = new Set();
-      const duplicateIds = [];
-      let emptyIds = 0;
-      for (const id of ids) {
-        if (!id || id.trim() === "") {
-          emptyIds++;
-          continue;
-        }
-        if (seen.has(id)) duplicateIds.push(id);
-        else seen.add(id);
-      }
-
-      res.json({
-        headers: fields,
-        records: records.slice(0, 5),
-        total: records.length,
-        issues: { emptyIds, duplicateIds },
-      });
+      const preview = await readPreview(source);
+      res.json(preview);
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: err.message || "Erro ao gerar prévia." });
+    }
+  });
+
+  // Valida primaryKey escolhida: IDs vazios e duplicados.
+  router.post("/collections/:id/validate-key", express.json({ limit: "1mb" }), async (req, res) => {
+    try {
+      const source = req.body?.source;
+      const primaryKey = req.body?.primaryKey;
+      if (!source?.type || !source?.path) return res.status(400).json({ error: "Fonte não informada." });
+      const result = await validatePrimaryKey(source, primaryKey);
+      res.json(result);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao validar chave." });
+    }
+  });
+
+  // Validação de configuração de produção de uma coleção (sem salvar).
+  router.post("/collections/validate-production", express.json({ limit: "1mb" }), async (req, res) => {
+    try {
+      const errors = await genericProduction.validateCollectionProduction(req.body || {});
+      res.json({ ok: true, errors });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao validar configuração." });
     }
   });
 
@@ -614,7 +637,7 @@ function createRouter() {
     }
   });
 
-  router.post("/items/:slug/upload", upload.single("file"), async (req, res) => {
+  router.post("/items/:slug/upload", imageUpload.single("file"), async (req, res) => {
     const collectionId = req.query.collection || genericProduction.LEGACY_COLLECTION_ID;
     if (!req.file) return res.status(400).json({ error: "Nenhum arquivo enviado." });
     try {
@@ -728,7 +751,7 @@ function createRouter() {
     }
   });
 
-  router.post("/courses/:slug/upload", upload.single("file"), async (req, res) => {
+  router.post("/courses/:slug/upload", imageUpload.single("file"), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: "Nenhum arquivo enviado." });
     try {
       const ext = path.extname(req.file.originalname).toLowerCase();
@@ -1040,6 +1063,64 @@ function createRouter() {
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: err.message || "Erro ao reprocessar rejeitados." });
+    }
+  });
+
+  // ============================================================
+  // Ações atômicas sobre itens de um lote
+  // ============================================================
+
+  const { updateJobItemStatus, resetJobItemForRegeneration } = require("../batch/job-status");
+
+  async function findJobAndCollection(jobId) {
+    const file = findJobFile(jobId);
+    if (!file) throw new Error("Lote não encontrado.");
+    const job = JSON.parse(fs.readFileSync(file, "utf8"));
+    const collectionId = job.collectionId || genericProduction.LEGACY_COLLECTION_ID;
+    return { job, collectionId, file };
+  }
+
+  router.post("/batches/:jobId/items/:slug/approve", async (req, res) => {
+    try {
+      const { collectionId } = await findJobAndCollection(req.params.jobId);
+      const record = await genericProduction.getRecord(collectionId, req.params.slug);
+      const result = await updateJobItemStatus(collectionId, req.params.jobId, req.params.slug, "aprovado", {
+        course_id: record?.id,
+        curso: record?.title,
+      });
+      res.json({ ok: true, job: result.job, manifest: result.manifestEntry });
+    } catch (err) {
+      console.error(err);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  router.post("/batches/:jobId/items/:slug/reject", async (req, res) => {
+    try {
+      const { collectionId } = await findJobAndCollection(req.params.jobId);
+      const record = await genericProduction.getRecord(collectionId, req.params.slug);
+      const result = await updateJobItemStatus(collectionId, req.params.jobId, req.params.slug, "rejeitado", {
+        course_id: record?.id,
+        curso: record?.title,
+      });
+      res.json({ ok: true, job: result.job, manifest: result.manifestEntry });
+    } catch (err) {
+      console.error(err);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  router.post("/batches/:jobId/items/:slug/regenerate", async (req, res) => {
+    try {
+      const { job, collectionId } = await findJobAndCollection(req.params.jobId);
+      await resetJobItemForRegeneration(collectionId, req.params.jobId, req.params.slug);
+      const catalogDir = genericProduction.catalogDirFor(collectionId);
+      const exec = new BatchExecutor({ catalogDir, storageProvider: new LocalStorageProvider(catalogDir) });
+      const updatedJob = await exec.resume(req.params.jobId);
+      res.json({ ok: true, job: updatedJob });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message });
     }
   });
 

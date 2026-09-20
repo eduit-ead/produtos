@@ -1,64 +1,12 @@
 /**
  * DataSource para arquivos CSV.
- * Parser simples com suporte a campos entre aspas e separador vírgula.
  */
 
 const fs = require("fs");
 const path = require("path");
 const { DataSource, normalizeRecord } = require("./base");
+const { parseCsvRobust, writeCsv, detectDelimiter } = require("./csv-parser");
 const { isSafeRelative, ROOT } = require("../collections/schema");
-
-function parseCsv(text) {
-  const rows = [];
-  let current = [];
-  let value = "";
-  let insideQuotes = false;
-  let i = 0;
-
-  function pushValue() {
-    current.push(value.trim());
-    value = "";
-  }
-
-  function pushRow() {
-    if (current.length > 0 || value !== "") {
-      pushValue();
-      rows.push(current);
-      current = [];
-    }
-  }
-
-  while (i < text.length) {
-    const char = text[i];
-    const next = text[i + 1];
-
-    if (insideQuotes) {
-      if (char === '"') {
-        if (next === '"') {
-          value += '"';
-          i += 2;
-          continue;
-        }
-        insideQuotes = false;
-      } else {
-        value += char;
-      }
-    } else {
-      if (char === '"') {
-        insideQuotes = true;
-      } else if (char === ",") {
-        pushValue();
-      } else if (char === "\r" || char === "\n") {
-        pushRow();
-      } else {
-        value += char;
-      }
-    }
-    i++;
-  }
-  pushRow();
-  return rows;
-}
 
 class CsvDataSource extends DataSource {
   _resolvedPath() {
@@ -71,20 +19,7 @@ class CsvDataSource extends DataSource {
   _loadRows() {
     const filePath = this._resolvedPath();
     const text = fs.readFileSync(filePath, "utf8");
-    const parsed = parseCsv(text);
-    if (parsed.length === 0) return { headers: [], rows: [] };
-    const headers = parsed[0];
-    const rows = [];
-    for (let i = 1; i < parsed.length; i++) {
-      const cells = parsed[i];
-      if (cells.length === 0 || cells.every((c) => c === "")) continue;
-      const row = {};
-      for (let h = 0; h < headers.length; h++) {
-        row[headers[h]] = cells[h] !== undefined ? cells[h] : "";
-      }
-      rows.push(row);
-    }
-    return { headers, rows };
+    return parseCsvRobust(text);
   }
 
   async listRecords() {
@@ -114,8 +49,62 @@ class CsvDataSource extends DataSource {
     return [...values].sort();
   }
 
+  _latestTimestamp(metadata) {
+    const candidates = [
+      metadata?.timestamps?.whatsapp_at,
+      metadata?.timestamps?.rendered_at,
+      metadata?.timestamps?.generated_at,
+      metadata?.updatedAt,
+    ];
+    for (const c of candidates) if (c) return c;
+    return null;
+  }
+
+  _buildNextValues(metadata, outColumns) {
+    return {
+      [outColumns.backgroundFilename]: metadata?.files?.fundo || null,
+      [outColumns.cardFilename]: metadata?.files?.card || null,
+      [outColumns.whatsappFilename]: metadata?.files?.whatsapp || null,
+      [outColumns.backgroundUrl]: metadata?.urls?.fundo || null,
+      [outColumns.cardUrl]: metadata?.urls?.card || null,
+      [outColumns.whatsappUrl]: metadata?.urls?.whatsapp || null,
+      [outColumns.productionStatus]: metadata?.status || null,
+      [outColumns.templateId]: metadata?.template_id || null,
+      [outColumns.updatedAt]: this._latestTimestamp(metadata),
+    };
+  }
+
   async exportUpdatedCopy(recordsMetadata, outputPath) {
-    throw new Error("Exportação de cópia para CSV ainda não implementada.");
+    const { headers, rows, delimiter } = this._loadRows();
+    const out = this.collection.outputColumns || {};
+    const pk = this.collection.primaryKey;
+
+    const outputHeaders = [...headers];
+    for (const colName of Object.values(out)) {
+      if (!outputHeaders.includes(colName)) outputHeaders.push(colName);
+    }
+
+    const updatedRows = rows.map((row) => ({ ...row }));
+    const pkIndex = headers.indexOf(pk);
+
+    for (const metadata of recordsMetadata) {
+      const recordId = metadata.id || metadata.slug;
+      const idx = updatedRows.findIndex((r, i) => {
+        if (pkIndex >= 0) return String(r[pk] || "").trim() === String(recordId).trim();
+        return String(r[Object.keys(r)[0]] || "").trim() === String(recordId).trim();
+      });
+      if (idx < 0) continue;
+      const next = this._buildNextValues(metadata, out);
+      for (const [col, val] of Object.entries(next)) {
+        if (col && outputHeaders.includes(col)) {
+          updatedRows[idx][col] = val ?? "";
+        }
+      }
+    }
+
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.writeFileSync(outputPath, writeCsv(updatedRows, outputHeaders, delimiter), "utf8");
+    return { wouldChangeCount: recordsMetadata.length, outputPath };
   }
 
   async syncApprovedRecords(recordsMetadata, options = {}) {

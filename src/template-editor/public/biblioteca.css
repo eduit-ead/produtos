@@ -91,3 +91,36 @@
 }
 
 .menu-body button:last-child { border-bottom: none; }
+
+.base-card.archived { opacity: 0.7; }
+
+.items-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.items-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.items-table th, .items-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.items-table th {
+  background: var(--surface-2);
+  color: var(--text-muted);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.items-table tr:last-child td { border-bottom: none; }

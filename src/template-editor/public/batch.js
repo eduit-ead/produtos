@@ -87,8 +87,8 @@ function setupEvents() {
   });
   byId("btnApproveSelected").addEventListener("click", () => bulkAction("approve"));
   byId("btnRejectSelected").addEventListener("click", () => bulkAction("reject"));
-  byId("btnExportXlsx").addEventListener("click", exportXlsx);
-  byId("btnSyncXlsx").addEventListener("click", syncXlsx);
+  byId("btnExportXlsx").addEventListener("click", exportSource);
+  byId("btnSyncXlsx").addEventListener("click", syncSource);
 
   document.querySelectorAll('input[name="dryRun"], input[name="bgSource"], #batchSize, #maxCalls, #maxCostUsd').forEach((el) => {
     el.addEventListener("change", updateEstimate);
@@ -381,6 +381,9 @@ function renderReview() {
   const running = job?.status === "executando";
   byId("btnApproveSelected").disabled = state.reviewSelected.size === 0;
   byId("btnRejectSelected").disabled = state.reviewSelected.size === 0;
+  byId("btnExportXlsx").textContent = exportButtonLabel();
+  byId("btnSyncXlsx").textContent = syncButtonLabel();
+  byId("btnSyncXlsx").disabled = !isLegacyXlsx() && sourceType() !== "xlsx";
 
   const container = byId("reviewItems");
   container.innerHTML = "";
@@ -394,12 +397,17 @@ function renderReview() {
   for (const item of courses) {
     const record = state.items.find((i) => i.slug === item.slug);
     const title = record ? getItemTitle(record) : item.slug;
-    const isFinal = ["pronto_revisao", "aprovado", "rejeitado", "erro"].includes(item.status);
-    const hasCard = isFinal;
-    const hasBg = ["fundo_gerado", "renderizando_card", "gerando_whatsapp", "pronto_revisao", "aprovado", "rejeitado", "erro"].includes(item.status);
+    const hasGenerated = ["fundo_gerado", "renderizando_card", "gerando_whatsapp", "pronto_revisao", "aprovado", "rejeitado"].includes(item.status);
+    const hasCard = ["pronto_revisao", "aprovado", "rejeitado"].includes(item.status);
+    const hasError = item.status === "erro";
 
     const div = document.createElement("div");
     div.className = "review-item";
+    const placeholderText = (type) => {
+      if (hasError) return `${type} não gerado`;
+      if (item.status === "pendente") return "Aguardando processamento";
+      return "Card não gerado";
+    };
     div.innerHTML = `
       <div class="review-item-header">
         <input type="checkbox" class="review-select" data-slug="${escapeHtml(item.slug)}" ${state.reviewSelected.has(item.slug) ? "checked" : ""}>
@@ -414,28 +422,42 @@ function renderReview() {
             ? `<button class="btn-success approve-item" data-slug="${escapeHtml(item.slug)}">Aprovar</button>
                <button class="btn-danger reject-item" data-slug="${escapeHtml(item.slug)}">Rejeitar</button>`
             : ""}
-          ${item.status === "erro" || item.status === "rejeitado"
+          ${hasError || item.status === "rejeitado"
             ? `<button class="btn-secondary retry-item" data-slug="${escapeHtml(item.slug)}">Gerar novamente</button>`
             : ""}
         </div>
       </div>
       <div class="review-comparison">
         <div class="review-column">
-          <h5>Atual</h5>
+          <h5>Card atual</h5>
           <div class="thumb">
             ${record?.current_card_url
               ? `<img src="${escapeHtml(record.current_card_url)}" alt="Card atual">`
-              : `<div class="missing">Sem imagem atual</div>`}
+              : `<div class="missing">Sem card atual</div>`}
           </div>
         </div>
         <div class="review-column">
-          <h5>Novo</h5>
+          <h5>Fundo novo</h5>
+          <div class="thumb">
+            ${hasGenerated
+              ? `<img src="${getCatalogUrl(item.slug, `${item.slug}-fundo.png`)}" alt="Novo fundo">`
+              : `<div class="missing">${placeholderText("Fundo")}</div>`}
+          </div>
+        </div>
+        <div class="review-column">
+          <h5>Card novo</h5>
           <div class="thumb">
             ${hasCard
               ? `<img src="${getCatalogUrl(item.slug, `${item.slug}-card.png`)}" alt="Novo card">`
-              : hasBg
-              ? `<img src="${getCatalogUrl(item.slug, `${item.slug}-fundo.png`)}" alt="Novo fundo">`
-              : `<div class="missing">Aguardando processamento</div>`}
+              : `<div class="missing">${placeholderText("Card")}</div>`}
+          </div>
+        </div>
+        <div class="review-column">
+          <h5>WhatsApp</h5>
+          <div class="thumb">
+            ${hasCard
+              ? `<img src="${getCatalogUrl(item.slug, `${item.slug}-whatsapp.jpg`)}" alt="WhatsApp">`
+              : `<div class="missing">${placeholderText("WhatsApp")}</div>`}
           </div>
         </div>
       </div>
@@ -465,15 +487,11 @@ function renderReview() {
 }
 
 async function itemAction(slug, action) {
-  let url;
-  if (action === "regenerate") {
-    url = `/api/items/${encodeURIComponent(slug)}/generate?collection=${encodeURIComponent(state.collectionId || LEGACY_ID)}`;
-  } else {
-    url = `/api/items/${encodeURIComponent(slug)}/${action}?collection=${encodeURIComponent(state.collectionId || LEGACY_ID)}`;
-  }
+  if (!state.jobId) return;
+  const url = `/api/batches/${encodeURIComponent(state.jobId)}/items/${encodeURIComponent(slug)}/${action}`;
   setStatus("status", "loading", "Atualizando item...");
   try {
-    await api.json(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dryRun: action === "regenerate" }) });
+    await api.json(url, { method: "POST" });
     setStatus("status", "success", "Item atualizado.");
     await refreshReview();
   } catch (err) {
@@ -482,7 +500,7 @@ async function itemAction(slug, action) {
 }
 
 async function bulkAction(action) {
-  if (state.reviewSelected.size === 0) return;
+  if (state.reviewSelected.size === 0 || !state.jobId) return;
   const label = action === "approve" ? "aprovar" : "rejeitar";
   const ok = await confirmModal(`${state.reviewSelected.size} item(s) serão ${label}(s). Continuar?`, { danger: action === "reject" });
   if (!ok) return;
@@ -490,7 +508,7 @@ async function bulkAction(action) {
   setStatus("status", "loading", "Atualizando itens...");
   try {
     for (const slug of state.reviewSelected) {
-      await api.json(`/api/items/${encodeURIComponent(slug)}/${action}?collection=${encodeURIComponent(state.collectionId || LEGACY_ID)}`, { method: "POST" });
+      await api.json(`/api/batches/${encodeURIComponent(state.jobId)}/items/${encodeURIComponent(slug)}/${action}`, { method: "POST" });
     }
     state.reviewSelected.clear();
     setStatus("status", "success", "Itens atualizados.");
@@ -513,27 +531,75 @@ async function downloadItem(slug, type) {
   }
 }
 
-async function exportXlsx() {
-  setStatus("status", "loading", "Exportando planilha...");
+function isLegacyXlsx() {
+  return state.collectionId === LEGACY_ID;
+}
+
+function sourceType() {
+  return state.collection?.sourceType;
+}
+
+function exportButtonLabel() {
+  if (isLegacyXlsx()) return "Exportar planilha";
+  const type = sourceType();
+  if (type === "csv") return "Exportar CSV";
+  if (type === "json") return "Exportar JSON";
+  if (type === "xlsx") return "Exportar planilha";
+  return "Exportar";
+}
+
+function syncButtonLabel() {
+  const type = sourceType();
+  if (type === "csv") return "Exportar CSV atualizado";
+  if (type === "json") return "Exportar JSON atualizado";
+  return "Sincronizar fonte";
+}
+
+async function exportSource() {
+  setStatus("status", "loading", "Exportando...");
   try {
-    const result = await api.json("/api/xlsx/export", { method: "POST" });
-    setStatus("status", "success", `Exportado para ${result.outputPath || "output/ai-catalog/cursos-export.xlsx"}.`);
+    let result;
+    if (isLegacyXlsx()) {
+      result = await api.json("/api/xlsx/export", { method: "POST" });
+    } else {
+      result = await api.json(`/api/collections/${encodeURIComponent(state.collectionId)}/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+    }
+    setStatus("status", "success", `Exportado para ${result.outputPath || result.path || "output/exports"}.`);
   } catch (err) {
     handleApiError(err, "status");
   }
 }
 
-async function syncXlsx() {
+async function syncSource() {
+  if (!isLegacyXlsx() && sourceType() !== "xlsx") {
+    setStatus("status", "warning", "Sincronização in-place só está disponível para XLSX. Use exportar.");
+    return;
+  }
+
   const ok = await confirmModal("Isso atualizará a planilha fonte com os itens aprovados. Um backup será feito antes. Continuar?", { danger: true });
   if (!ok) return;
   setStatus("status", "loading", "Sincronizando planilha...");
   try {
-    const result = await api.json("/api/xlsx/sync", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confirm: true }),
-    });
-    setStatus("status", "success", `${result.report?.summary?.wouldChange || 0} alterações sincronizadas.`);
+    let result;
+    if (isLegacyXlsx()) {
+      result = await api.json("/api/xlsx/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: true }),
+      });
+      setStatus("status", "success", `${result.report?.summary?.wouldChange || 0} alterações sincronizadas.`);
+    } else {
+      result = await api.json(`/api/collections/${encodeURIComponent(state.collectionId)}/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: true }),
+      });
+      setStatus("status", "success", `${result.report?.summary?.wouldChange || 0} alterações sincronizadas.`);
+    }
   } catch (err) {
     handleApiError(err, "status");
   }

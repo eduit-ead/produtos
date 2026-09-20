@@ -14,6 +14,7 @@ const tests = [
   "test-xlsx-sync.js",
   "test-batch-lifecycle.js",
   "test-generic-collections.js",
+  "test-stabilization.js",
 ];
 
 let failed = false;

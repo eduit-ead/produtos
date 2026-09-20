@@ -4,6 +4,10 @@ const state = {
   assets: [],
   baseStats: {},
   activeTab: "bases",
+  showArchived: false,
+  viewItemsId: null,
+  viewItemsRecords: null,
+  editCollectionId: null,
 };
 
 async function init() {
@@ -14,6 +18,10 @@ async function init() {
   const requested = params.get("tab");
   if (requested && ["bases", "templates", "assets"].includes(requested)) {
     switchTab(requested);
+  }
+  const baseParam = params.get("base");
+  if (baseParam) {
+    state.viewItemsId = baseParam;
   }
 
   await loadAll();
@@ -36,12 +44,15 @@ function switchTab(tab) {
   state.activeTab = tab;
   document.querySelectorAll(".tab").forEach((el) => el.classList.toggle("active", el.dataset.tab === tab));
   document.querySelectorAll(".tab-panel").forEach((el) => el.classList.toggle("active", el.id === `tab-${tab}`));
+  if (tab === "bases") renderBases();
+  if (tab === "templates") renderTemplates();
+  if (tab === "assets") renderAssets();
 }
 
 async function loadAll() {
   try {
     const [collections, templates, assets] = await Promise.all([
-      api.json("/api/collections"),
+      api.json("/api/collections?archived=all"),
       api.json("/api/templates"),
       api.json("/api/assets"),
     ]);
@@ -53,6 +64,10 @@ async function loadAll() {
     renderTemplates();
     renderAssets();
     setStatus("status", "ready", `${collections.length} bases · ${templates.length} templates · ${assets.length} assets`);
+
+    if (state.viewItemsId) {
+      openItemsModal(state.viewItemsId);
+    }
   } catch (err) {
     handleApiError(err, "status");
   }
@@ -70,11 +85,18 @@ async function loadBaseStats() {
   }
 }
 
+function getSourceTypeLabel(type) {
+  const map = { xlsx: "XLSX", csv: "CSV", json: "JSON" };
+  return map[type] || type?.toUpperCase() || "—";
+}
+
 function renderBases() {
   const container = byId("basesList");
-  byId("basesCount").textContent = `${state.collections.length} base(s)`;
+  const visible = state.showArchived ? state.collections : state.collections.filter((c) => !c.archived);
+  byId("basesCount").textContent = `${visible.length} base(s)${state.showArchived ? " (incluindo arquivadas)" : ""}`;
 
   if (state.collections.length === 0) {
+    container.innerHTML = "";
     showEmpty(container, "Nenhuma base", "Importe uma planilha, CSV ou JSON para começar.", {
       label: "Importar base",
       onClick: () => (window.location.href = "/importar.html"),
@@ -83,23 +105,23 @@ function renderBases() {
   }
 
   container.innerHTML = "";
-  for (const c of state.collections) {
+  for (const c of visible) {
     const card = document.createElement("div");
-    card.className = "card base-card";
-
+    card.className = "card base-card" + (c.archived ? " archived" : "");
     const status = c.archived ? "Arquivada" : "Ativa";
     const statusClassName = c.archived ? "badge-neutral" : "badge-success";
 
     card.innerHTML = `
-      <div class="meta"><span class="badge ${statusClassName}">${status}</span> · ${escapeHtml(c.sourceType?.toUpperCase() || "—")}</div>
+      <div class="meta"><span class="badge ${statusClassName}">${status}</span> · ${getSourceTypeLabel(c.sourceType)}</div>
       <h3>${escapeHtml(c.name)}</h3>
       <p class="description">${escapeHtml(c.description || "Sem descrição.")}</p>
       <div class="meta">
         ${state.baseStats[c.id] ?? "—"} itens · template ${escapeHtml(c.defaultTemplateId || "—")} · atualizado ${formatDate(c.updatedAt)}
       </div>
       <div class="actions">
-        <a class="btn-primary" href="/batch.html?collection=${encodeURIComponent(c.id)}">Produzir imagens</a>
-        <a class="btn-secondary" href="/biblioteca.html?tab=bases&base=${encodeURIComponent(c.id)}">Ver itens</a>
+        <a class="btn-primary" href="/batch.html?collection=${encodeURIComponent(c.id)}&autostart=1">Produzir imagens</a>
+        <button type="button" class="btn-secondary view-items" data-id="${escapeHtml(c.id)}">Ver itens</button>
+        <button type="button" class="btn-secondary configure-base" data-id="${escapeHtml(c.id)}">Configurar</button>
         <div class="spacer"></div>
         <div class="menu">
           <button type="button" class="menu-btn btn-ghost" data-id="${escapeHtml(c.id)}">⋮</button>
@@ -124,23 +146,165 @@ function renderBases() {
     });
   });
 
+  document.querySelectorAll(".view-items").forEach((btn) => btn.addEventListener("click", () => openItemsModal(btn.dataset.id)));
+  document.querySelectorAll(".configure-base").forEach((btn) => btn.addEventListener("click", () => openConfigModal(btn.dataset.id)));
   document.querySelectorAll(".duplicate-base").forEach((btn) => btn.addEventListener("click", () => duplicateBase(btn.dataset.id)));
   document.querySelectorAll(".archive-base").forEach((btn) => btn.addEventListener("click", () => archiveBase(btn.dataset.id)));
   document.querySelectorAll(".export-base").forEach((btn) => btn.addEventListener("click", () => exportBase(btn.dataset.id)));
+
+  // Toggle arquivadas
+  if (!byId("archivedToggle")) {
+    const bar = byId("basesList").previousElementSibling;
+    if (bar) {
+      const toggle = document.createElement("button");
+      toggle.id = "archivedToggle";
+      toggle.className = "btn-ghost";
+      toggle.textContent = "Mostrar arquivadas";
+      toggle.addEventListener("click", () => {
+        state.showArchived = !state.showArchived;
+        toggle.textContent = state.showArchived ? "Ocultar arquivadas" : "Mostrar arquivadas";
+        renderBases();
+      });
+      bar.insertBefore(toggle, bar.firstChild);
+    }
+  }
+  byId("archivedToggle").textContent = state.showArchived ? "Ocultar arquivadas" : "Mostrar arquivadas";
+}
+
+async function openItemsModal(id) {
+  try {
+    setStatus("status", "loading", "Carregando itens...");
+    const records = await api.json(`/api/collections/${encodeURIComponent(id)}/records`);
+    state.viewItemsId = id;
+    state.viewItemsRecords = records;
+    renderItemsModal(id, records);
+    setStatus("status", "ready", `${records.length} itens carregados.`);
+  } catch (err) {
+    handleApiError(err, "status");
+  }
+}
+
+function renderItemsModal(id, records) {
+  const collection = state.collections.find((c) => c.id === id);
+  const body = document.createElement("div");
+  body.innerHTML = `<p class="hint">${escapeHtml(collection?.name || id)} · ${records.length} registros</p>`;
+
+  if (records.length === 0) {
+    body.innerHTML += `<p>Nenhum item nesta base.</p>`;
+  } else {
+    const tableWrap = document.createElement("div");
+    tableWrap.className = "items-table-wrap";
+    const table = document.createElement("table");
+    table.className = "items-table";
+    const keys = new Set(["id", "title", "slug", "sourceStatus"]);
+    for (const r of records.slice(0, 10)) {
+      for (const k of Object.keys(r.fields || {})) keys.add(k);
+    }
+    const headers = [...keys];
+    table.innerHTML = `
+      <thead><tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead>
+      <tbody>
+        ${records.slice(0, 50).map((r) => `
+          <tr>
+            ${headers.map((h) => {
+              const value = h === "id" ? r.id : h === "title" ? r.title : h === "slug" ? r.slug : h === "sourceStatus" ? r.sourceStatus : (r.fields || {})[h];
+              return `<td>${escapeHtml(String(value ?? "").slice(0, 80))}</td>`;
+            }).join("")}
+          </tr>
+        `).join("")}
+      </tbody>
+    `;
+    tableWrap.appendChild(table);
+    body.appendChild(tableWrap);
+    if (records.length > 50) {
+      body.innerHTML += `<p class="hint">Mostrando 50 de ${records.length} registros.</p>`;
+    }
+  }
+
+  createModal({
+    title: "Itens da base",
+    body,
+    footer: [{ label: "Fechar", className: "btn-secondary", close: true }],
+  });
+}
+
+async function openConfigModal(id) {
+  const collection = state.collections.find((c) => c.id === id);
+  if (!collection) return;
+
+  const allFields = await api.json(`/api/collections/${encodeURIComponent(id)}/fields`).catch(() => []);
+
+  const body = document.createElement("div");
+  body.innerHTML = `
+    <div class="field-group">
+      <label>Nome</label>
+      <input type="text" id="cfg-name" value="${escapeHtml(collection.name)}">
+    </div>
+    <div class="field-group">
+      <label>Descrição</label>
+      <textarea id="cfg-description">${escapeHtml(collection.description || "")}</textarea>
+    </div>
+    <div class="field-group">
+      <label>Identificador único (primaryKey)</label>
+      <select id="cfg-primaryKey">${allFields.map((f) => `<option value="${escapeHtml(f)}" ${f === collection.primaryKey ? "selected" : ""}>${escapeHtml(f)}</option>`).join("")}</select>
+    </div>
+    <div class="field-group">
+      <label>Título principal (displayField)</label>
+      <select id="cfg-displayField">${allFields.map((f) => `<option value="${escapeHtml(f)}" ${f === collection.displayField ? "selected" : ""}>${escapeHtml(f)}</option>`).join("")}</select>
+    </div>
+    <div class="field-group">
+      <label>Template padrão</label>
+      <select id="cfg-template">${state.templates.map((t) => `<option value="${escapeHtml(t.id)}" ${t.id === collection.defaultTemplateId ? "selected" : ""}>${escapeHtml(t.name || t.id)}</option>`).join("")}</select>
+    </div>
+    <div class="field-group">
+      <label>Padrão do nome do arquivo</label>
+      <input type="text" id="cfg-filenamePattern" value="${escapeHtml(collection.filenamePattern)}">
+      <div class="hint">Use {{slug}} para o identificador.</div>
+    </div>
+  `;
+
+  createModal({
+    title: `Configurar: ${collection.name}`,
+    body,
+    footer: [
+      { label: "Cancelar", className: "btn-secondary", close: true },
+      { label: "Salvar", className: "btn-primary", close: false, onClick: () => saveCollectionConfig(id) },
+    ],
+  });
+}
+
+async function saveCollectionConfig(id) {
+  const collection = state.collections.find((c) => c.id === id);
+  if (!collection) return;
+  const updated = {
+    ...collection,
+    name: byId("cfg-name").value.trim(),
+    description: byId("cfg-description").value.trim(),
+    primaryKey: byId("cfg-primaryKey").value,
+    displayField: byId("cfg-displayField").value,
+    defaultTemplateId: byId("cfg-template").value,
+    templateIds: [byId("cfg-template").value],
+    filenamePattern: byId("cfg-filenamePattern").value.trim() || "{{slug}}",
+  };
+  setStatus("status", "loading", "Salvando configuração...");
+  try {
+    await api.json(`/api/collections/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updated),
+    });
+    setStatus("status", "success", "Configuração salva.");
+    await loadAll();
+  } catch (err) {
+    handleApiError(err, "status");
+  }
 }
 
 async function duplicateBase(id) {
   setStatus("status", "loading", "Duplicando...");
   try {
-    const original = await api.json(`/api/collections/${encodeURIComponent(id)}`);
-    const newId = `${original.id}-copia-${Date.now()}`;
-    const copy = { ...original, id: newId, name: `${original.name} (cópia)`, archived: false };
-    await api.json("/api/collections", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(copy),
-    });
-    setStatus("status", "success", `Base duplicada como ${newId}.`);
+    const result = await api.json(`/api/collections/${encodeURIComponent(id)}/duplicate`, { method: "POST" });
+    setStatus("status", "success", `Base duplicada como ${result.collection.id}.`);
     await loadAll();
   } catch (err) {
     handleApiError(err, "status");
@@ -150,7 +314,12 @@ async function duplicateBase(id) {
 async function archiveBase(id) {
   setStatus("status", "loading", "Atualizando...");
   try {
-    await api.json(`/api/collections/${encodeURIComponent(id)}/archive`, { method: "POST" });
+    const c = state.collections.find((x) => x.id === id);
+    await api.json(`/api/collections/${encodeURIComponent(id)}/archive`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ archived: !c?.archived }),
+    });
     setStatus("status", "success", "Status atualizado.");
     await loadAll();
   } catch (err) {
@@ -160,15 +329,16 @@ async function archiveBase(id) {
 
 async function exportBase(id) {
   try {
-    const collection = await api.json(`/api/collections/${encodeURIComponent(id)}`);
-    const blob = new Blob([JSON.stringify(collection, null, 2)], { type: "application/json" });
-    downloadBlob(blob, `${collection.id}.json`);
+    const response = await fetch(`/api/collections/${encodeURIComponent(id)}/export-config`);
+    if (!response.ok) throw new Error("Erro ao exportar");
+    const blob = await response.blob();
+    downloadBlob(blob, `${id}.json`);
   } catch (err) {
     handleApiError(err, "status");
   }
 }
 
-function renderTemplates() {
+async function renderTemplates() {
   const container = byId("templatesList");
   if (state.templates.length === 0) {
     showEmpty(container, "Nenhum template", "Crie um template pelo editor avançado.");
@@ -194,6 +364,26 @@ function renderTemplates() {
       </div>
     `;
     container.appendChild(card);
+
+    (async () => {
+      try {
+        const full = await api.json(`/api/templates/${encodeURIComponent(t.id)}`);
+        const values = {};
+        for (const v of full.variables || []) {
+          values[v.key] = v.defaultValue !== undefined ? v.defaultValue : (v.type === "boolean" ? false : "");
+        }
+        const blob = await api.blob("/api/render", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ template: full, values }),
+        });
+        const url = URL.createObjectURL(blob);
+        const thumb = card.querySelector(".thumb");
+        thumb.innerHTML = `<img src="${url}" alt="${escapeHtml(t.name || t.id)}">`;
+      } catch (err) {
+        // mantém placeholder
+      }
+    })();
   }
 
   document.querySelectorAll(".duplicate-template").forEach((btn) => btn.addEventListener("click", () => duplicateTemplate(btn.dataset.id)));

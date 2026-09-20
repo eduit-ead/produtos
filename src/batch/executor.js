@@ -36,6 +36,8 @@ const {
   catalogDirFor: catalogDirForCollection,
   loadCollectionAndRecords,
   resolveTemplateBindingsValues,
+  applyProductionBackground,
+  PRODUCTION_BACKGROUND_KEY,
 } = require("../production/generic-production-service");
 const { getDataSource } = require("../data-sources");
 const { loadCollection } = require("../collections/manager");
@@ -219,32 +221,14 @@ function createGenericProvider(collectionId) {
     if (templateId === LEGACY_TEMPLATE_ID) {
       throw new Error("Template Cruzeiro não pode ser usado fora da coleção padrão.");
     }
-    const ASSETS_DIR = path.join(ROOT, "data", "assets");
-    fs.mkdirSync(ASSETS_DIR, { recursive: true });
 
     const templatePath = path.join(ROOT, "data", "templates", `${templateId}.json`);
     const template = JSON.parse(fs.readFileSync(templatePath, "utf8"));
     const values = resolveTemplateBindingsValues(collection, record);
 
-    // Preenche placeholders com valores default.
     for (const v of template.variables || []) {
       if (Object.hasOwn(values, v.key)) continue;
       if (v.defaultValue !== undefined) values[v.key] = v.defaultValue;
-    }
-
-    // Salva o fundo gerado como asset e associa à variável de imagem do template.
-    const backgroundAssetId = `batch-bg-${item.slug}.png`;
-    const assetPath = path.join(ASSETS_DIR, backgroundAssetId);
-    fs.writeFileSync(assetPath, backgroundBuffer);
-
-    const imageVar = (template.variables || []).find(
-      (v) => v.type === "image" && v.binding && v.binding.property === "assetId"
-    );
-    if (imageVar) {
-      values[imageVar.key] = backgroundAssetId;
-    } else {
-      const bgLayer = template.layers.find((l) => l.type === "background");
-      if (bgLayer) bgLayer.properties = { ...bgLayer.properties, assetId: backgroundAssetId };
     }
 
     const missing = (template.variables || [])
@@ -254,7 +238,10 @@ function createGenericProvider(collectionId) {
       throw new Error(`Variáveis obrigatórias sem binding: ${missing.join(", ")}`);
     }
 
-    return renderTemplate(template, values);
+    const applied = applyProductionBackground(template, values, collection);
+    return renderTemplate(applied.template || template, applied.values, {
+      runtimeAssets: { [PRODUCTION_BACKGROUND_KEY]: backgroundBuffer },
+    });
   }
 
   return { loadMap, generateBackground, renderCard };

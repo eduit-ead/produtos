@@ -447,6 +447,92 @@ async function resolveBackgroundBufferGeneric(collectionId, slug, manifestEntry,
   throw new Error("Nenhum fundo disponível para renderizar.");
 }
 
+const PRODUCTION_BACKGROUND_KEY = "__production_background__";
+
+async function validateCollectionProduction(collection) {
+  const errors = [];
+  const templateId = collection.defaultTemplateId;
+  let template;
+  try {
+    template = await loadTemplate(templateId);
+  } catch (err) {
+    errors.push(`Template "${templateId}" não encontrado.`);
+    return errors;
+  }
+
+  const dummyFields = {};
+  for (const binding of collection.templateBindings || []) {
+    if (binding.sourceField) dummyFields[binding.sourceField] = "Valor de exemplo";
+  }
+  for (const [_, source] of Object.entries(collection.fieldMappings || {})) {
+    if (source) dummyFields[source] = dummyFields[source] || "Valor de exemplo";
+  }
+  const dummyRecord = { fields: dummyFields, prompt: "Prompt de exemplo", sourceImage: "", sourceStatus: "" };
+  const values = resolveTemplateBindingsValues(collection, dummyRecord);
+  const missing = requiredVariablesMissing(template, values);
+  if (missing.length > 0) {
+    errors.push(`Variáveis obrigatórias sem binding: ${missing.join(", ")}.`);
+  }
+
+  const binding = collection.productionBackgroundBinding;
+  if (binding?.variable) {
+    const variable = (template.variables || []).find((v) => v.key === binding.variable);
+    if (!variable) errors.push(`Variável de fundo "${binding.variable}" não existe no template.`);
+    else if (variable.type !== "image") errors.push(`A variável "${binding.variable}" deve ser do tipo imagem.`);
+  } else if (binding?.layerId) {
+    const layer = template.layers.find((l) => l.id === binding.layerId);
+    if (!layer) errors.push(`Camada de fundo "${binding.layerId}" não existe no template.`);
+    else if (!["background", "image", "overlay"].includes(layer.type)) {
+      errors.push(`A camada "${binding.layerId}" não aceita asset de imagem.`);
+    }
+  } else {
+    const hasImageVar = (template.variables || []).some(
+      (v) => v.type === "image" && v.binding && v.binding.property === "assetId"
+    );
+    const hasBgLayer = template.layers.some((l) => l.type === "background");
+    if (!hasImageVar && !hasBgLayer) {
+      errors.push("Template não possui variável de imagem com binding assetId nem camada background para receber o fundo de produção.");
+    }
+  }
+
+  return errors;
+}
+
+function applyProductionBackground(template, values, collection) {
+  const binding = collection.productionBackgroundBinding;
+  if (binding?.variable) {
+    return { ...values, [binding.variable]: PRODUCTION_BACKGROUND_KEY };
+  }
+  if (binding?.layerId) {
+    const templateCopy = JSON.parse(JSON.stringify(template));
+    const layer = templateCopy.layers.find((l) => l.id === binding.layerId);
+    if (layer) {
+      layer.properties = { ...layer.properties, assetId: PRODUCTION_BACKGROUND_KEY };
+    }
+    return { template: templateCopy, values };
+  }
+
+  // Fallback: primeira variável de imagem com binding assetId ou camada background.
+  const imageVar = (template.variables || []).find(
+    (v) => v.type === "image" && v.binding && v.binding.property === "assetId"
+  );
+  if (imageVar) {
+    return { ...values, [imageVar.key]: PRODUCTION_BACKGROUND_KEY };
+  }
+
+  const bgLayer = template.layers.find((l) => l.type === "background");
+  if (bgLayer) {
+    const templateCopy = JSON.parse(JSON.stringify(template));
+    const layer = templateCopy.layers.find((l) => l.id === bgLayer.id);
+    if (layer) {
+      layer.properties = { ...layer.properties, assetId: PRODUCTION_BACKGROUND_KEY };
+    }
+    return { template: templateCopy, values };
+  }
+
+  return { template, values };
+}
+
 async function renderItem(collectionId, slug, { templateId = null } = {}) {
   if (isLegacyCollection(collectionId)) {
     return courseService.renderCourse(slug);
@@ -481,7 +567,10 @@ async function renderItem(collectionId, slug, { templateId = null } = {}) {
     if (missing.length > 0) {
       throw new Error(`Variáveis obrigatórias sem binding: ${missing.join(", ")}`);
     }
-    cardBuffer = await renderTemplate(template, values);
+    const applied = applyProductionBackground(template, values, collection);
+    cardBuffer = await renderTemplate(applied.template || template, applied.values, {
+      runtimeAssets: { [PRODUCTION_BACKGROUND_KEY]: backgroundBuffer },
+    });
   }
 
   await storage.save(`${slug}/card`, cardBuffer, { contentType: "image/png" });
@@ -612,4 +701,10 @@ module.exports = {
   resolveTemplateBindingsValues,
   requiredVariablesMissing,
   isLegacyCollection,
+  applyProductionBackground,
+  resolveBackgroundBufferGeneric,
+  validateCollectionProduction,
+  getManifestEntry,
+  setManifestEntry,
+  PRODUCTION_BACKGROUND_KEY,
 };

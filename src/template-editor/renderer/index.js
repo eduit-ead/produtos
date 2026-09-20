@@ -18,7 +18,7 @@ const {
 const { renderTextLayer } = require("./text-layer");
 const { renderShapeLayer } = require("./shape-layer");
 
-async function renderBackgroundLayer(layer) {
+async function renderBackgroundLayer(layer, runtimeAssets) {
   if (!layer || typeof layer !== "object") {
     return sharp({
       create: { width: 1, height: 1, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
@@ -30,7 +30,7 @@ async function renderBackgroundLayer(layer) {
   const props = layer.properties || {};
 
   if (props.assetId) {
-    const buffer = loadAssetBuffer(props.assetId);
+    const buffer = loadAssetBuffer(props.assetId, runtimeAssets);
     if (!buffer) {
       throw new Error(`Asset de fundo não encontrado: ${props.assetId}`);
     }
@@ -52,7 +52,7 @@ async function renderBackgroundLayer(layer) {
     .toBuffer();
 }
 
-async function renderImageLayer(layer) {
+async function renderImageLayer(layer, runtimeAssets) {
   if (!layer || typeof layer !== "object") {
     return sharp({
       create: { width: 1, height: 1, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
@@ -62,7 +62,7 @@ async function renderImageLayer(layer) {
   }
 
   const props = layer.properties || {};
-  const buffer = loadAssetBuffer(props.assetId);
+  const buffer = loadAssetBuffer(props.assetId, runtimeAssets);
   if (!buffer) {
     throw new Error(`Asset de imagem não encontrado: ${props.assetId}`);
   }
@@ -101,7 +101,7 @@ async function renderImageLayer(layer) {
     .toBuffer();
 }
 
-async function renderOverlayLayer(layer) {
+async function renderOverlayLayer(layer, runtimeAssets) {
   if (!layer || typeof layer !== "object") {
     return sharp({
       create: { width: 1, height: 1, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
@@ -111,7 +111,7 @@ async function renderOverlayLayer(layer) {
   }
 
   const props = layer.properties || {};
-  const buffer = loadAssetBuffer(props.assetId);
+  const buffer = loadAssetBuffer(props.assetId, runtimeAssets);
   if (!buffer) {
     throw new Error(`Asset de overlay não encontrado: ${props.assetId}`);
   }
@@ -122,14 +122,14 @@ async function renderOverlayLayer(layer) {
     .toBuffer();
 }
 
-async function renderLayer(layer, resolvedVariables) {
+async function renderLayer(layer, resolvedVariables, runtimeAssets) {
   switch (layer.type) {
     case "background":
-      return renderBackgroundLayer(layer);
+      return renderBackgroundLayer(layer, runtimeAssets);
     case "image":
-      return renderImageLayer(layer);
+      return renderImageLayer(layer, runtimeAssets);
     case "overlay":
-      return renderOverlayLayer(layer);
+      return renderOverlayLayer(layer, runtimeAssets);
     case "text":
       return renderTextLayer(layer, resolvedVariables);
     case "shape":
@@ -139,8 +139,9 @@ async function renderLayer(layer, resolvedVariables) {
   }
 }
 
-async function renderTemplate(template, values = {}) {
+async function renderTemplate(template, values = {}, options = {}) {
   const { validateTemplate, resolveVariables, applyVariableBindings } = require("../schema/template-schema");
+  const runtimeAssets = options.runtimeAssets || {};
 
   const errors = validateTemplate(template);
   if (errors.length > 0) {
@@ -167,7 +168,7 @@ async function renderTemplate(template, values = {}) {
   for (const layer of layers) {
     if (!layer.visible) continue;
 
-    let layerBuffer = await renderLayer(layer, resolved);
+    let layerBuffer = await renderLayer(layer, resolved, runtimeAssets);
     layerBuffer = await applyOpacity(layerBuffer, layer.opacity);
     const rotated = await rotateLayer(layerBuffer, layer.rotation || 0);
     const { left, top } = computeCompositePosition(layer, rotated.width, rotated.height);
