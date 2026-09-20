@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Produção em Lote</title>
+  <link rel="stylesheet" href="/batch.css">
+</head>
+<body>
+  <div id="app">
+    <header class="studio-header">
+      <h1>Produção em Lote</h1>
+      <nav class="nav-links">
+        <a href="/">Estúdio</a>
+        <a href="/cursos.html">Cursos</a>
+        <a href="/batch.html" class="active">Produção em lote</a>
+        <a href="/editor.html">Editor avançado</a>
+      </nav>
+    </header>
+
+    <main class="studio-workspace">
+      <section id="catalogStage" class="catalog-stage">
+        <div class="summary-bar" id="summaryBar">
+          <div class="summary-item"><span id="summaryTotal">0</span><label>Total</label></div>
+          <div class="summary-item"><span id="summarySelected">0</span><label>Selecionados</label></div>
+          <div class="summary-item"><span id="summaryFiltered">0</span><label>Filtrados</label></div>
+        </div>
+
+        <div class="catalog-toolbar">
+          <input type="text" id="searchInput" placeholder="Buscar por nome...">
+          <select id="filterModalidade"><option value="">Todas as modalidades</option></select>
+          <select id="filterFormacao"><option value="">Todas as formações</option></select>
+          <select id="filterStatus"><option value="">Todos os status</option></select>
+          <button id="btnSelectAll" class="secondary">Selecionar todos os filtrados</button>
+          <button id="btnClearSelection" class="secondary">Limpar seleção</button>
+        </div>
+
+        <div id="courseGrid" class="course-grid"></div>
+      </section>
+
+      <section id="configStage" class="config-stage">
+        <aside class="config-panel">
+          <h2>Novo lote</h2>
+          <div id="selectionSummary" class="selection-summary">Nenhum curso selecionado</div>
+
+          <label>Template</label>
+          <input type="text" id="templateId" value="cruzeiro-graduacao-v1" readonly>
+
+          <label>Origem do fundo</label>
+          <select id="backgroundSource">
+            <option value="ia">Geração por IA</option>
+            <option value="original">Imagem atual do curso</option>
+          </select>
+
+          <label>Tamanho do lote</label>
+          <input type="number" id="batchSize" value="1" min="1" max="50">
+
+          <label>Limite de chamadas à API</label>
+          <input type="number" id="maxCalls" value="" placeholder="Opcional">
+
+          <label>Limite de custo (USD)</label>
+          <input type="number" id="maxCostUsd" value="" placeholder="Opcional" step="0.01">
+
+          <label>Modelo</label>
+          <input type="text" id="model" value="gpt-image-2.5-flare" readonly>
+
+          <label>Qualidade</label>
+          <select id="quality">
+            <option value="medium" selected>média</option>
+            <option value="high">alta</option>
+            <option value="low">baixa</option>
+          </select>
+
+          <label>Tamanho</label>
+          <select id="size">
+            <option value="1024x1024" selected>1024x1024</option>
+            <option value="1536x1024">1536x1024</option>
+            <option value="1024x1536">1024x1536</option>
+          </select>
+
+          <label class="checkbox-label">
+            <input type="checkbox" id="dryRun" checked>
+            Dry-run (sem chamadas reais à OpenAI)
+          </label>
+
+          <div class="estimate" id="estimate">Estimativa: 0 chamadas · USD 0.00</div>
+
+          <button id="btnCreateBatch" class="primary" disabled>Criar lote</button>
+        </aside>
+
+        <section class="batch-list-panel">
+          <h2>Lotes existentes</h2>
+          <div id="batchList" class="batch-list"></div>
+        </section>
+      </section>
+
+      <section id="batchStage" class="batch-stage hidden">
+        <aside class="batch-detail-panel">
+          <div class="batch-detail-header">
+            <button id="btnBackToCatalog" class="secondary">Voltar ao catálogo</button>
+            <h2 id="batchTitle">Lote</h2>
+          </div>
+
+          <div class="batch-status">
+            <span id="batchStatusBadge" class="status-badge">-</span>
+            <span id="batchProgressText">0 / 0</span>
+          </div>
+
+          <div class="progress-bar"><div id="progressFill" class="progress-fill" style="width:0%"></div></div>
+
+          <div class="stats-grid">
+            <div class="stat"><span id="statCompleted">0</span><label>Concluídos</label></div>
+            <div class="stat"><span id="statErrors">0</span><label>Erros</label></div>
+            <div class="stat"><span id="statApproved">0</span><label>Aprovados</label></div>
+            <div class="stat"><span id="statRejected">0</span><label>Rejeitados</label></div>
+            <div class="stat"><span id="statCalls">0</span><label>Chamadas</label></div>
+            <div class="stat"><span id="statCost">0.00</span><label>Custo USD</label></div>
+          </div>
+
+          <div class="batch-actions">
+            <button id="btnStart" class="primary">Iniciar</button>
+            <button id="btnPause" class="secondary">Pausar</button>
+            <button id="btnResume" class="secondary">Continuar</button>
+            <button id="btnCancel" class="danger">Cancelar</button>
+            <button id="btnRetryErrors" class="secondary">Reprocessar erros</button>
+            <button id="btnRetryRejected" class="secondary">Reprocessar rejeitados</button>
+          </div>
+
+          <div class="xlsx-actions">
+            <h3>Planilha</h3>
+            <button id="btnDryRunSync" class="secondary">Dry-run sincronização</button>
+            <button id="btnSync" class="secondary">Sincronizar planilha</button>
+            <button id="btnExport" class="secondary">Exportar planilha</button>
+          </div>
+
+          <div id="status" class="status ready">Pronto</div>
+        </aside>
+
+        <section class="items-panel">
+          <h2>Itens do lote</h2>
+          <div id="itemsList" class="items-list"></div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script src="/batch.js"></script>
+</body>
+</html>

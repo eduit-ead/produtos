@@ -1,0 +1,13 @@
+node_modules
+npm-debug.log
+.env
+.env.local
+output/ai-backgrounds/openai
+output/final
+output/whatsapp
+input/cache
+*.zip
+.DS_Store
+.cursor
+agent-transcripts
+terminals

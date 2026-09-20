@@ -8,6 +8,11 @@ const tests = [
   "test-upload.js",
   "test-studio-bindings.js",
   "test-course-api.js",
+  "test-naming.js",
+  "test-local-storage.js",
+  "test-whatsapp-conversion.js",
+  "test-xlsx-sync.js",
+  "test-batch-lifecycle.js",
 ];
 
 let failed = false;

@@ -1,5 +1,5 @@
 /**
- * Rotas da API do editor de templates.
+ * Rotas da API do editor de templates e do catálogo de imagens.
  */
 
 const fs = require("fs");
@@ -21,10 +21,34 @@ const {
   rejectCourse,
   CATALOG_DIR,
 } = require("../course-production-service");
+const { LocalStorageProvider } = require("../storage/local-storage-provider");
+const { BatchExecutor } = require("../batch/executor");
+const { listJobs, readJob, writeJob } = require("../batch/job");
+const {
+  getCatalogDir,
+  listMetadata,
+  readMetadata,
+  writeMetadata,
+  updateMetadataUrls,
+  createMetadata,
+  sha256,
+} = require("../batch/metadata");
+const { courseFiles } = require("../batch/naming");
+const { convertCardToWhatsAppJpeg } = require("../whatsapp-image");
+const {
+  addImageColumnsIfNeeded,
+  buildSyncPlan,
+  dryRunSyncPlan,
+  syncWorkbook,
+  exportUpdatedSpreadsheet,
+  loadWorkbook,
+} = require("../xlsx-sync");
+const { loadCourseBySlug, loadAllCourses, INPUT_FILE } = require("../read-courses");
 
 const DATA_DIR = path.join(__dirname, "..", "..", "data");
 const TEMPLATES_DIR = path.join(DATA_DIR, "templates");
 const ASSETS_DIR = path.join(DATA_DIR, "assets");
+const BACKUPS_DIR = path.join(__dirname, "..", "..", "input", "backups");
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
 // Apenas PNG/JPEG são armazenados. SVG é rasterizado para PNG no upload.
@@ -89,6 +113,10 @@ const upload = multer({
 function createRouter() {
   const router = express.Router();
   ensureDirs();
+
+  const catalogDir = getCatalogDir();
+  const storage = new LocalStorageProvider(catalogDir);
+  const executor = new BatchExecutor({ catalogDir, storageProvider: storage });
 
   // Listar templates
   router.get("/templates", (req, res) => {
@@ -263,6 +291,47 @@ function createRouter() {
     }
   });
 
+  // === Controlled output file serving ===
+  const OUTPUT_DIR = path.join(__dirname, "..", "..", "output");
+  const SLUG_FILENAME_REGEX = /^[A-Za-z0-9_-]+$/;
+  function serveOutputFile(req, res, subPathFn) {
+    const slug = req.params.slug;
+    if (!slug || !SLUG_FILENAME_REGEX.test(slug)) {
+      return res.status(400).json({ error: "Slug inválido." });
+    }
+    const filePath = path.join(OUTPUT_DIR, subPathFn(slug));
+    const resolved = path.resolve(filePath);
+    if (!resolved.startsWith(path.resolve(OUTPUT_DIR) + path.sep)) {
+      return res.status(400).json({ error: "Caminho inválido." });
+    }
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "Arquivo não encontrado." });
+    }
+    const ext = path.extname(filePath).toLowerCase();
+    const mime = ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : "image/png";
+    res.setHeader("Content-Type", mime);
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    res.sendFile(filePath);
+  }
+
+  router.get("/output/final/:slug.png", (req, res) => {
+    serveOutputFile(req, res, (slug) => path.join("final", `${slug}.png`));
+  });
+
+  router.get("/output/whatsapp/:slug.jpg", (req, res) => {
+    serveOutputFile(req, res, (slug) => path.join("whatsapp", `${slug}.jpg`));
+  });
+
+  // === Health ===
+  router.get("/health", async (req, res) => {
+    const storageHealth = await storage.healthCheck();
+    res.json({
+      ok: storageHealth.ok,
+      storage: storageHealth,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
   // === Cursos ===
   const EXPECTED_COURSE_ERRORS = new Set([
     "Slug inválido.",
@@ -366,22 +435,71 @@ function createRouter() {
     }
   });
 
-  // Servir arquivos do catálogo de forma segura, independentemente de onde o
-  // CATALOG_DIR esteja localizado (padrão ou temporário de teste).
+  // Gerar imagem WhatsApp a partir do card renderizado no catálogo.
+  router.post("/courses/:slug/whatsapp", async (req, res) => {
+    try {
+      const catalogDir = getCatalogDir();
+      const course = await loadCourseBySlug(req.params.slug);
+      if (!course) {
+        return res.status(404).json({ error: "Curso não encontrado." });
+      }
+
+      let metadata = readMetadata(catalogDir, course.slug);
+      if (!metadata) {
+        metadata = createMetadata(course);
+      }
+
+      const cardKey = metadata.storage.keys.card;
+      if (!(await storage.exists(cardKey))) {
+        return res.status(400).json({ error: "Card ainda não foi renderizado." });
+      }
+
+      const cardPath = storage.resolveLocalPath(cardKey);
+      const cardBuffer = fs.readFileSync(cardPath);
+      const whatsappBuffer = await convertCardToWhatsAppJpeg(cardBuffer);
+
+      await storage.save(metadata.storage.keys.whatsapp, whatsappBuffer, {
+        contentType: "image/jpeg",
+      });
+
+      metadata.hashes.whatsapp = sha256(whatsappBuffer);
+      metadata.timestamps.whatsapp_at = new Date().toISOString();
+      metadata.status = metadata.status === "aprovado" ? "aprovado" : "pronto_revisao";
+      await updateMetadataUrls(metadata, storage);
+      writeMetadata(catalogDir, course.slug, metadata);
+
+      res.json({
+        ok: true,
+        slug: course.slug,
+        whatsapp_url: metadata.urls.whatsapp,
+        whatsapp_file: metadata.files.whatsapp,
+        size: whatsappBuffer.length,
+      });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao gerar imagem WhatsApp." });
+    }
+  });
+
+  // === Catálogo local ===
   router.get("/catalog/:slug/:file", (req, res) => {
     const slug = req.params.slug;
     const file = req.params.file;
+    const files = courseFiles(slug);
     const ALLOWED_FILES = new Set([
       `${slug}-fundo-ia.png`,
       `${slug}-card-ia.png`,
       `${slug}-fundo-upload.png`,
+      files.fundo,
+      files.card,
+      files.whatsapp,
     ]);
     if (!slug || !file || !ALLOWED_FILES.has(file)) {
       return res.status(400).json({ error: "Arquivo inválido." });
     }
-    const filePath = path.join(CATALOG_DIR, slug, file);
+    const filePath = path.join(getCatalogDir(), slug, file);
     const resolved = path.resolve(filePath);
-    const courseDirResolved = path.resolve(path.join(CATALOG_DIR, slug));
+    const courseDirResolved = path.resolve(path.join(getCatalogDir(), slug));
     if (
       !resolved.startsWith(courseDirResolved + path.sep) &&
       resolved !== courseDirResolved
@@ -391,9 +509,207 @@ function createRouter() {
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: "Arquivo não encontrado." });
     }
-    res.setHeader("Content-Type", "image/png");
+    const ext = path.extname(file).toLowerCase();
+    const mime = ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : "image/png";
+    res.setHeader("Content-Type", mime);
     res.setHeader("Cache-Control", "public, max-age=60");
     res.sendFile(filePath);
+  });
+
+  // === Arquivos via StorageProvider ===
+  router.get("/files/:encodedKey", (req, res) => {
+    try {
+      const key = Buffer.from(req.params.encodedKey, "base64url").toString("utf8");
+      const filePath = storage.resolveLocalPath(key);
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: "Arquivo não encontrado." });
+      }
+      const ext = path.extname(filePath).toLowerCase();
+      const mime = ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : "image/png";
+      res.setHeader("Content-Type", mime);
+      res.setHeader("Cache-Control", "public, max-age=60");
+      res.sendFile(filePath);
+    } catch (err) {
+      console.error(err);
+      res.status(400).json({ error: "Chave inválida." });
+    }
+  });
+
+  // === Lotes ===
+  router.get("/batches", (req, res) => {
+    try {
+      const jobs = listJobs(getCatalogDir());
+      res.json(jobs);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao listar lotes." });
+    }
+  });
+
+  router.post("/batches", express.json({ limit: "1mb" }), async (req, res) => {
+    try {
+      const body = req.body || {};
+      const courses = Array.isArray(body.courses) ? body.courses : [];
+      if (courses.length === 0) {
+        return res.status(400).json({ error: "Lista de cursos vazia." });
+      }
+      const job = BatchExecutor.createJob(courses, {
+        template_id: body.template_id,
+        background_source: body.background_source,
+        batch_size: body.batch_size,
+        concurrency: body.concurrency,
+        max_calls: body.max_calls,
+        max_cost_usd: body.max_cost_usd,
+        model: body.model,
+        quality: body.quality,
+        size: body.size,
+        dryRun: body.dryRun !== false,
+      });
+      fs.mkdirSync(path.join(getCatalogDir(), "jobs"), { recursive: true });
+      writeJob(getCatalogDir(), job);
+      res.status(201).json({ ok: true, job });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao criar lote." });
+    }
+  });
+
+  router.get("/batches/:id", (req, res) => {
+    try {
+      const job = readJob(getCatalogDir(), req.params.id);
+      if (!job) return res.status(404).json({ error: "Lote não encontrado." });
+      res.json(job);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao ler lote." });
+    }
+  });
+
+  router.get("/batches/:id/items", (req, res) => {
+    try {
+      const job = readJob(getCatalogDir(), req.params.id);
+      if (!job) return res.status(404).json({ error: "Lote não encontrado." });
+      res.json(job.courses);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao ler itens." });
+    }
+  });
+
+  router.post("/batches/:id/start", async (req, res) => {
+    try {
+      const job = await executor.start(req.params.id);
+      res.json({ ok: true, job });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao iniciar lote." });
+    }
+  });
+
+  router.post("/batches/:id/pause", async (req, res) => {
+    try {
+      const job = await executor.pause(req.params.id);
+      res.json({ ok: true, job });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao pausar lote." });
+    }
+  });
+
+  router.post("/batches/:id/resume", async (req, res) => {
+    try {
+      const job = await executor.resume(req.params.id);
+      res.json({ ok: true, job });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao retomar lote." });
+    }
+  });
+
+  router.post("/batches/:id/cancel", async (req, res) => {
+    try {
+      const job = await executor.cancel(req.params.id);
+      res.json({ ok: true, job });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao cancelar lote." });
+    }
+  });
+
+  router.post("/batches/:id/retry-errors", async (req, res) => {
+    try {
+      const job = await executor.retryErrors(req.params.id);
+      res.json({ ok: true, job });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao reprocessar erros." });
+    }
+  });
+
+  router.post("/batches/:id/retry-rejected", async (req, res) => {
+    try {
+      const job = await executor.retryRejected(req.params.id);
+      res.json({ ok: true, job });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao reprocessar rejeitados." });
+    }
+  });
+
+  // === XLSX sync ===
+  router.post("/xlsx/sync-preview", express.json(), async (req, res) => {
+    try {
+      const coursesMetadata = listMetadata(getCatalogDir());
+      const workbook = await loadWorkbook(INPUT_FILE);
+      addImageColumnsIfNeeded(workbook);
+      const plan = buildSyncPlan(coursesMetadata, workbook, { approvedOnly: true });
+      const report = dryRunSyncPlan(plan);
+      res.json({ ok: true, mode: "dry-run", report });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao gerar preview de sincronização." });
+    }
+  });
+
+  router.post("/xlsx/sync", express.json(), async (req, res) => {
+    try {
+      const body = req.body || {};
+      if (body.confirm !== true) {
+        return res.status(400).json({
+          error: "Confirmação necessária. Envie { confirm: true } para sincronizar.",
+        });
+      }
+      const coursesMetadata = listMetadata(getCatalogDir());
+      const workbook = await loadWorkbook(INPUT_FILE);
+      addImageColumnsIfNeeded(workbook);
+      const plan = buildSyncPlan(coursesMetadata, workbook, { approvedOnly: true });
+
+      if (plan.wouldChangeCount === 0) {
+        return res.json({ ok: true, mode: "sync", report: dryRunSyncPlan(plan), backup: null });
+      }
+
+      fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+      const backupPath = path.join(BACKUPS_DIR, `cursos-${Date.now()}.xlsx`);
+      await syncWorkbook(workbook, plan, backupPath);
+
+      res.json({ ok: true, mode: "sync", report: dryRunSyncPlan(plan), backup: backupPath });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao sincronizar planilha." });
+    }
+  });
+
+  router.post("/xlsx/export", express.json(), async (req, res) => {
+    try {
+      const body = req.body || {};
+      const outputPath = body.outputPath || path.join(getCatalogDir(), "cursos-export.xlsx");
+      const coursesMetadata = listMetadata(getCatalogDir());
+      const report = await exportUpdatedSpreadsheet(coursesMetadata, outputPath);
+      res.json({ ok: true, mode: "export", report, outputPath });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao exportar planilha." });
+    }
   });
 
   // Middleware de erro: garante respostas JSON

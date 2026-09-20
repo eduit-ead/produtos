@@ -149,7 +149,9 @@ function fileUrl(relPath) {
   if (!relPath || !fs.existsSync(relPath)) return null;
   const relative = path.relative(path.join(ROOT, "output"), relPath);
   if (relative && !relative.startsWith("..")) {
-    return "/output/" + relative.replace(/\\/g, "/");
+    const posix = relative.replace(/\\/g, "/");
+    // Serve output files only through controlled API routes.
+    return `/api/output/${posix}`;
   }
   return null;
 }

@@ -164,7 +164,7 @@ async function generateImage(course, options = {}) {
   const force = options.force || false;
   const outputDir = options.outputDir || OUTPUT_DIR;
 
-  if (!apiKey) {
+  if (!apiKey && !dryRun) {
     throw new Error("Variável de ambiente OPENAI_API_KEY não configurada.");
   }
 

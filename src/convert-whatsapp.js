@@ -1,18 +1,14 @@
 const fs = require("fs");
 const path = require("path");
-const sharp = require("sharp");
+const { convertCardToWhatsAppJpeg } = require("./whatsapp-image");
 
 const ROOT = path.resolve(__dirname, "..");
 const SOURCE_DIR = path.join(ROOT, "output", "final");
 const OUTPUT_DIR = path.join(ROOT, "output", "whatsapp");
 
 async function convertPngToJpeg(inputFile, outputFile) {
-  await sharp(inputFile)
-    .jpeg({
-      quality: 88,
-      mozjpeg: true,
-    })
-    .toFile(outputFile);
+  const buffer = await convertCardToWhatsAppJpeg(fs.readFileSync(inputFile));
+  fs.writeFileSync(outputFile, buffer);
 }
 
 function formatBytes(bytes) {
