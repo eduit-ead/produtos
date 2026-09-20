@@ -401,9 +401,10 @@ class BatchExecutor {
 
     const fundoPath = this.storage.resolveLocalPath(metadata.storage.keys.fundo);
     const bgBuffer = fs.readFileSync(fundoPath);
-    const cardBuffer = await this._withRetry(item, metadata, () =>
-      provider.renderCard(job, item, course, bgBuffer)
-    );
+    const cardBuffer = await provider.renderCard(job, item, course, bgBuffer);
+    if (!Buffer.isBuffer(cardBuffer)) {
+      throw new Error("Renderização do card não retornou um buffer válido.");
+    }
 
     await this.storage.save(metadata.storage.keys.card, cardBuffer, { contentType: "image/png" });
     metadata.hashes.card = sha256(cardBuffer);
@@ -521,6 +522,7 @@ class BatchExecutor {
         if (result.aborted) return { done: true, job: result.job };
       }
     } catch (err) {
+      console.error(`Erro no processamento de ${item?.slug}:`, err.message);
       if (isBlockingError(err)) {
         return this._withJobLock(jobId, () => {
           const fresh = readJob(this.catalogDir, jobId);

@@ -975,11 +975,30 @@ function createRouter() {
     }
   });
 
+  function enrichJobWithAvailability(job, catalogDir) {
+    return {
+      ...job,
+      courses: job.courses.map((item) => {
+        const meta = readMetadata(catalogDir, item.slug) || {};
+        const files = meta.files || {};
+        const base = path.join(catalogDir, item.slug);
+        return {
+          ...item,
+          hasBackground: files.fundo ? fs.existsSync(path.join(base, files.fundo)) : false,
+          hasCard: files.card ? fs.existsSync(path.join(base, files.card)) : false,
+          hasWhatsApp: files.whatsapp ? fs.existsSync(path.join(base, files.whatsapp)) : false,
+        };
+      }),
+    };
+  }
+
   router.get("/batches/:id", (req, res) => {
     try {
       const file = findJobFile(req.params.id);
       if (!file) return res.status(404).json({ error: "Lote não encontrado." });
-      res.json(JSON.parse(fs.readFileSync(file, "utf8")));
+      const job = JSON.parse(fs.readFileSync(file, "utf8"));
+      const catalogDir = path.dirname(path.dirname(file));
+      res.json(enrichJobWithAvailability(job, catalogDir));
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: err.message || "Erro ao ler lote." });
@@ -991,7 +1010,9 @@ function createRouter() {
       const file = findJobFile(req.params.id);
       if (!file) return res.status(404).json({ error: "Lote não encontrado." });
       const job = JSON.parse(fs.readFileSync(file, "utf8"));
-      res.json(job.courses);
+      const catalogDir = path.dirname(path.dirname(file));
+      const enriched = enrichJobWithAvailability(job, catalogDir);
+      res.json(enriched.courses);
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: err.message || "Erro ao ler itens." });
@@ -1090,7 +1111,6 @@ function createRouter() {
       });
       res.json({ ok: true, job: result.job, manifest: result.manifestEntry });
     } catch (err) {
-      console.error(err);
       res.status(400).json({ error: err.message });
     }
   });
@@ -1105,7 +1125,6 @@ function createRouter() {
       });
       res.json({ ok: true, job: result.job, manifest: result.manifestEntry });
     } catch (err) {
-      console.error(err);
       res.status(400).json({ error: err.message });
     }
   });
@@ -1119,7 +1138,6 @@ function createRouter() {
       const updatedJob = await exec.resume(req.params.jobId);
       res.json({ ok: true, job: updatedJob });
     } catch (err) {
-      console.error(err);
       res.status(500).json({ error: err.message });
     }
   });

@@ -36,8 +36,21 @@ function writeJobAtomic(catalogDir, job) {
   const dir = path.dirname(file);
   fs.mkdirSync(dir, { recursive: true });
   const tmp = path.join(dir, `.tmp-${crypto.randomBytes(8).toString("hex")}.json`);
-  fs.writeFileSync(tmp, JSON.stringify(job, null, 2), "utf8");
-  fs.renameSync(tmp, file);
+  const content = JSON.stringify(job, null, 2);
+  fs.writeFileSync(tmp, content, "utf8");
+  try {
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    if (err.code === "EPERM" || err.code === "EBUSY" || err.code === "EACCES") {
+      try {
+        fs.copyFileSync(tmp, file);
+        fs.unlinkSync(tmp);
+        return;
+      } catch {}
+    }
+    fs.writeFileSync(file, content, "utf8");
+    try { fs.unlinkSync(tmp); } catch {}
+  }
 }
 
 function listJobs(catalogDir) {

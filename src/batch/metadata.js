@@ -84,8 +84,21 @@ function writeMetadataAtomic(catalogDir, slug, metadata) {
   const file = metadataPath(catalogDir, slug);
   const dir = path.dirname(file);
   const tmp = path.join(dir, `.tmp-${crypto.randomBytes(8).toString("hex")}.json`);
-  fs.writeFileSync(tmp, JSON.stringify(metadata, null, 2), "utf8");
-  fs.renameSync(tmp, file);
+  const content = JSON.stringify(metadata, null, 2);
+  fs.writeFileSync(tmp, content, "utf8");
+  try {
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    if (err.code === "EPERM" || err.code === "EBUSY" || err.code === "EACCES") {
+      try {
+        fs.copyFileSync(tmp, file);
+        fs.unlinkSync(tmp);
+        return;
+      } catch {}
+    }
+    fs.writeFileSync(file, content, "utf8");
+    try { fs.unlinkSync(tmp); } catch {}
+  }
 }
 
 async function updateMetadataUrls(metadata, provider) {

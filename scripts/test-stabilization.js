@@ -253,7 +253,81 @@ function makeOutputColumns() {
     const manifest = JSON.parse(fs.readFileSync(path.join(catalogDir, "manifest.json"), "utf8"));
     assert.equal(manifest.courses[first.slug].status, "aprovado", "manifesto persistiu aprovado");
 
-    // 5. Exportação genérica via coleção
+    // metadata.json deve refletir aprovação e rejeição
+    const metaApproved = JSON.parse(fs.readFileSync(path.join(catalogDir, first.slug, "metadata.json"), "utf8"));
+    assert.equal(metaApproved.status, "aprovado", "metadata aprovado");
+    assert.ok(metaApproved.timestamps.approved_at, "timestamp approved_at preenchido");
+    assert.equal(metaApproved.timestamps.rejected_at, null, "rejected_at limpo");
+
+    const metaRejected = JSON.parse(fs.readFileSync(path.join(catalogDir, second.slug, "metadata.json"), "utf8"));
+    assert.equal(metaRejected.status, "rejeitado", "metadata rejeitado");
+    assert.ok(metaRejected.timestamps.rejected_at, "timestamp rejected_at preenchido");
+    assert.equal(metaRejected.timestamps.approved_at, null, "approved_at limpo");
+
+    // Fórmula de conclusão: completed inclui aprovado e rejeitado, sem contar duas vezes
+    assert.equal(afterReject.job.stats.completed, 2, "completed = aprovado + rejeitado");
+    assert.equal(afterReject.job.stats.approved, 1, "approved separado");
+    assert.equal(afterReject.job.stats.rejected, 1, "rejected separado");
+    assert.equal(afterReject.job.stats.total, 2, "total");
+    assert.equal(afterReject.job.stats.completed + afterReject.job.stats.errors, 2, "terminalCount === total");
+
+    // Arquivos inexistentes reportados como indisponíveis
+    const jobBeforeStart = assertJson(
+      await request(port, "GET", `/api/batches/${job.id}`)
+    );
+    // itens já processados possuem arquivos; testamos a API retornando flags
+    const processedItem = jobBeforeStart.courses.find((c) => c.slug === first.slug);
+    assert.equal(processedItem.hasCard, true, "flag hasCard true quando card existe");
+    assert.equal(processedItem.hasBackground, true, "flag hasBackground true quando fundo existe");
+    assert.equal(processedItem.hasWhatsApp, true, "flag hasWhatsApp true quando whatsapp existe");
+
+    // Aprovação sem card deve falhar
+    const noCardCollection = {
+      id: "test-no-card",
+      name: "Sem card",
+      description: ".",
+      source: { type: "csv", path: "data/imports/test-semicolon/produtos.csv" },
+      primaryKey: "SKU",
+      displayField: "Nome",
+      searchFields: ["Nome"],
+      fieldMappings: { title: "Nome", slug: "SKU" },
+      filters: [],
+      templateIds: ["demo"],
+      defaultTemplateId: "demo",
+      filenamePattern: "{{slug}}",
+      outputColumns: makeOutputColumns(),
+      templateBindings: [{ templateVariable: "titulo", sourceField: "Nome" }],
+    };
+    saveCollection(noCardCollection);
+    createdCollections.push(noCardCollection.id);
+    const createNoCard = await request(
+      port,
+      "POST",
+      "/api/batches",
+      JSON.stringify({
+        collection_id: noCardCollection.id,
+        courses: [{ course_id: first.course_id, slug: first.slug }],
+        template_id: "demo",
+        background_source: "ia",
+        dryRun: true,
+      }),
+      { "Content-Type": "application/json" }
+    );
+    assert.equal(createNoCard.status, 201, `criar lote no-card falhou: ${createNoCard.body}`);
+    const noCardJob = assertJson(createNoCard).job;
+    const approveNoCard = await request(port, "POST", `/api/batches/${noCardJob.id}/items/${first.slug}/approve`);
+    assert.equal(approveNoCard.status, 400, "aprovação sem card deve retornar 400");
+
+    // Reprocessamento de item rejeitado
+    const regenerate = await request(port, "POST", `/api/batches/${job.id}/items/${second.slug}/regenerate`);
+    assert.equal(regenerate.status, 200, `reprocessamento falhou: ${regenerate.body}`);
+    const regeneratedJob = await pollJob(port, job.id, ["concluido"]);
+    const regeneratedItem = regeneratedJob.courses.find((c) => c.slug === second.slug);
+    assert.equal(regeneratedItem.status, "pronto_revisao", "reprocessado volta ao estado de revisão");
+    assert.equal(regeneratedJob.stats.rejected, 0, "reprocessamento remove rejeitado das estatísticas");
+    assert.equal(regeneratedJob.stats.completed, 2, "reprocessamento mantém completed");
+
+    // Exportação CSV contém prod_status=aprovado para o item aprovado
     const exportResult = assertJson(
       await request(
         port,
@@ -265,7 +339,73 @@ function makeOutputColumns() {
     );
     assert.ok(fs.existsSync(exportResult.outputPath), "arquivo de exportação gerado");
     const exportedContent = fs.readFileSync(exportResult.outputPath, "utf8");
-    assert.ok(exportedContent.includes("bg_file"), "exportação inclui coluna de produção");
+    assert.ok(exportedContent.includes("prod_status"), "exportação inclui coluna prod_status");
+    assert.ok(exportedContent.includes("aprovado"), "exportação contém status aprovado");
+
+    // sync-preview XLSX reconhece item aprovado
+    const stabXlsxDir = path.join(IMPORTS_DIR, "test-stab-xlsx");
+    fs.mkdirSync(stabXlsxDir, { recursive: true });
+    const stabXlsxPath = path.join(stabXlsxDir, "stab.xlsx");
+    const stabWorkbook = new ExcelJS.Workbook();
+    const stabSheet = stabWorkbook.addWorksheet("Dados");
+    stabSheet.addRow(["id", "nome"]);
+    stabSheet.addRow(["x-001", "Item X"]);
+    await stabWorkbook.xlsx.writeFile(stabXlsxPath);
+    createdImportDirs.push(stabXlsxDir);
+
+    const xlsxCollection = {
+      id: "test-stab-xlsx",
+      name: "Stab XLSX",
+      description: ".",
+      source: { type: "xlsx", path: "data/imports/test-stab-xlsx/stab.xlsx", sheet: "Dados" },
+      primaryKey: "id",
+      displayField: "nome",
+      searchFields: ["nome"],
+      fieldMappings: { title: "nome", slug: "id" },
+      filters: [],
+      templateIds: ["demo"],
+      defaultTemplateId: "demo",
+      filenamePattern: "{{slug}}",
+      outputColumns: makeOutputColumns(),
+      templateBindings: [{ templateVariable: "titulo", sourceField: "nome" }],
+    };
+    saveCollection(xlsxCollection);
+    createdCollections.push(xlsxCollection.id);
+
+    const xItems = assertJson(await request(port, "GET", `/api/items?collection=${xlsxCollection.id}`));
+    const xCreate = await request(
+      port,
+      "POST",
+      "/api/batches",
+      JSON.stringify({
+        collection_id: xlsxCollection.id,
+        courses: xItems.map((i) => ({ course_id: i.record_id || i.slug, slug: i.slug })),
+        template_id: "demo",
+        background_source: "ia",
+        dryRun: true,
+      }),
+      { "Content-Type": "application/json" }
+    );
+    assert.equal(xCreate.status, 201, `criar lote xlsx falhou: ${xCreate.body}`);
+    const xJobId = assertJson(xCreate).job.id;
+    await request(port, "POST", `/api/batches/${xJobId}/start`);
+    const xFinished = await pollJob(port, xJobId, ["concluido"]);
+    const xFirst = xFinished.courses[0];
+    await request(port, "POST", `/api/batches/${xJobId}/items/${xFirst.slug}/approve`);
+
+    const syncPreview = assertJson(
+      await request(
+        port,
+        "POST",
+        `/api/collections/${xlsxCollection.id}/sync-preview`,
+        JSON.stringify({}),
+        { "Content-Type": "application/json" }
+      )
+    );
+    const syncPlan = syncPreview.plan && syncPreview.plan.plan ? syncPreview.plan.plan : syncPreview.plan;
+    assert.ok(syncPlan && syncPlan.items && syncPlan.items.length > 0, "sync-preview retorna plano");
+    assert.equal(syncPlan.items[0].slug, xFirst.slug, "sync-preview inclui item aprovado");
+    assert.equal(syncPlan.items[0].next.prod_status, "aprovado", "sync-preview reconhece status aprovado");
 
     // 6. Arquivar e reativar
     const archive = await request(

@@ -397,9 +397,11 @@ function renderReview() {
   for (const item of courses) {
     const record = state.items.find((i) => i.slug === item.slug);
     const title = record ? getItemTitle(record) : item.slug;
-    const hasGenerated = ["fundo_gerado", "renderizando_card", "gerando_whatsapp", "pronto_revisao", "aprovado", "rejeitado"].includes(item.status);
-    const hasCard = ["pronto_revisao", "aprovado", "rejeitado"].includes(item.status);
+    const hasBackground = item.hasBackground || false;
+    const hasCard = item.hasCard || false;
+    const hasWhatsApp = item.hasWhatsApp || false;
     const hasError = item.status === "erro";
+    const isReviewable = ["pronto_revisao", "gerando_whatsapp"].includes(item.status);
 
     const div = document.createElement("div");
     div.className = "review-item";
@@ -417,9 +419,13 @@ function renderReview() {
         <span class="spacer"></span>
         <div class="review-item-actions">
           ${hasCard ? `<button class="btn-secondary download-png" data-slug="${escapeHtml(item.slug)}">PNG</button>` : ""}
-          ${hasCard ? `<button class="btn-secondary download-wa" data-slug="${escapeHtml(item.slug)}">WhatsApp</button>` : ""}
-          ${item.status === "pronto_revisao" || item.status === "gerando_whatsapp"
+          ${hasWhatsApp ? `<button class="btn-secondary download-wa" data-slug="${escapeHtml(item.slug)}">WhatsApp</button>` : ""}
+          ${isReviewable && hasCard
             ? `<button class="btn-success approve-item" data-slug="${escapeHtml(item.slug)}">Aprovar</button>
+               <button class="btn-danger reject-item" data-slug="${escapeHtml(item.slug)}">Rejeitar</button>`
+            : ""}
+          ${isReviewable && !hasCard
+            ? `<button class="btn-success approve-item" data-slug="${escapeHtml(item.slug)}" disabled title="Card ainda não foi gerado">Aprovar</button>
                <button class="btn-danger reject-item" data-slug="${escapeHtml(item.slug)}">Rejeitar</button>`
             : ""}
           ${hasError || item.status === "rejeitado"
@@ -439,7 +445,7 @@ function renderReview() {
         <div class="review-column">
           <h5>Fundo novo</h5>
           <div class="thumb">
-            ${hasGenerated
+            ${hasBackground
               ? `<img src="${getCatalogUrl(item.slug, `${item.slug}-fundo.png`)}" alt="Novo fundo">`
               : `<div class="missing">${placeholderText("Fundo")}</div>`}
           </div>
@@ -455,7 +461,7 @@ function renderReview() {
         <div class="review-column">
           <h5>WhatsApp</h5>
           <div class="thumb">
-            ${hasCard
+            ${hasWhatsApp
               ? `<img src="${getCatalogUrl(item.slug, `${item.slug}-whatsapp.jpg`)}" alt="WhatsApp">`
               : `<div class="missing">${placeholderText("WhatsApp")}</div>`}
           </div>

@@ -1,9 +1,13 @@
 /**
  * Atualização atômica de status de itens dentro de jobs em lote.
- * Atualiza o job, recalcula estatísticas e sincroniza o manifesto genérico.
+ * Atualiza o job, recalcula estatísticas e sincroniza metadata.json e manifest.json.
  */
 
+const fs = require("fs");
+const path = require("path");
 const { readJob, writeJob } = require("./job");
+const { readMetadata, writeMetadata, metadataPath } = require("./metadata");
+const { courseFiles } = require("./naming");
 const { catalogDirFor, ensureManifest, saveManifest, getManifestEntry, setManifestEntry } = require("../production/generic-production-service");
 
 const locks = new Map();
@@ -29,7 +33,8 @@ function recalcJobStats(job) {
   job.stats = stats;
   if (!job.status) job.status = "criado";
   if (job.status === "executando") return;
-  const allDone = stats.total > 0 && stats.total === stats.completed + stats.errors + stats.rejected;
+  const terminalCount = stats.completed + stats.errors;
+  const allDone = stats.total > 0 && terminalCount === stats.total;
   if (allDone && !["cancelado", "pausado"].includes(job.status)) {
     job.status = stats.errors > 0 ? "concluido_com_erros" : "concluido";
   }
@@ -42,34 +47,68 @@ function withJobWriteLock(jobId, fn) {
     () => fn()
   );
   locks.set(jobId, next);
-  next.finally(() => {
+  const cleanup = () => {
     if (locks.get(jobId) === next) locks.delete(jobId);
-  });
-  return next;
+  };
+  return next.then(
+    (value) => { cleanup(); return value; },
+    (err) => { cleanup(); throw err; }
+  );
 }
 
-function updateManifestStatus(collectionId, slug, status, recordLike = {}) {
+function cardExists(catalogDir, slug) {
+  const meta = readMetadata(catalogDir, slug);
+  if (!meta) return false;
+  const files = courseFiles(slug);
+  const cardPath = path.join(catalogDir, slug, files.card);
+  return fs.existsSync(cardPath);
+}
+
+function updateMetadataStatus(catalogDir, slug, status) {
+  const metadata = readMetadata(catalogDir, slug);
+  if (!metadata) throw new Error(`metadata.json não encontrado para ${slug}.`);
+
+  metadata.status = status;
+  metadata.timestamps = metadata.timestamps || {};
+  if (status === "aprovado") {
+    metadata.timestamps.approved_at = new Date().toISOString();
+    metadata.timestamps.rejected_at = null;
+  } else if (status === "rejeitado") {
+    metadata.timestamps.rejected_at = new Date().toISOString();
+    metadata.timestamps.approved_at = null;
+  } else if (status === "pendente") {
+    metadata.timestamps.approved_at = null;
+    metadata.timestamps.rejected_at = null;
+  }
+  metadata.updatedAt = new Date().toISOString();
+  writeMetadata(catalogDir, slug, metadata);
+  return metadata;
+}
+
+function updateManifestFromMetadata(collectionId, metadata) {
   const manifest = ensureManifest(collectionId);
-  const entry = getManifestEntry(manifest, slug) || {};
+  const entry = getManifestEntry(manifest, metadata.slug) || {};
   const next = {
     ...entry,
-    ...recordLike,
-    status,
-    timestamps: {
-      ...(entry.timestamps || {}),
-      approved_at: status === "aprovado" ? new Date().toISOString() : (entry.timestamps?.approved_at || null),
-      rejected_at: status === "rejeitado" ? new Date().toISOString() : (entry.timestamps?.rejected_at || null),
-    },
-    updatedAt: new Date().toISOString(),
+    course_id: metadata.course_id,
+    curso: metadata.curso,
+    slug: metadata.slug,
+    status: metadata.status,
+    template_id: metadata.template_id,
+    files: metadata.files,
+    urls: metadata.urls,
+    hashes: metadata.hashes,
+    timestamps: metadata.timestamps,
+    updatedAt: metadata.updatedAt,
   };
-  if (status === "aprovado") {
-    next.approvedAt = next.timestamps.approved_at;
+  if (metadata.status === "aprovado") {
+    next.approvedAt = metadata.timestamps.approved_at;
     next.rejectedAt = null;
-  } else if (status === "rejeitado") {
-    next.rejectedAt = next.timestamps.rejected_at;
+  } else if (metadata.status === "rejeitado") {
+    next.rejectedAt = metadata.timestamps.rejected_at;
     next.approvedAt = null;
   }
-  setManifestEntry(manifest, slug, next);
+  setManifestEntry(manifest, metadata.slug, next);
   saveManifest(collectionId, manifest);
   return next;
 }
@@ -82,13 +121,22 @@ async function updateJobItemStatus(collectionId, jobId, slug, newStatus, recordL
     const item = job.courses.find((c) => c.slug === slug);
     if (!item) throw new Error("Item não encontrado no lote.");
 
+    if (newStatus === "aprovado" && !cardExists(catalogDir, slug)) {
+      throw new Error("Não é possível aprovar: card ainda não foi gerado.");
+    }
+
     item.status = newStatus;
     item.updatedAt = new Date().toISOString();
     recalcJobStats(job);
     writeJob(catalogDir, job);
 
-    updateManifestStatus(collectionId, slug, newStatus, recordLike);
-    return { job, manifestEntry: getManifestEntry(ensureManifest(collectionId), slug) };
+    const metadata = updateMetadataStatus(catalogDir, slug, newStatus);
+    if (recordLike.curso) metadata.curso = recordLike.curso;
+    if (recordLike.course_id) metadata.course_id = recordLike.course_id;
+    writeMetadata(catalogDir, slug, metadata);
+
+    const manifestEntry = updateManifestFromMetadata(collectionId, metadata);
+    return { job, metadata, manifestEntry };
   });
 }
 
@@ -108,7 +156,8 @@ async function resetJobItemForRegeneration(collectionId, jobId, slug) {
     recalcJobStats(job);
     writeJob(catalogDir, job);
 
-    updateManifestStatus(collectionId, slug, "pendente");
+    const metadata = updateMetadataStatus(catalogDir, slug, "pendente");
+    updateManifestFromMetadata(collectionId, metadata);
     return { job };
   });
 }
@@ -118,4 +167,5 @@ module.exports = {
   withJobWriteLock,
   updateJobItemStatus,
   resetJobItemForRegeneration,
+  cardExists,
 };

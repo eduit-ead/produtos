@@ -87,11 +87,20 @@ class CsvDataSource extends DataSource {
     const updatedRows = rows.map((row) => ({ ...row }));
     const pkIndex = headers.indexOf(pk);
 
+    const normalizeKey = (s) =>
+      String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+
     for (const metadata of recordsMetadata) {
-      const recordId = metadata.id || metadata.slug;
-      const idx = updatedRows.findIndex((r, i) => {
-        if (pkIndex >= 0) return String(r[pk] || "").trim() === String(recordId).trim();
-        return String(r[Object.keys(r)[0]] || "").trim() === String(recordId).trim();
+      const recordId = metadata.course_id || metadata.id || metadata.slug;
+      const recordKey = normalizeKey(recordId);
+      const slugKey = normalizeKey(metadata.slug);
+      const idx = updatedRows.findIndex((r) => {
+        if (pkIndex >= 0) {
+          const rowKey = normalizeKey(r[pk]);
+          return rowKey === recordKey || rowKey === slugKey;
+        }
+        const rowKey = normalizeKey(r[Object.keys(r)[0]]);
+        return rowKey === recordKey || rowKey === slugKey;
       });
       if (idx < 0) continue;
       const next = this._buildNextValues(metadata, out);
