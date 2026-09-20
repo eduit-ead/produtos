@@ -4,6 +4,7 @@
 
 const path = require("path");
 const ExcelJS = require("exceljs");
+const { cleanUrl } = require("./image-cache");
 
 const ROOT = path.resolve(__dirname, "..");
 const INPUT_FILE = path.join(ROOT, "input", "cursos.xlsx");
@@ -35,6 +36,7 @@ async function loadAllCourses() {
   const duracaoCol = col(headerMap, "Duração");
   const descricaoCol = col(headerMap, "descricao_curta");
   const promptCol = col(headerMap, "prompt_imagem");
+  const imageCol = col(headerMap, "Image");
   const statusCol = col(headerMap, "conteudo_status");
 
   if (!slugCol) {
@@ -59,6 +61,7 @@ async function loadAllCourses() {
       duracao: String(row.getCell(duracaoCol).value || "").trim(),
       descricao_curta: String(row.getCell(descricaoCol).value || "").trim(),
       prompt_imagem: String(row.getCell(promptCol).value || "").trim(),
+      image_url: cleanUrl(imageCol ? row.getCell(imageCol).value || "" : ""),
       conteudo_status: statusCol ? String(row.getCell(statusCol).value || "").trim() : "",
     });
   }

@@ -12,13 +12,15 @@ const sharp = require("sharp");
 const { loadAllCourses, loadCourseBySlug } = require("./read-courses");
 const { generateImage } = require("./generate-ai-background");
 const { renderCourseCard, prepareBackgroundBuffer } = require("./render-card");
+const { getImageBuffer } = require("./image-cache");
 
 const ROOT = path.resolve(__dirname, "..");
-const CATALOG_DIR = path.join(ROOT, "output", "ai-catalog");
+const DEFAULT_CATALOG_DIR = path.join(ROOT, "output", "ai-catalog");
+const CATALOG_DIR = process.env.AI_CATALOG_DIR
+  ? path.resolve(process.env.AI_CATALOG_DIR)
+  : DEFAULT_CATALOG_DIR;
 const MANIFEST_FILE = path.join(CATALOG_DIR, "manifest.json");
 const FINAL_DIR = path.join(ROOT, "output", "final");
-const WHATSAPP_DIR = path.join(ROOT, "output", "whatsapp");
-const ASSETS_DIR = path.join(ROOT, "assets");
 
 const ALLOWED_BG_EXT = new Set([".png", ".jpg", ".jpeg", ".svg"]);
 const SLUG_REGEX = /^[a-zA-Z0-9_-]+$/;
@@ -48,17 +50,6 @@ function fundoUploadPath(slug) {
 function currentCardPath(slug) {
   const png = path.join(FINAL_DIR, `${slug}.png`);
   if (fs.existsSync(png)) return png;
-  const jpg = path.join(WHATSAPP_DIR, `${slug}.jpg`);
-  if (fs.existsSync(jpg)) return jpg;
-  return null;
-}
-
-function currentBackgroundPath(slug) {
-  // Prioriza JPG como fundo original; fallback para card final.
-  const jpg = path.join(WHATSAPP_DIR, `${slug}.jpg`);
-  if (fs.existsSync(jpg)) return jpg;
-  const png = path.join(FINAL_DIR, `${slug}.png`);
-  if (fs.existsSync(png)) return png;
   return null;
 }
 
@@ -72,7 +63,6 @@ function loadManifest() {
     if (!manifest.courses) {
       manifest.courses = {};
     } else if (Array.isArray(manifest.courses)) {
-      // Migra manifesto legado (array) para mapa por slug.
       const map = {};
       for (const entry of manifest.courses) {
         if (entry && entry.slug) {
@@ -102,9 +92,28 @@ function getManifestEntry(manifest, slug) {
 function setManifestEntry(manifest, slug, partial) {
   const existing = manifest.courses[slug] || {};
   manifest.courses[slug] = {
-    ...existing,
+    course_id: partial.course_id ?? existing.course_id,
     slug,
-    ...partial,
+    curso: partial.curso ?? existing.curso,
+    status: partial.status ?? existing.status ?? "pendente",
+    prompt: partial.prompt ?? existing.prompt,
+    backgroundPath: partial.backgroundPath ?? existing.backgroundPath,
+    cardPath: partial.cardPath ?? existing.cardPath,
+    selectedBackground: partial.selectedBackground ?? existing.selectedBackground,
+    model: partial.model ?? existing.model,
+    quality: partial.quality ?? existing.quality,
+    size: partial.size ?? existing.size,
+    costUsd: partial.costUsd ?? existing.costUsd ?? 0,
+    usage: partial.usage ?? existing.usage,
+    dryRun: partial.dryRun ?? existing.dryRun,
+    attempts: partial.attempts ?? existing.attempts ?? 0,
+    error: partial.error ?? existing.error,
+    generatedAt: partial.generatedAt ?? existing.generatedAt,
+    uploadedAt: partial.uploadedAt ?? existing.uploadedAt,
+    renderedAt: partial.renderedAt ?? existing.renderedAt,
+    approvedAt: partial.approvedAt ?? existing.approvedAt,
+    rejectedAt: partial.rejectedAt ?? existing.rejectedAt,
+    updatedAt: new Date().toISOString(),
   };
 }
 
@@ -113,10 +122,10 @@ function resolveStatus(manifestEntry, slug) {
   if (manifestEntry?.status === "rejeitado") return "rejeitado";
   if (manifestEntry?.status === "erro") return "erro";
   if (manifestEntry?.status === "gerando") return "gerando";
+  const hasUpload = fs.existsSync(fundoUploadPath(slug));
+  const hasBg = fs.existsSync(fundoIaPath(slug));
   const hasCard = fs.existsSync(cardIaPath(slug));
-  const hasBg = fs.existsSync(fundoIaPath(slug)) || fs.existsSync(fundoUploadPath(slug));
-  if (hasCard) return "gerado";
-  if (hasBg) return "gerado";
+  if (hasCard || hasUpload || hasBg) return "gerado";
   return "pendente";
 }
 
@@ -130,9 +139,26 @@ function validateSlug(slug) {
   return slug;
 }
 
+function catalogFileUrl(slug, filename) {
+  const filePath = path.join(CATALOG_DIR, slug, filename);
+  if (!fs.existsSync(filePath)) return null;
+  return `/api/catalog/${encodeURIComponent(slug)}/${encodeURIComponent(filename)}`;
+}
+
 function fileUrl(relPath) {
   if (!relPath || !fs.existsSync(relPath)) return null;
-  return "/output/" + path.relative(path.join(ROOT, "output"), relPath).replace(/\\/g, "/");
+  const relative = path.relative(path.join(ROOT, "output"), relPath);
+  if (relative && !relative.startsWith("..")) {
+    return "/output/" + relative.replace(/\\/g, "/");
+  }
+  return null;
+}
+
+function isPathInsideCourseDir(slug, candidatePath) {
+  if (!candidatePath) return false;
+  const resolved = path.resolve(CATALOG_DIR, candidatePath);
+  const course = path.resolve(courseDir(slug));
+  return resolved === course || resolved.startsWith(course + path.sep);
 }
 
 async function listCourses() {
@@ -151,9 +177,9 @@ async function listCourses() {
       conteudo_status: course.conteudo_status,
       status,
       current_card_url: fileUrl(currentCardPath(slug)),
-      current_background_url: fileUrl(currentBackgroundPath(slug)),
-      ai_background_url: fileUrl(fundoIaPath(slug)),
-      ai_card_url: fileUrl(cardIaPath(slug)),
+      current_background_url: course.image_url || null,
+      ai_background_url: catalogFileUrl(slug, `${slug}-fundo-ia.png`),
+      ai_card_url: catalogFileUrl(slug, `${slug}-card-ia.png`),
       updated_at: entry?.updatedAt || null,
     };
   });
@@ -181,10 +207,10 @@ async function getCourseDetail(slug) {
     conteudo_status: course.conteudo_status,
     status,
     current_card_url: fileUrl(currentCardPath(validSlug)),
-    current_background_url: fileUrl(currentBackgroundPath(validSlug)),
-    ai_background_url: fileUrl(fundoIaPath(validSlug)),
-    ai_card_url: fileUrl(cardIaPath(validSlug)),
-    ai_upload_url: fileUrl(fundoUploadPath(validSlug)),
+    current_background_url: course.image_url || null,
+    ai_background_url: catalogFileUrl(validSlug, `${validSlug}-fundo-ia.png`),
+    ai_upload_url: catalogFileUrl(validSlug, `${validSlug}-fundo-upload.png`),
+    ai_card_url: catalogFileUrl(validSlug, `${validSlug}-card-ia.png`),
     manifest: entry || null,
   };
 }
@@ -199,22 +225,26 @@ async function createMockBackground(outputPath) {
   return buffer;
 }
 
-async function generateAIBackground(slug, { dryRun = false } = {}) {
+async function generateAIBackground(slug, { dryRun = false, prompt = null } = {}) {
   const validSlug = validateSlug(slug);
   const course = await loadCourseBySlug(validSlug);
   if (!course) {
     throw new Error("Curso não encontrado.");
   }
 
+  const usedPrompt = typeof prompt === "string" && prompt.trim() ? prompt.trim() : course.prompt_imagem;
+
+  if (!dryRun && !process.env.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY não configurada. Configure a chave para gerar imagens reais.");
+  }
+
   const manifest = loadManifest();
   setManifestEntry(manifest, validSlug, {
     course_id: course.course_id,
-    slug: validSlug,
     curso: course.curso,
     status: "gerando",
-    prompt: course.prompt_imagem,
+    prompt: usedPrompt,
     error: null,
-    updatedAt: new Date().toISOString(),
   });
   saveManifest(manifest);
 
@@ -222,16 +252,15 @@ async function generateAIBackground(slug, { dryRun = false } = {}) {
   const outputPath = fundoIaPath(validSlug);
 
   try {
-    if (dryRun || !process.env.OPENAI_API_KEY) {
-      // Sem chamada real: gera um fundo placeholder para permitir testes de renderização.
+    if (dryRun) {
       await createMockBackground(outputPath);
       setManifestEntry(manifest, validSlug, {
         course_id: course.course_id,
-        slug: validSlug,
         curso: course.curso,
         status: "gerado",
-        prompt: course.prompt_imagem,
+        prompt: usedPrompt,
         backgroundPath: path.relative(CATALOG_DIR, outputPath),
+        selectedBackground: "ai",
         model: "mock",
         quality: "mock",
         size: "1080x1080",
@@ -239,37 +268,38 @@ async function generateAIBackground(slug, { dryRun = false } = {}) {
         dryRun: true,
         generatedAt: new Date().toISOString(),
         error: null,
-        updatedAt: new Date().toISOString(),
       });
     } else {
       const record = await generateImage(
-        { course_id: course.course_id, slug: validSlug, curso: course.curso, prompt: course.prompt_imagem },
+        { course_id: course.course_id, slug: validSlug, curso: course.curso, prompt: usedPrompt },
         { outputDir }
       );
       setManifestEntry(manifest, validSlug, {
         course_id: course.course_id,
-        slug: validSlug,
         curso: course.curso,
         status: "gerado",
         prompt: record.prompt,
         backgroundPath: path.relative(CATALOG_DIR, record.caminho_arquivo),
+        selectedBackground: "ai",
         model: record.modelo,
         quality: record.qualidade,
         size: record.tamanho,
         costUsd: record.custo_estimado_usd?.totalCostUsd ?? 0,
+        usage: record.uso_api,
         dryRun: false,
         generatedAt: record.data,
         error: null,
-        updatedAt: new Date().toISOString(),
       });
     }
     saveManifest(manifest);
     return getManifestEntry(manifest, validSlug);
   } catch (err) {
+    const entry = getManifestEntry(manifest, validSlug) || {};
     setManifestEntry(manifest, validSlug, {
+      ...entry,
       status: "erro",
       error: err.message,
-      updatedAt: new Date().toISOString(),
+      attempts: (entry.attempts || 0) + 1,
     });
     saveManifest(manifest);
     throw err;
@@ -288,28 +318,58 @@ async function uploadBackground(slug, buffer, ext) {
     throw new Error("Formato de imagem não permitido.");
   }
 
-  let finalBuffer = buffer;
-  if (lowerExt === ".svg") {
-    finalBuffer = await sharp(buffer, { density: 144 }).png().toBuffer();
-  }
+  // Normaliza para PNG verdadeiro, independentemente do formato de entrada.
+  const normalizedBuffer = await sharp(buffer, lowerExt === ".svg" ? { density: 144 } : undefined)
+    .png()
+    .toBuffer();
 
   const outputPath = fundoUploadPath(validSlug);
-  fs.writeFileSync(outputPath, finalBuffer);
+  fs.writeFileSync(outputPath, normalizedBuffer);
 
   const manifest = loadManifest();
+  const entry = getManifestEntry(manifest, validSlug) || {};
   setManifestEntry(manifest, validSlug, {
+    ...entry,
     course_id: course.course_id,
-    slug: validSlug,
     curso: course.curso,
-    status: "gerado",
+    status: resolveStatus(entry, validSlug),
     backgroundPath: path.relative(CATALOG_DIR, outputPath),
-    uploadPath: path.relative(CATALOG_DIR, outputPath),
+    selectedBackground: "upload",
     uploadedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    error: null,
   });
   saveManifest(manifest);
 
-  return { path: outputPath, size: finalBuffer.length };
+  return { path: outputPath, size: normalizedBuffer.length };
+}
+
+async function resolveBackgroundBuffer(slug, manifestEntry, course) {
+  // 1. Fundo selecionado explicitamente no manifesto (upload ou ia), se válido.
+  if (manifestEntry?.selectedBackground && manifestEntry?.backgroundPath) {
+    const candidate = path.resolve(CATALOG_DIR, manifestEntry.backgroundPath);
+    if (isPathInsideCourseDir(slug, candidate) && fs.existsSync(candidate)) {
+      return fs.readFileSync(candidate);
+    }
+  }
+
+  // 2. Upload tem precedência sobre geração IA.
+  const uploadPath = fundoUploadPath(slug);
+  if (fs.existsSync(uploadPath)) {
+    return fs.readFileSync(uploadPath);
+  }
+
+  // 3. Fundo gerado por IA.
+  const aiPath = fundoIaPath(slug);
+  if (fs.existsSync(aiPath)) {
+    return fs.readFileSync(aiPath);
+  }
+
+  // 4. Imagem original da planilha (nunca output/final ou output/whatsapp).
+  if (course?.image_url) {
+    return getImageBuffer(course.image_url);
+  }
+
+  throw new Error("Nenhum fundo disponível para renderizar o card.");
 }
 
 async function renderCourse(slug) {
@@ -319,25 +379,10 @@ async function renderCourse(slug) {
     throw new Error("Curso não encontrado.");
   }
 
-  let backgroundBuffer = null;
-  let source = "ai";
+  const manifest = loadManifest();
+  const entry = getManifestEntry(manifest, validSlug);
 
-  const aiPath = fundoIaPath(validSlug);
-  const uploadPath = fundoUploadPath(validSlug);
-  const fallbackPath = currentBackgroundPath(validSlug);
-
-  if (fs.existsSync(aiPath)) {
-    backgroundBuffer = fs.readFileSync(aiPath);
-  } else if (fs.existsSync(uploadPath)) {
-    backgroundBuffer = fs.readFileSync(uploadPath);
-    source = "upload";
-  } else if (fallbackPath) {
-    backgroundBuffer = fs.readFileSync(fallbackPath);
-    source = "fallback";
-  } else {
-    throw new Error("Nenhum fundo disponível para renderizar o card.");
-  }
-
+  const backgroundBuffer = await resolveBackgroundBuffer(validSlug, entry, course);
   const prepared = await prepareBackgroundBuffer(backgroundBuffer);
   const cardBuffer = await renderCourseCard(prepared, {
     curso: course.curso,
@@ -349,45 +394,54 @@ async function renderCourse(slug) {
   const cardPath = cardIaPath(validSlug);
   fs.writeFileSync(cardPath, cardBuffer);
 
-  const manifest = loadManifest();
+  const nextStatus = resolveStatus(entry, validSlug) === "aprovado" ? "aprovado" : "gerado";
   setManifestEntry(manifest, validSlug, {
     course_id: course.course_id,
-    slug: validSlug,
     curso: course.curso,
-    status: resolveStatus(getManifestEntry(manifest, validSlug), validSlug) === "aprovado" ? "aprovado" : "gerado",
+    status: nextStatus,
     cardPath: path.relative(CATALOG_DIR, cardPath),
     cardSize: cardBuffer.length,
-    cardSource: source,
     renderedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    error: null,
   });
   saveManifest(manifest);
 
   return { cardPath, size: cardBuffer.length };
 }
 
-function setStatus(slug, newStatus) {
+async function setCourseStatus(slug, newStatus) {
   const validSlug = validateSlug(slug);
+  const course = await loadCourseBySlug(validSlug);
+  if (!course) {
+    throw new Error("Curso não encontrado.");
+  }
+
+  if (newStatus === "aprovado" && !fs.existsSync(cardIaPath(validSlug))) {
+    throw new Error("Não é possível aprovar sem card renderizado.");
+  }
+
   const manifest = loadManifest();
   const entry = getManifestEntry(manifest, validSlug) || {};
   const now = new Date().toISOString();
   setManifestEntry(manifest, validSlug, {
     ...entry,
+    course_id: course.course_id,
+    curso: course.curso,
     status: newStatus,
-    updatedAt: now,
-    ...(newStatus === "aprovado" ? { approvedAt: now } : {}),
-    ...(newStatus === "rejeitado" ? { rejectedAt: now } : {}),
+    approvedAt: newStatus === "aprovado" ? now : entry.approvedAt,
+    rejectedAt: newStatus === "rejeitado" ? now : entry.rejectedAt,
+    error: null,
   });
   saveManifest(manifest);
   return getManifestEntry(manifest, validSlug);
 }
 
 async function approveCourse(slug) {
-  return setStatus(slug, "aprovado");
+  return setCourseStatus(slug, "aprovado");
 }
 
 async function rejectCourse(slug) {
-  return setStatus(slug, "rejeitado");
+  return setCourseStatus(slug, "rejeitado");
 }
 
 module.exports = {

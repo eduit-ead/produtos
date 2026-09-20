@@ -66,15 +66,45 @@ body {
 }
 
 .catalog-stage {
-  padding: 24px;
+  display: flex;
+  flex-direction: column;
   height: 100%;
-  overflow-y: auto;
+  overflow: hidden;
+}
+
+.summary-bar {
+  display: flex;
+  gap: 16px;
+  padding: 16px 24px;
+  background: #0f172a;
+  border-bottom: 1px solid #334155;
+  flex-shrink: 0;
+}
+
+.summary-item {
+  display: flex;
+  flex-direction: column;
+  min-width: 80px;
+}
+
+.summary-item span {
+  font-size: 22px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.summary-item label {
+  font-size: 12px;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .catalog-toolbar {
   display: flex;
   gap: 12px;
-  margin-bottom: 24px;
+  padding: 16px 24px;
+  flex-shrink: 0;
   flex-wrap: wrap;
 }
 
@@ -86,13 +116,16 @@ body {
   padding: 10px 12px;
   color: #e2e8f0;
   font-size: 14px;
-  min-width: 220px;
+  min-width: 200px;
 }
 
 .course-grid {
+  flex: 1;
+  overflow-y: auto;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 20px;
+  padding: 0 24px 24px 24px;
 }
 
 .course-card {
@@ -222,6 +255,15 @@ body {
   gap: 10px;
 }
 
+.action-row {
+  display: flex;
+  gap: 10px;
+}
+
+.action-row button {
+  flex: 1;
+}
+
 button {
   background: #3b82f6;
   border: none;
@@ -292,37 +334,53 @@ button:disabled {
 
 .preview-area {
   flex: 1;
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 20px;
+  display: flex;
+  gap: 24px;
   padding: 24px;
   overflow-y: auto;
   background: #0f172a;
 }
 
-.preview-group {
+.compare-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+.compare-column h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #e2e8f0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.compare-group {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.preview-group h3 {
+.compare-group h4 {
   margin: 0;
-  font-size: 13px;
+  font-size: 12px;
   color: #94a3b8;
   text-transform: uppercase;
 }
 
 .preview-img {
   max-width: 100%;
-  max-height: 45vh;
+  max-height: 42vh;
   object-fit: contain;
   border-radius: 8px;
   border: 1px solid #334155;
   background: #0b1120;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1000px) {
   .detail-stage {
     flex-direction: column;
   }
@@ -335,6 +393,10 @@ button:disabled {
   }
 
   .preview-area {
-    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
+
+  .compare-column {
+    width: 100%;
   }
 }

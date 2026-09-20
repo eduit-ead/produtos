@@ -14,6 +14,7 @@ const {
   prepareBackgroundBuffer,
   normalizeDuration,
 } = require("./render-card");
+const { cleanUrl, downloadImage, getImageBuffer } = require("./image-cache");
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -76,22 +77,6 @@ function getValue(row, possibleNames) {
   return "";
 }
 
-function cleanUrl(value = "") {
-  let url = String(value || "").trim();
-
-  if (!url) return "";
-
-  // Caso o Excel tenha algo tipo:
-  // [https://site.com/img.png](https://site.com/img.png)
-  const markdownMatch = url.match(/\((https?:\/\/[^)]+)\)/);
-
-  if (markdownMatch) {
-    url = markdownMatch[1];
-  }
-
-  return url;
-}
-
 function hasValue(value) {
   if (value === undefined || value === null) return false;
 
@@ -142,125 +127,6 @@ function csvEscape(value) {
   }
 
   return text;
-}
-
-// -------------------------------------------------------
-// Download
-// -------------------------------------------------------
-
-const DOWNLOAD_TIMEOUT_MS = 60000;
-const DOWNLOAD_RETRIES = 3;
-const IMAGE_CONTENT_TYPES = [
-  "image/",
-  "application/octet-stream",
-];
-
-const CACHE_DIR = path.join(ROOT, "input", "cache");
-
-function getCacheFile(url) {
-  const hash = Buffer.from(url).toString("base64url");
-  return path.join(CACHE_DIR, `${hash}.cache.png`);
-}
-
-async function downloadImage(url) {
-  fs.mkdirSync(CACHE_DIR, { recursive: true });
-
-  const cacheFile = getCacheFile(url);
-
-  if (fs.existsSync(cacheFile)) {
-    console.log(`  ⚡ usando cache: ${cacheFile}`);
-    return {
-      buffer: fs.readFileSync(cacheFile),
-      finalUrl: url,
-      fromCache: true,
-    };
-  }
-
-  let lastError;
-  let finalUrl = url;
-
-  for (let attempt = 1; attempt <= DOWNLOAD_RETRIES; attempt++) {
-    console.log(
-      `  ↓ download tentativa ${attempt}/${DOWNLOAD_RETRIES}: ${url}`
-    );
-
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(
-        () => controller.abort(),
-        DOWNLOAD_TIMEOUT_MS
-      );
-
-      const response = await fetch(url, {
-        redirect: "follow",
-        signal: controller.signal,
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          Accept:
-            "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-          "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-          Referer: "https://www.google.com/",
-        },
-      });
-
-      clearTimeout(timeoutId);
-
-      finalUrl = response.url || url;
-
-      if (!response.ok) {
-        throw new Error(
-          `HTTP ${response.status} - ${response.statusText}`
-        );
-      }
-
-      const contentType =
-        response.headers.get("content-type") || "";
-
-      const isImage = IMAGE_CONTENT_TYPES.some((prefix) =>
-        contentType.toLowerCase().includes(prefix)
-      );
-
-      if (!isImage) {
-        throw new Error(
-          `Content-Type inválido (${contentType || "vazio"})`
-        );
-      }
-
-      const arrayBuffer = await response.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-
-      fs.writeFileSync(cacheFile, buffer);
-
-      console.log(`  ✓ download OK | URL original: ${url}`);
-      console.log(`  ✓ URL final:    ${finalUrl}`);
-
-      return {
-        buffer,
-        finalUrl,
-        fromCache: false,
-      };
-    } catch (error) {
-      lastError = error;
-      console.error(
-        `  ✗ download tentativa ${attempt} falhou: ${error.message}`
-      );
-
-      if (attempt < DOWNLOAD_RETRIES) {
-        const delay = attempt * 1500;
-        console.log(
-          `  ⟳ aguardando ${delay}ms antes de tentar novamente...`
-        );
-        await new Promise((resolve) =>
-          setTimeout(resolve, delay)
-        );
-      }
-    }
-  }
-
-  throw new Error(
-    `Falha após ${DOWNLOAD_RETRIES} tentativas: ${lastError.message} | original: ${url} | final: ${finalUrl}`
-  );
 }
 
 // -------------------------------------------------------

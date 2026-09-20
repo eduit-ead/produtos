@@ -47,10 +47,29 @@ function showImage(imgId, url) {
   if (!url) {
     img.src = "";
     img.classList.add("hidden");
+    img.alt = "";
     return;
   }
   img.src = url;
   img.classList.remove("hidden");
+}
+
+function formatStatus(status) {
+  const map = {
+    pendente: "Pendente",
+    gerando: "Gerando",
+    gerado: "Gerado",
+    aprovado: "Aprovado",
+    rejeitado: "Rejeitado",
+    erro: "Erro",
+  };
+  return map[status] || status;
+}
+
+function escapeHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
 }
 
 async function loadCatalog() {
@@ -59,23 +78,34 @@ async function loadCatalog() {
     state.courses = await apiJson("/api/courses");
     populateFilters();
     renderCatalog();
+    updateSummary();
     setStatus("ready", `${state.courses.length} cursos carregados`);
   } catch (err) {
     setStatus("error", `Erro: ${err.message}`);
   }
 }
 
+function updateSummary() {
+  const total = state.courses.length;
+  const pendentes = state.courses.filter((c) => c.status === "pendente").length;
+  const gerados = state.courses.filter((c) => c.status === "gerado").length;
+  const aprovados = state.courses.filter((c) => c.status === "aprovado").length;
+  const erros = state.courses.filter((c) => c.status === "erro").length;
+  byId("summaryTotal").textContent = total;
+  byId("summaryPending").textContent = pendentes;
+  byId("summaryGenerated").textContent = gerados;
+  byId("summaryApproved").textContent = aprovados;
+  byId("summaryErrors").textContent = erros;
+}
+
 function populateFilters() {
   const modalidades = new Set(state.courses.map((c) => c.modalidade).filter(Boolean));
   const formacoes = new Set(state.courses.map((c) => c.formacao).filter(Boolean));
 
-  const modSelect = byId("filterModalidade");
-  const formSelect = byId("filterFormacao");
-
-  modSelect.innerHTML = `<option value="">Todas as modalidades</option>` +
+  byId("filterModalidade").innerHTML = `<option value="">Todas as modalidades</option>` +
     [...modalidades].sort().map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join("");
 
-  formSelect.innerHTML = `<option value="">Todas as formações</option>` +
+  byId("filterFormacao").innerHTML = `<option value="">Todas as formações</option>` +
     [...formacoes].sort().map((f) => `<option value="${escapeHtml(f)}">${escapeHtml(f)}</option>`).join("");
 }
 
@@ -94,7 +124,7 @@ function renderCatalog() {
 
   const filtered = state.courses.filter(matchesFilters);
   if (filtered.length === 0) {
-    grid.innerHTML = "<p>Nenhum curso encontrado.</p>";
+    grid.innerHTML = "<p class='empty-msg'>Nenhum curso encontrado.</p>";
     return;
   }
 
@@ -132,18 +162,6 @@ function renderCatalog() {
   }
 }
 
-function formatStatus(status) {
-  const map = {
-    pendente: "Pendente",
-    gerando: "Gerando",
-    gerado: "Gerado",
-    aprovado: "Aprovado",
-    rejeitado: "Rejeitado",
-    erro: "Erro",
-  };
-  return map[status] || status;
-}
-
 async function openCourse(slug) {
   setStatus("loading", "Carregando curso...");
   try {
@@ -179,8 +197,8 @@ function renderDetail() {
   `;
   byId("promptInput").value = c.prompt_imagem;
 
-  showImage("currentCardImg", c.current_card_url);
   showImage("currentBgImg", c.current_background_url);
+  showImage("currentCardImg", c.current_card_url);
   showImage("aiBgImg", c.ai_background_url || c.ai_upload_url);
   showImage("aiCardImg", c.ai_card_url);
 }
@@ -197,13 +215,34 @@ async function withLoading(label, fn) {
   }
 }
 
-async function generateBackground() {
+function getPrompt() {
+  return byId("promptInput").value.trim();
+}
+
+async function dryRunGenerate() {
   if (!state.currentCourse) return;
-  await withLoading("Gerando fundo", () =>
+  await withLoading("Gerando preview", () =>
     apiJson(`/api/courses/${state.currentCourse.slug}/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dryRun: true }),
+      body: JSON.stringify({ dryRun: true, prompt: getPrompt() }),
+    })
+  );
+  await openCourse(state.currentCourse.slug);
+}
+
+async function realGenerate() {
+  if (!state.currentCourse) return;
+  const confirmed = window.confirm(
+    `Gerar imagem real com IA para "${state.currentCourse.curso}"?\nIsso consumirá créditos da OpenAI.`
+  );
+  if (!confirmed) return;
+
+  await withLoading("Gerando imagem com IA", () =>
+    apiJson(`/api/courses/${state.currentCourse.slug}/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dryRun: false, prompt: getPrompt() }),
     })
   );
   await openCourse(state.currentCourse.slug);
@@ -229,6 +268,8 @@ async function renderCard() {
 
 async function approve() {
   if (!state.currentCourse) return;
+  const confirmed = window.confirm(`Aprovar card de "${state.currentCourse.curso}"?`);
+  if (!confirmed) return;
   await withLoading("Aprovando", () =>
     apiJson(`/api/courses/${state.currentCourse.slug}/approve`, { method: "POST" })
   );
@@ -237,6 +278,8 @@ async function approve() {
 
 async function reject() {
   if (!state.currentCourse) return;
+  const confirmed = window.confirm(`Rejeitar card de "${state.currentCourse.curso}"?`);
+  if (!confirmed) return;
   await withLoading("Rejeitando", () =>
     apiJson(`/api/courses/${state.currentCourse.slug}/reject`, { method: "POST" })
   );
@@ -268,12 +311,6 @@ async function downloadPng() {
   }
 }
 
-function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
-}
-
 function init() {
   byId("searchInput").addEventListener("input", (e) => {
     state.filters.query = e.target.value;
@@ -293,7 +330,8 @@ function init() {
   });
 
   byId("btnBack").addEventListener("click", backToCatalog);
-  byId("btnGenerate").addEventListener("click", generateBackground);
+  byId("btnDryRun").addEventListener("click", dryRunGenerate);
+  byId("btnGenerate").addEventListener("click", realGenerate);
   byId("uploadInput").addEventListener("change", (e) => uploadBackground(e.target.files[0]));
   byId("btnRender").addEventListener("click", renderCard);
   byId("btnApprove").addEventListener("click", approve);

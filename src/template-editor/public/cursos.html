@@ -19,24 +19,21 @@
 
     <main class="studio-workspace">
       <section id="catalogStage" class="catalog-stage">
+        <div class="summary-bar" id="summaryBar">
+          <div class="summary-item"><span id="summaryTotal">0</span><label>Total</label></div>
+          <div class="summary-item"><span id="summaryPending">0</span><label>Pendentes</label></div>
+          <div class="summary-item"><span id="summaryGenerated">0</span><label>Gerados</label></div>
+          <div class="summary-item"><span id="summaryApproved">0</span><label>Aprovados</label></div>
+          <div class="summary-item"><span id="summaryErrors">0</span><label>Erros</label></div>
+        </div>
+
         <div class="catalog-toolbar">
           <input type="text" id="searchInput" placeholder="Buscar por nome...">
-          <select id="filterModalidade">
-            <option value="">Todas as modalidades</option>
-          </select>
-          <select id="filterFormacao">
-            <option value="">Todas as formações</option>
-          </select>
-          <select id="filterStatus">
-            <option value="">Todos os status</option>
-            <option value="pendente">Pendente</option>
-            <option value="gerando">Gerando</option>
-            <option value="gerado">Gerado</option>
-            <option value="aprovado">Aprovado</option>
-            <option value="rejeitado">Rejeitado</option>
-            <option value="erro">Erro</option>
-          </select>
+          <select id="filterModalidade"><option value="">Todas as modalidades</option></select>
+          <select id="filterFormacao"><option value="">Todas as formações</option></select>
+          <select id="filterStatus"><option value="">Todos os status</option></select>
         </div>
+
         <div id="courseGrid" class="course-grid"></div>
       </section>
 
@@ -45,42 +42,52 @@
           <div class="detail-header">
             <button id="btnBack" class="secondary">Voltar ao catálogo</button>
           </div>
+
           <h2 id="courseTitle">Curso</h2>
           <div id="courseInfo" class="course-info"></div>
 
-          <label class="field-label">Prompt de imagem (edição apenas nesta sessão)</label>
+          <label class="field-label">Prompt de imagem (usado apenas nesta geração)</label>
           <textarea id="promptInput" rows="6"></textarea>
 
           <div class="detail-actions">
-            <button id="btnGenerate" class="primary">Gerar fundo com IA</button>
+            <button id="btnDryRun" class="secondary">Testar sem custo</button>
+            <button id="btnGenerate" class="primary">Gerar com IA</button>
             <label class="upload-button secondary">
               <input type="file" id="uploadInput" accept=".png,.jpg,.jpeg,.svg">
-              Upload de fundo
+              Enviar fundo
             </label>
             <button id="btnRender" class="primary">Renderizar card</button>
-            <button id="btnApprove" class="success">Aprovar</button>
-            <button id="btnReject" class="danger">Rejeitar</button>
+            <div class="action-row">
+              <button id="btnApprove" class="success">Aprovar</button>
+              <button id="btnReject" class="danger">Rejeitar</button>
+            </div>
             <button id="btnDownload" class="secondary">Baixar PNG</button>
           </div>
           <div id="status" class="status ready">Pronto</div>
         </aside>
 
         <section class="preview-area">
-          <div class="preview-group">
-            <h3>Card atual</h3>
-            <img id="currentCardImg" class="preview-img" alt="Card atual">
+          <div class="compare-column">
+            <h3>Atual</h3>
+            <div class="compare-group">
+              <h4>Fundo atual</h4>
+              <img id="currentBgImg" class="preview-img" alt="Fundo atual">
+            </div>
+            <div class="compare-group">
+              <h4>Card atual</h4>
+              <img id="currentCardImg" class="preview-img" alt="Card atual">
+            </div>
           </div>
-          <div class="preview-group">
-            <h3>Fundo atual</h3>
-            <img id="currentBgImg" class="preview-img" alt="Fundo atual">
-          </div>
-          <div class="preview-group">
-            <h3>Fundo IA / Upload</h3>
-            <img id="aiBgImg" class="preview-img" alt="Fundo IA">
-          </div>
-          <div class="preview-group">
-            <h3>Card novo</h3>
-            <img id="aiCardImg" class="preview-img" alt="Card novo">
+          <div class="compare-column">
+            <h3>Novo</h3>
+            <div class="compare-group">
+              <h4>Fundo novo</h4>
+              <img id="aiBgImg" class="preview-img" alt="Fundo novo">
+            </div>
+            <div class="compare-group">
+              <h4>Card novo</h4>
+              <img id="aiCardImg" class="preview-img" alt="Card novo">
+            </div>
           </div>
         </section>
       </section>

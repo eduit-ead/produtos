@@ -19,6 +19,7 @@ const {
   renderCourse,
   approveCourse,
   rejectCourse,
+  CATALOG_DIR,
 } = require("../course-production-service");
 
 const DATA_DIR = path.join(__dirname, "..", "..", "data");
@@ -263,12 +264,26 @@ function createRouter() {
   });
 
   // === Cursos ===
+  const EXPECTED_COURSE_ERRORS = new Set([
+    "Slug inválido.",
+    "Curso não encontrado.",
+    "Nenhum fundo disponível para renderizar o card.",
+    "Não é possível aprovar sem card renderizado.",
+    "OPENAI_API_KEY não configurada. Configure a chave para gerar imagens reais.",
+    "Formato de imagem não permitido.",
+    "URL de imagem inválida.",
+  ]);
+
+  function isExpectedCourseError(err) {
+    return EXPECTED_COURSE_ERRORS.has(err.message);
+  }
+
   router.get("/courses", async (req, res) => {
     try {
       const courses = await listCourses();
       res.json(courses);
     } catch (err) {
-      console.error(err);
+      if (!isExpectedCourseError(err)) console.error(err);
       res.status(500).json({ error: err.message || "Erro ao listar cursos." });
     }
   });
@@ -281,7 +296,7 @@ function createRouter() {
       }
       res.json(course);
     } catch (err) {
-      console.error(err);
+      if (!isExpectedCourseError(err)) console.error(err);
       const status = err.message === "Slug inválido." ? 400 : 500;
       res.status(status).json({ error: err.message || "Erro ao carregar curso." });
     }
@@ -289,11 +304,16 @@ function createRouter() {
 
   router.post("/courses/:slug/generate", express.json(), async (req, res) => {
     try {
-      const result = await generateAIBackground(req.params.slug, { dryRun: req.body?.dryRun === true });
+      const body = req.body || {};
+      const result = await generateAIBackground(req.params.slug, {
+        dryRun: body.dryRun === true,
+        prompt: typeof body.prompt === "string" ? body.prompt : undefined,
+      });
       res.json({ ok: true, record: result });
     } catch (err) {
-      console.error(err);
-      const status = err.message === "Slug inválido." || err.message === "Curso não encontrado." ? 404 : 500;
+      if (!isExpectedCourseError(err)) console.error(err);
+      const status =
+        err.message === "Slug inválido." || err.message === "Curso não encontrado." ? 404 : 400;
       res.status(status).json({ error: err.message || "Erro ao gerar fundo." });
     }
   });
@@ -307,7 +327,7 @@ function createRouter() {
       const result = await uploadBackground(req.params.slug, req.file.buffer, ext);
       res.json({ ok: true, ...result });
     } catch (err) {
-      console.error(err);
+      if (!isExpectedCourseError(err)) console.error(err);
       const status = err.message === "Slug inválido." || err.message === "Curso não encontrado." ? 404 : 400;
       res.status(status).json({ error: err.message || "Erro no upload." });
     }
@@ -318,7 +338,7 @@ function createRouter() {
       const result = await renderCourse(req.params.slug);
       res.json({ ok: true, ...result });
     } catch (err) {
-      console.error(err);
+      if (!isExpectedCourseError(err)) console.error(err);
       const status = err.message === "Slug inválido." || err.message === "Curso não encontrado." ? 404 : 500;
       res.status(status).json({ error: err.message || "Erro ao renderizar card." });
     }
@@ -329,8 +349,8 @@ function createRouter() {
       const record = await approveCourse(req.params.slug);
       res.json({ ok: true, record });
     } catch (err) {
-      console.error(err);
-      const status = err.message === "Slug inválido." ? 400 : 500;
+      if (!isExpectedCourseError(err)) console.error(err);
+      const status = err.message === "Slug inválido." ? 400 : 400;
       res.status(status).json({ error: err.message || "Erro ao aprovar." });
     }
   });
@@ -340,10 +360,40 @@ function createRouter() {
       const record = await rejectCourse(req.params.slug);
       res.json({ ok: true, record });
     } catch (err) {
-      console.error(err);
-      const status = err.message === "Slug inválido." ? 400 : 500;
+      if (!isExpectedCourseError(err)) console.error(err);
+      const status = err.message === "Slug inválido." ? 400 : 400;
       res.status(status).json({ error: err.message || "Erro ao rejeitar." });
     }
+  });
+
+  // Servir arquivos do catálogo de forma segura, independentemente de onde o
+  // CATALOG_DIR esteja localizado (padrão ou temporário de teste).
+  router.get("/catalog/:slug/:file", (req, res) => {
+    const slug = req.params.slug;
+    const file = req.params.file;
+    const ALLOWED_FILES = new Set([
+      `${slug}-fundo-ia.png`,
+      `${slug}-card-ia.png`,
+      `${slug}-fundo-upload.png`,
+    ]);
+    if (!slug || !file || !ALLOWED_FILES.has(file)) {
+      return res.status(400).json({ error: "Arquivo inválido." });
+    }
+    const filePath = path.join(CATALOG_DIR, slug, file);
+    const resolved = path.resolve(filePath);
+    const courseDirResolved = path.resolve(path.join(CATALOG_DIR, slug));
+    if (
+      !resolved.startsWith(courseDirResolved + path.sep) &&
+      resolved !== courseDirResolved
+    ) {
+      return res.status(400).json({ error: "Caminho inválido." });
+    }
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "Arquivo não encontrado." });
+    }
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "public, max-age=60");
+    res.sendFile(filePath);
   });
 
   // Middleware de erro: garante respostas JSON
