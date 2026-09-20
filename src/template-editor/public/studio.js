@@ -10,6 +10,7 @@ const state = {
   values: {},
   previewAbort: null,
   debounceTimer: null,
+  objectUrls: [],
 };
 
 const DEBOUNCE_MS = 400;
@@ -40,6 +41,18 @@ function setStatus(type, message) {
   const el = byId("status");
   el.className = `status ${type}`;
   el.textContent = message;
+}
+
+function validateRequired() {
+  if (!state.selectedTemplate) return false;
+  for (const v of state.selectedTemplate.variables || []) {
+    if (!v.required) continue;
+    const val = state.values[v.key];
+    if (val === undefined || val === null || String(val).trim() === "") {
+      return false;
+    }
+  }
+  return true;
 }
 
 function getDefaultValues(template) {
@@ -317,6 +330,19 @@ function normalizeColor(value) {
   return null;
 }
 
+function registerObjectUrl(url) {
+  if (url && url.startsWith("blob:")) {
+    state.objectUrls.push(url);
+  }
+}
+
+function revokeObjectUrls() {
+  for (const url of state.objectUrls) {
+    URL.revokeObjectURL(url);
+  }
+  state.objectUrls = [];
+}
+
 function scheduleRender() {
   setStatus("loading", "Atualizando preview...");
   if (state.debounceTimer) clearTimeout(state.debounceTimer);
@@ -343,6 +369,8 @@ async function renderPreview() {
     if (controller.signal.aborted) return;
 
     const url = URL.createObjectURL(blob);
+    revokeObjectUrls();
+    registerObjectUrl(url);
     const img = byId("previewImg");
     img.src = url;
     img.classList.remove("hidden");
@@ -362,12 +390,17 @@ async function downloadPng() {
   if (!state.selectedTemplate) return;
   setStatus("loading", "Gerando PNG...");
   try {
+    if (!validateRequired()) {
+      setStatus("error", "Preencha os campos obrigatórios antes de baixar.");
+      return;
+    }
     const blob = await apiBlob("/api/render", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ template: state.selectedTemplate, values: state.values }),
     });
     const url = URL.createObjectURL(blob);
+    registerObjectUrl(url);
     const a = document.createElement("a");
     a.href = url;
     a.download = `${state.selectedTemplate.id}.png`;

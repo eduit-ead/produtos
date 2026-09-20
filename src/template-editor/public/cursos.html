@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Painel de Cursos</title>
+  <link rel="stylesheet" href="/cursos.css">
+</head>
+<body>
+  <div id="app">
+    <header class="studio-header">
+      <h1>Painel de Cursos</h1>
+      <nav class="nav-links">
+        <a href="/">Estúdio</a>
+        <a href="/cursos.html" class="active">Cursos</a>
+        <a href="/editor.html">Editor avançado</a>
+      </nav>
+    </header>
+
+    <main class="studio-workspace">
+      <section id="catalogStage" class="catalog-stage">
+        <div class="catalog-toolbar">
+          <input type="text" id="searchInput" placeholder="Buscar por nome...">
+          <select id="filterModalidade">
+            <option value="">Todas as modalidades</option>
+          </select>
+          <select id="filterFormacao">
+            <option value="">Todas as formações</option>
+          </select>
+          <select id="filterStatus">
+            <option value="">Todos os status</option>
+            <option value="pendente">Pendente</option>
+            <option value="gerando">Gerando</option>
+            <option value="gerado">Gerado</option>
+            <option value="aprovado">Aprovado</option>
+            <option value="rejeitado">Rejeitado</option>
+            <option value="erro">Erro</option>
+          </select>
+        </div>
+        <div id="courseGrid" class="course-grid"></div>
+      </section>
+
+      <section id="detailStage" class="detail-stage hidden">
+        <aside class="detail-panel">
+          <div class="detail-header">
+            <button id="btnBack" class="secondary">Voltar ao catálogo</button>
+          </div>
+          <h2 id="courseTitle">Curso</h2>
+          <div id="courseInfo" class="course-info"></div>
+
+          <label class="field-label">Prompt de imagem (edição apenas nesta sessão)</label>
+          <textarea id="promptInput" rows="6"></textarea>
+
+          <div class="detail-actions">
+            <button id="btnGenerate" class="primary">Gerar fundo com IA</button>
+            <label class="upload-button secondary">
+              <input type="file" id="uploadInput" accept=".png,.jpg,.jpeg,.svg">
+              Upload de fundo
+            </label>
+            <button id="btnRender" class="primary">Renderizar card</button>
+            <button id="btnApprove" class="success">Aprovar</button>
+            <button id="btnReject" class="danger">Rejeitar</button>
+            <button id="btnDownload" class="secondary">Baixar PNG</button>
+          </div>
+          <div id="status" class="status ready">Pronto</div>
+        </aside>
+
+        <section class="preview-area">
+          <div class="preview-group">
+            <h3>Card atual</h3>
+            <img id="currentCardImg" class="preview-img" alt="Card atual">
+          </div>
+          <div class="preview-group">
+            <h3>Fundo atual</h3>
+            <img id="currentBgImg" class="preview-img" alt="Fundo atual">
+          </div>
+          <div class="preview-group">
+            <h3>Fundo IA / Upload</h3>
+            <img id="aiBgImg" class="preview-img" alt="Fundo IA">
+          </div>
+          <div class="preview-group">
+            <h3>Card novo</h3>
+            <img id="aiCardImg" class="preview-img" alt="Card novo">
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script src="/cursos.js"></script>
+</body>
+</html>

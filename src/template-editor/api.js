@@ -11,6 +11,15 @@ const multer = require("multer");
 const sharp = require("sharp");
 const { validateTemplate, createEmptyTemplate } = require("./schema/template-schema");
 const { renderTemplate } = require("./renderer");
+const {
+  listCourses,
+  getCourseDetail,
+  generateAIBackground,
+  uploadBackground,
+  renderCourse,
+  approveCourse,
+  rejectCourse,
+} = require("../course-production-service");
 
 const DATA_DIR = path.join(__dirname, "..", "..", "data");
 const TEMPLATES_DIR = path.join(DATA_DIR, "templates");
@@ -250,6 +259,90 @@ function createRouter() {
     } catch (err) {
       console.error(err);
       return res.status(500).json({ error: err.message || "Erro ao renderizar." });
+    }
+  });
+
+  // === Cursos ===
+  router.get("/courses", async (req, res) => {
+    try {
+      const courses = await listCourses();
+      res.json(courses);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao listar cursos." });
+    }
+  });
+
+  router.get("/courses/:slug", async (req, res) => {
+    try {
+      const course = await getCourseDetail(req.params.slug);
+      if (!course) {
+        return res.status(404).json({ error: "Curso não encontrado." });
+      }
+      res.json(course);
+    } catch (err) {
+      console.error(err);
+      const status = err.message === "Slug inválido." ? 400 : 500;
+      res.status(status).json({ error: err.message || "Erro ao carregar curso." });
+    }
+  });
+
+  router.post("/courses/:slug/generate", express.json(), async (req, res) => {
+    try {
+      const result = await generateAIBackground(req.params.slug, { dryRun: req.body?.dryRun === true });
+      res.json({ ok: true, record: result });
+    } catch (err) {
+      console.error(err);
+      const status = err.message === "Slug inválido." || err.message === "Curso não encontrado." ? 404 : 500;
+      res.status(status).json({ error: err.message || "Erro ao gerar fundo." });
+    }
+  });
+
+  router.post("/courses/:slug/upload", upload.single("file"), async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "Nenhum arquivo enviado." });
+    }
+    try {
+      const ext = path.extname(req.file.originalname).toLowerCase();
+      const result = await uploadBackground(req.params.slug, req.file.buffer, ext);
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      console.error(err);
+      const status = err.message === "Slug inválido." || err.message === "Curso não encontrado." ? 404 : 400;
+      res.status(status).json({ error: err.message || "Erro no upload." });
+    }
+  });
+
+  router.post("/courses/:slug/render", async (req, res) => {
+    try {
+      const result = await renderCourse(req.params.slug);
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      console.error(err);
+      const status = err.message === "Slug inválido." || err.message === "Curso não encontrado." ? 404 : 500;
+      res.status(status).json({ error: err.message || "Erro ao renderizar card." });
+    }
+  });
+
+  router.post("/courses/:slug/approve", async (req, res) => {
+    try {
+      const record = await approveCourse(req.params.slug);
+      res.json({ ok: true, record });
+    } catch (err) {
+      console.error(err);
+      const status = err.message === "Slug inválido." ? 400 : 500;
+      res.status(status).json({ error: err.message || "Erro ao aprovar." });
+    }
+  });
+
+  router.post("/courses/:slug/reject", async (req, res) => {
+    try {
+      const record = await rejectCourse(req.params.slug);
+      res.json({ ok: true, record });
+    } catch (err) {
+      console.error(err);
+      const status = err.message === "Slug inválido." ? 400 : 500;
+      res.status(status).json({ error: err.message || "Erro ao rejeitar." });
     }
   });
 

@@ -9,7 +9,6 @@
 
 const fs = require("fs");
 const path = require("path");
-const ExcelJS = require("exceljs");
 require("dotenv").config();
 
 const { generateImage, DEFAULT_MODEL } = require("./generate-ai-background");
@@ -17,12 +16,11 @@ const {
   renderCourseCard,
   prepareBackgroundBuffer,
 } = require("./render-card");
+const { loadAllCourses } = require("./read-courses");
 
 const ROOT = path.resolve(__dirname, "..");
-const INPUT_FILE = path.join(ROOT, "input", "cursos.xlsx");
 const OUTPUT_DIR = path.join(ROOT, "output", "ai-catalog");
 const FINAL_DIR = path.join(ROOT, "output", "final");
-const SHEET_NAME = "Graduação";
 
 const MANIFEST_FILE = path.join(OUTPUT_DIR, "manifest.json");
 const HTML_FILE = path.join(OUTPUT_DIR, "index.html");
@@ -77,73 +75,6 @@ function parseArgs() {
   }
 
   return { dryRun, limit, all, resume, maxCost };
-}
-
-function normalize(value = "") {
-  return String(value)
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toLowerCase();
-}
-
-function col(headerMap, name) {
-  const wanted = normalize(name);
-  for (const [header, colNumber] of Object.entries(headerMap)) {
-    if (normalize(header) === wanted) return colNumber;
-  }
-  return null;
-}
-
-async function loadAllCourses() {
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile(INPUT_FILE);
-  const sheet = workbook.getWorksheet(SHEET_NAME);
-
-  if (!sheet) {
-    throw new Error(`Aba "${SHEET_NAME}" não encontrada na planilha.`);
-  }
-
-  const headerMap = {};
-  sheet.getRow(1).eachCell({ includeEmpty: false }, (cell, colNumber) => {
-    headerMap[cell.value] = colNumber;
-  });
-
-  const slugCol = col(headerMap, "slug");
-  const courseIdCol = col(headerMap, "course_id");
-  const cursoCol = col(headerMap, "Curso");
-  const formacaoCol = col(headerMap, "Formação");
-  const modalidadeCol = col(headerMap, "Modalidade");
-  const duracaoCol = col(headerMap, "Duração");
-  const descricaoCol = col(headerMap, "descricao_curta");
-  const promptCol = col(headerMap, "prompt_imagem");
-
-  if (!slugCol) {
-    throw new Error("Coluna 'slug' não encontrada na planilha.");
-  }
-  if (!promptCol) {
-    throw new Error("Coluna 'prompt_imagem' não encontrada na planilha.");
-  }
-
-  const courses = [];
-  for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber++) {
-    const row = sheet.getRow(rowNumber);
-    const slug = String(row.getCell(slugCol).value || "").trim();
-    if (!slug) continue;
-
-    courses.push({
-      course_id: String(row.getCell(courseIdCol || slugCol).value || slug).trim(),
-      slug,
-      curso: String(row.getCell(cursoCol).value || "").trim(),
-      formacao: String(row.getCell(formacaoCol).value || "").trim(),
-      modalidade: String(row.getCell(modalidadeCol).value || "").trim(),
-      duracao: String(row.getCell(duracaoCol).value || "").trim(),
-      descricao_curta: String(row.getCell(descricaoCol).value || "").trim(),
-      prompt_imagem: String(row.getCell(promptCol).value || "").trim(),
-    });
-  }
-
-  return courses;
 }
 
 function pathsForCourse(slug) {
