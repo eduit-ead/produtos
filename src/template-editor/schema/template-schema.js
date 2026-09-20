@@ -13,6 +13,17 @@ const VALID_TYPES = new Set([
 
 const VARIABLE_TYPES = new Set(["string", "number", "boolean"]);
 
+// IDs estritos: alfanumérico, hífen e underscore; 1-64 caracteres.
+const ID_REGEX = /^[a-zA-Z0-9_-]{1,64}$/;
+
+// Limites de segurança para dimensões e conteúdo.
+const MAX_CANVAS_DIMENSION = 4096;
+const MAX_TOTAL_PIXELS = 16 * 1024 * 1024; // 16M
+const MAX_LAYERS = 100;
+const MAX_STRING_LENGTH = 5000;
+
+const VARIABLE_KEY_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
 const COMMON_LAYER_DEFAULTS = {
   x: 0,
   y: 0,
@@ -88,6 +99,41 @@ function cryptoRandomId(prefix = "id") {
   return `${prefix}-${Date.now().toString(36)}-${random}`;
 }
 
+function isPositiveInteger(value) {
+  return Number.isFinite(value) && value > 0 && Number.isInteger(value);
+}
+
+function isFiniteNumber(value) {
+  return Number.isFinite(value);
+}
+
+function isValidString(value, maxLength = MAX_STRING_LENGTH) {
+  return typeof value === "string" && value.length <= maxLength;
+}
+
+function validateDimensions(width, height, prefix) {
+  const errors = [];
+  if (!isPositiveInteger(width)) {
+    errors.push(`${prefix}.width deve ser um inteiro positivo.`);
+  }
+  if (!isPositiveInteger(height)) {
+    errors.push(`${prefix}.height deve ser um inteiro positivo.`);
+  }
+  if (isPositiveInteger(width) && width > MAX_CANVAS_DIMENSION) {
+    errors.push(`${prefix}.width excede o máximo de ${MAX_CANVAS_DIMENSION}.`);
+  }
+  if (isPositiveInteger(height) && height > MAX_CANVAS_DIMENSION) {
+    errors.push(`${prefix}.height excede o máximo de ${MAX_CANVAS_DIMENSION}.`);
+  }
+  if (isPositiveInteger(width) && isPositiveInteger(height)) {
+    const pixels = width * height;
+    if (pixels > MAX_TOTAL_PIXELS) {
+      errors.push(`${prefix} área total (${pixels}) excede o máximo de ${MAX_TOTAL_PIXELS}.`);
+    }
+  }
+  return errors;
+}
+
 function createEmptyTemplate(width = 1080, height = 1080) {
   return {
     schemaVersion: 1,
@@ -116,10 +162,10 @@ function createEmptyTemplate(width = 1080, height = 1080) {
   };
 }
 
-function validateTemplate(template) {
+function validateTemplate(template, { routeId } = {}) {
   const errors = [];
 
-  if (!template || typeof template !== "object") {
+  if (!template || typeof template !== "object" || Array.isArray(template)) {
     return ["Template deve ser um objeto."];
   }
 
@@ -127,32 +173,45 @@ function validateTemplate(template) {
     errors.push("schemaVersion deve ser 1.");
   }
 
-  if (!template.id || typeof template.id !== "string") {
-    errors.push("id é obrigatório e deve ser uma string.");
+  if (!isValidString(template.id)) {
+    errors.push("id é obrigatório e deve ser uma string de até 5000 caracteres.");
+  } else if (!ID_REGEX.test(template.id)) {
+    errors.push("id contém caracteres inválidos.");
   }
 
-  if (!template.name || typeof template.name !== "string") {
-    errors.push("name é obrigatório e deve ser uma string.");
+  if (routeId !== undefined && template.id !== routeId) {
+    errors.push(`template.id (${template.id}) deve ser igual ao id da rota (${routeId}).`);
   }
 
-  if (
-    !template.canvas ||
-    typeof template.canvas.width !== "number" ||
-    typeof template.canvas.height !== "number"
-  ) {
-    errors.push("canvas.width e canvas.height devem ser números.");
+  if (!isValidString(template.name)) {
+    errors.push("name é obrigatório e deve ser uma string de até 5000 caracteres.");
+  }
+
+  if (!template.canvas || typeof template.canvas !== "object" || Array.isArray(template.canvas)) {
+    errors.push("canvas deve ser um objeto.");
+  } else {
+    errors.push(...validateDimensions(template.canvas.width, template.canvas.height, "canvas"));
   }
 
   if (!Array.isArray(template.layers)) {
     errors.push("layers deve ser um array.");
+  } else if (template.layers.length > MAX_LAYERS) {
+    errors.push(`layers excede o máximo de ${MAX_LAYERS} camadas.`);
   } else {
     const ids = new Set();
     for (let i = 0; i < template.layers.length; i++) {
       const layer = template.layers[i];
       const prefix = `layers[${i}]`;
 
-      if (!layer.id || typeof layer.id !== "string") {
-        errors.push(`${prefix}.id é obrigatório.`);
+      if (!layer || typeof layer !== "object" || Array.isArray(layer)) {
+        errors.push(`${prefix} deve ser um objeto.`);
+        continue;
+      }
+
+      if (!isValidString(layer.id)) {
+        errors.push(`${prefix}.id é obrigatório e deve ser uma string.`);
+      } else if (!ID_REGEX.test(layer.id)) {
+        errors.push(`${prefix}.id contém caracteres inválidos.`);
       } else if (ids.has(layer.id)) {
         errors.push(`${prefix}.id duplicado: ${layer.id}.`);
       } else {
@@ -166,8 +225,8 @@ function validateTemplate(template) {
       }
 
       for (const field of ["x", "y", "width", "height", "rotation", "opacity", "zIndex"]) {
-        if (typeof layer[field] !== "number") {
-          errors.push(`${prefix}.${field} deve ser um número.`);
+        if (!isFiniteNumber(layer[field])) {
+          errors.push(`${prefix}.${field} deve ser um número finito.`);
         }
       }
 
@@ -178,8 +237,12 @@ function validateTemplate(template) {
         errors.push(`${prefix}.locked deve ser booleano.`);
       }
 
-      if (layer.opacity < 0 || layer.opacity > 1) {
+      if (isFiniteNumber(layer.opacity) && (layer.opacity < 0 || layer.opacity > 1)) {
         errors.push(`${prefix}.opacity deve estar entre 0 e 1.`);
+      }
+
+      if (isFiniteNumber(layer.width) && isFiniteNumber(layer.height)) {
+        errors.push(...validateDimensions(layer.width, layer.height, prefix));
       }
 
       const propErrors = validateLayerProperties(layer.type, layer.properties);
@@ -190,19 +253,31 @@ function validateTemplate(template) {
   }
 
   if (Array.isArray(template.variables)) {
+    const variableKeys = new Set();
     for (let i = 0; i < template.variables.length; i++) {
       const v = template.variables[i];
       const prefix = `variables[${i}]`;
-      if (!v.key || typeof v.key !== "string") {
-        errors.push(`${prefix}.key é obrigatório.`);
+      if (!v || typeof v !== "object" || Array.isArray(v)) {
+        errors.push(`${prefix} deve ser um objeto.`);
+        continue;
       }
-      if (!v.label || typeof v.label !== "string") {
-        errors.push(`${prefix}.label é obrigatório.`);
+      if (!isValidString(v.key)) {
+        errors.push(`${prefix}.key é obrigatório e deve ser uma string.`);
+      } else if (!VARIABLE_KEY_REGEX.test(v.key)) {
+        errors.push(`${prefix}.key (${v.key}) não segue o padrão de identificador.`);
+      }
+      if (v.key && variableKeys.has(v.key)) {
+        errors.push(`${prefix}.key (${v.key}) duplicado.`);
+      } else if (v.key) {
+        variableKeys.add(v.key);
+      }
+      if (!isValidString(v.label)) {
+        errors.push(`${prefix}.label é obrigatório e deve ser uma string.`);
       }
       if (!VARIABLE_TYPES.has(v.type)) {
         errors.push(`${prefix}.type inválido.`);
       }
-      if ("defaultValue" in v && v.defaultValue === undefined) {
+      if (Object.hasOwn(v, "defaultValue") && v.defaultValue === undefined) {
         errors.push(`${prefix}.defaultValue não pode ser undefined.`);
       }
       if (typeof v.required !== "boolean") {
@@ -224,13 +299,13 @@ function validateLayerProperties(type, properties) {
 
   switch (type) {
     case "background":
-      if (!p.color || typeof p.color !== "string") {
+      if (!isValidString(p.color)) {
         errors.push("properties.color deve ser uma string.");
       }
       break;
     case "image":
     case "overlay":
-      if (!p.assetId || typeof p.assetId !== "string") {
+      if (!isValidString(p.assetId)) {
         errors.push("properties.assetId é obrigatório.");
       }
       if (type === "image" && p.fit && !["cover", "contain", "fill"].includes(p.fit)) {
@@ -241,20 +316,20 @@ function validateLayerProperties(type, properties) {
       }
       break;
     case "text":
-      if (typeof p.text !== "string") {
-        errors.push("properties.text deve ser uma string.");
+      if (typeof p.text !== "string" || p.text.length > MAX_STRING_LENGTH) {
+        errors.push("properties.text deve ser uma string de até 5000 caracteres.");
       }
-      if (typeof p.fontSize !== "number") {
-        errors.push("properties.fontSize deve ser um número.");
+      if (!isFiniteNumber(p.fontSize)) {
+        errors.push("properties.fontSize deve ser um número finito.");
       }
-      if (typeof p.minFontSize !== "number") {
-        errors.push("properties.minFontSize deve ser um número.");
+      if (!isFiniteNumber(p.minFontSize)) {
+        errors.push("properties.minFontSize deve ser um número finito.");
       }
-      if (typeof p.padding !== "number") {
-        errors.push("properties.padding deve ser um número.");
+      if (!isFiniteNumber(p.padding)) {
+        errors.push("properties.padding deve ser um número finito.");
       }
-      if (typeof p.maxLines !== "number" || p.maxLines < 1) {
-        errors.push("properties.maxLines deve ser >= 1.");
+      if (!Number.isInteger(p.maxLines) || p.maxLines < 1) {
+        errors.push("properties.maxLines deve ser um inteiro >= 1.");
       }
       if (!["shrink", "clip"].includes(p.overflow)) {
         errors.push("properties.overflow deve ser 'shrink' ou 'clip'.");
@@ -264,8 +339,17 @@ function validateLayerProperties(type, properties) {
       if (!["rectangle", "circle", "ellipse"].includes(p.shapeType)) {
         errors.push("properties.shapeType inválido.");
       }
-      if (!p.fill || typeof p.fill !== "string") {
+      if (!isValidString(p.fill)) {
         errors.push("properties.fill é obrigatório.");
+      }
+      if (p.stroke && !isValidString(p.stroke)) {
+        errors.push("properties.stroke deve ser uma string.");
+      }
+      if (Object.hasOwn(p, "strokeWidth") && !isFiniteNumber(p.strokeWidth)) {
+        errors.push("properties.strokeWidth deve ser um número finito.");
+      }
+      if (Object.hasOwn(p, "cornerRadius") && !isFiniteNumber(p.cornerRadius)) {
+        errors.push("properties.cornerRadius deve ser um número finito.");
       }
       break;
   }
@@ -278,9 +362,9 @@ function resolveVariables(template, values = {}) {
   const variableMap = new Map((template.variables || []).map((v) => [v.key, v]));
 
   for (const [key, variable] of variableMap) {
-    if (key in values) {
+    if (Object.hasOwn(values, key)) {
       resolved[key] = String(values[key]);
-    } else if ("defaultValue" in variable && variable.defaultValue !== undefined) {
+    } else if (Object.hasOwn(variable, "defaultValue") && variable.defaultValue !== undefined) {
       resolved[key] = String(variable.defaultValue);
     } else if (variable.required) {
       throw new Error(`Variável obrigatória ausente: ${key} (${variable.label})`);
@@ -295,7 +379,7 @@ function resolveVariables(template, values = {}) {
 function replaceVariables(text, resolved) {
   if (typeof text !== "string") return text;
   return text.replace(/\{\{(\w+)\}\}/g, (match, key) => {
-    return key in resolved ? resolved[key] : match;
+    return Object.hasOwn(resolved, key) ? resolved[key] : match;
   });
 }
 

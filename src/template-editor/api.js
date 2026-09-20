@@ -4,9 +4,11 @@
 
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const crypto = require("crypto");
 const express = require("express");
 const multer = require("multer");
+const sharp = require("sharp");
 const { validateTemplate, createEmptyTemplate } = require("./schema/template-schema");
 const { renderTemplate } = require("./renderer");
 
@@ -15,10 +17,17 @@ const TEMPLATES_DIR = path.join(DATA_DIR, "templates");
 const ASSETS_DIR = path.join(DATA_DIR, "assets");
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
+// Apenas PNG/JPEG são armazenados. SVG é rasterizado para PNG no upload.
 const ALLOWED_MIMETYPES = {
   "image/png": "png",
   "image/jpeg": "jpg",
   "image/svg+xml": "svg",
+};
+
+const SAVED_MIMETYPES = {
+  png: "png",
+  jpg: "jpg",
+  jpeg: "jpg",
 };
 
 function ensureDirs() {
@@ -39,6 +48,20 @@ function sanitizeFilename(name) {
 function generateAssetId(buffer, ext) {
   const hash = crypto.createHash("sha256").update(buffer).digest("hex").slice(0, 12);
   return `asset-${Date.now()}-${hash}.${ext}`;
+}
+
+function writeFileAtomic(filePath, data) {
+  const dir = path.dirname(filePath);
+  const tmpFile = path.join(dir, `.tmp-${crypto.randomBytes(8).toString("hex")}`);
+  fs.writeFileSync(tmpFile, data, "utf8");
+  fs.renameSync(tmpFile, filePath);
+}
+
+async function rasterizeSvg(buffer) {
+  // Usa densidade razoável para SVG; limite de dimensões é aplicado pelo sharp por padrão.
+  return sharp(buffer, { density: 144 })
+    .png()
+    .toBuffer();
 }
 
 const upload = multer({
@@ -92,7 +115,7 @@ function createRouter() {
     }
 
     const template = req.body;
-    const errors = validateTemplate(template);
+    const errors = validateTemplate(template, { routeId: id });
     if (errors.length > 0) {
       return res.status(400).json({ error: "Template inválido.", details: errors });
     }
@@ -103,7 +126,7 @@ function createRouter() {
     };
 
     const filePath = path.join(TEMPLATES_DIR, `${id}.json`);
-    fs.writeFileSync(filePath, JSON.stringify(template, null, 2), "utf8");
+    writeFileAtomic(filePath, JSON.stringify(template, null, 2));
     res.json({ ok: true, id });
   });
 
@@ -112,33 +135,47 @@ function createRouter() {
     const { width = 1080, height = 1080 } = req.body || {};
     const template = createEmptyTemplate(width, height);
     const filePath = path.join(TEMPLATES_DIR, `${template.id}.json`);
-    fs.writeFileSync(filePath, JSON.stringify(template, null, 2), "utf8");
+    writeFileAtomic(filePath, JSON.stringify(template, null, 2));
     res.json({ ok: true, template });
   });
 
   // Upload de asset
-  router.post("/upload", upload.single("file"), (req, res) => {
+  router.post("/upload", upload.single("file"), async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: "Nenhum arquivo enviado." });
     }
 
-    const ext = ALLOWED_MIMETYPES[req.file.mimetype];
-    const assetId = generateAssetId(req.file.buffer, ext);
-    const assetPath = path.join(ASSETS_DIR, assetId);
+    try {
+      let buffer = req.file.buffer;
+      let ext = ALLOWED_MIMETYPES[req.file.mimetype];
+      let mimetype = req.file.mimetype;
 
-    fs.writeFileSync(assetPath, req.file.buffer);
+      if (req.file.mimetype === "image/svg+xml") {
+        buffer = await rasterizeSvg(buffer);
+        ext = "png";
+        mimetype = "image/png";
+      }
 
-    res.json({
-      ok: true,
-      assetId,
-      originalName: sanitizeFilename(req.file.originalname),
-      mimetype: req.file.mimetype,
-      size: req.file.buffer.length,
-      url: `/api/assets/${assetId}`,
-    });
+      const assetId = generateAssetId(buffer, ext);
+      const assetPath = path.join(ASSETS_DIR, assetId);
+
+      fs.writeFileSync(assetPath, buffer);
+
+      res.json({
+        ok: true,
+        assetId,
+        originalName: sanitizeFilename(req.file.originalname),
+        mimetype,
+        size: buffer.length,
+        url: `/api/assets/${assetId}`,
+      });
+    } catch (err) {
+      console.error(err);
+      return res.status(400).json({ error: "Falha ao processar imagem.", details: err.message });
+    }
   });
 
-  // Servir asset
+  // Servir asset (apenas PNG/JPEG; nunca SVG bruto)
   router.get("/assets/:assetId", (req, res) => {
     const assetId = path.basename(req.params.assetId);
     const assetPath = path.join(ASSETS_DIR, assetId);
@@ -153,9 +190,11 @@ function createRouter() {
         ? "image/png"
         : ext === ".jpg" || ext === ".jpeg"
         ? "image/jpeg"
-        : ext === ".svg"
-        ? "image/svg+xml"
-        : "application/octet-stream";
+        : null;
+
+    if (!mime) {
+      return res.status(400).json({ error: "Formato de asset não suportado." });
+    }
 
     res.setHeader("Content-Type", mime);
     res.setHeader("Cache-Control", "public, max-age=3600");
@@ -166,7 +205,7 @@ function createRouter() {
   router.get("/assets", (req, res) => {
     const files = fs
       .readdirSync(ASSETS_DIR)
-      .filter((f) => [".png", ".jpg", ".jpeg", ".svg"].includes(path.extname(f).toLowerCase()))
+      .filter((f) => [".png", ".jpg", ".jpeg"].includes(path.extname(f).toLowerCase()))
       .map((f) => ({
         assetId: f,
         url: `/api/assets/${f}`,
@@ -175,7 +214,7 @@ function createRouter() {
     res.json(files);
   });
 
-  // Renderizar template
+  // Renderizar template salvo
   router.post("/render/:id", express.json({ limit: "1mb" }), async (req, res) => {
     const id = path.basename(req.params.id);
     const filePath = path.join(TEMPLATES_DIR, `${id}.json`);
@@ -191,8 +230,38 @@ function createRouter() {
       res.send(buffer);
     } catch (err) {
       console.error(err);
-      res.status(500).json({ error: err.message });
+      const status = err.message && err.message.startsWith("Template inválido") ? 400 : 500;
+      return res.status(status).json({ error: err.message || "Erro ao renderizar." });
     }
+  });
+
+  // Renderizar template JSON em memória
+  router.post("/render", express.json({ limit: "2mb" }), async (req, res) => {
+    const { template, values } = req.body || {};
+    const errors = validateTemplate(template);
+    if (errors.length > 0) {
+      return res.status(400).json({ error: "Template inválido.", details: errors });
+    }
+
+    try {
+      const buffer = await renderTemplate(template, values || {});
+      res.setHeader("Content-Type", "image/png");
+      res.send(buffer);
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ error: err.message || "Erro ao renderizar." });
+    }
+  });
+
+  // Middleware de erro: garante respostas JSON
+  router.use((err, req, res, next) => {
+    console.error(err);
+    if (res.headersSent) {
+      return next(err);
+    }
+    const status = err.status || err.statusCode || 500;
+    const message = err.message || "Erro interno.";
+    res.status(status >= 100 && status < 600 ? status : 500).json({ error: message });
   });
 
   return router;

@@ -12,12 +12,21 @@ const {
   computeCompositePosition,
   mapFit,
   mapPosition,
+  mapPositionFactors,
   mapBlend,
 } = require("./utils");
 const { renderTextLayer } = require("./text-layer");
 const { renderShapeLayer } = require("./shape-layer");
 
 async function renderBackgroundLayer(layer) {
+  if (!layer || typeof layer !== "object") {
+    return sharp({
+      create: { width: 1, height: 1, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+    })
+      .png()
+      .toBuffer();
+  }
+
   const props = layer.properties || {};
 
   if (props.assetId) {
@@ -44,15 +53,48 @@ async function renderBackgroundLayer(layer) {
 }
 
 async function renderImageLayer(layer) {
+  if (!layer || typeof layer !== "object") {
+    return sharp({
+      create: { width: 1, height: 1, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+    })
+      .png()
+      .toBuffer();
+  }
+
   const props = layer.properties || {};
   const buffer = loadAssetBuffer(props.assetId);
   if (!buffer) {
     throw new Error(`Asset de imagem não encontrado: ${props.assetId}`);
   }
 
+  const fit = props.fit || "cover";
+
+  if (fit === "contain") {
+    const resized = await sharp(buffer)
+      .resize(layer.width, layer.height, { fit: "inside" })
+      .png()
+      .toBuffer();
+    const meta = await sharp(resized).metadata();
+    const factors = mapPositionFactors(props.position);
+    const left = Math.round((layer.width - meta.width) * factors.x);
+    const top = Math.round((layer.height - meta.height) * factors.y);
+
+    return sharp({
+      create: {
+        width: layer.width,
+        height: layer.height,
+        channels: 4,
+        background: { r: 0, g: 0, b: 0, alpha: 0 },
+      },
+    })
+      .composite([{ input: resized, left, top }])
+      .png()
+      .toBuffer();
+  }
+
   return sharp(buffer)
     .resize(layer.width, layer.height, {
-      fit: mapFit(props.fit),
+      fit: mapFit(fit),
       position: mapPosition(props.position),
     })
     .png()
@@ -60,6 +102,14 @@ async function renderImageLayer(layer) {
 }
 
 async function renderOverlayLayer(layer) {
+  if (!layer || typeof layer !== "object") {
+    return sharp({
+      create: { width: 1, height: 1, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+    })
+      .png()
+      .toBuffer();
+  }
+
   const props = layer.properties || {};
   const buffer = loadAssetBuffer(props.assetId);
   if (!buffer) {

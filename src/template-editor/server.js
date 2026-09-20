@@ -22,6 +22,6 @@ app.get("/", (req, res) => {
   res.sendFile(path.join(PUBLIC_DIR, "index.html"));
 });
 
-app.listen(PORT, () => {
-  console.log(`Editor de templates rodando em http://localhost:${PORT}`);
+app.listen(PORT, "127.0.0.1", () => {
+  console.log(`Editor de templates rodando em http://127.0.0.1:${PORT}`);
 });

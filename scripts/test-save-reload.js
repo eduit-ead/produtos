@@ -1,5 +1,7 @@
 const fs = require("fs");
+const path = require("path");
 const http = require("http");
+const assert = require("node:assert/strict");
 const express = require("express");
 const { createRouter } = require("../src/template-editor/api");
 
@@ -7,10 +9,15 @@ const app = express();
 app.use("/api", createRouter());
 const server = http.createServer(app);
 
+const DEMO_PATH = path.join(__dirname, "..", "data", "templates", "demo.json");
+const TEMPLATES_DIR = path.join(__dirname, "..", "data", "templates");
+const FIXTURE_ID = "test-save-reload-fixture";
+const FIXTURE_PATH = path.join(TEMPLATES_DIR, `${FIXTURE_ID}.json`);
+
 function request(port, method, urlPath, body, headers = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request(
-      { hostname: "localhost", port, path: urlPath, method, headers },
+      { hostname: "127.0.0.1", port, path: urlPath, method, headers },
       (res) => {
         const chunks = [];
         res.on("data", (c) => chunks.push(c));
@@ -23,12 +30,29 @@ function request(port, method, urlPath, body, headers = {}) {
   });
 }
 
+function assertResponseJson(response) {
+  let parsed;
+  try {
+    parsed = JSON.parse(response.body);
+  } catch {
+    assert.fail(`Resposta não é JSON válido: ${response.body}`);
+  }
+  return parsed;
+}
+
 (async () => {
-  await new Promise((resolve) => server.listen(0, resolve));
+  const originalDemo = fs.readFileSync(DEMO_PATH, "utf8");
+  const fixture = JSON.parse(originalDemo);
+  fixture.id = FIXTURE_ID;
+  fixture.name = "Test Save/Reload Fixture";
+  fs.writeFileSync(FIXTURE_PATH, JSON.stringify(fixture, null, 2), "utf8");
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = server.address().port;
 
   try {
-    const load = JSON.parse((await request(port, "GET", "/api/templates/demo")).body);
+    const load = assertResponseJson(await request(port, "GET", `/api/templates/${FIXTURE_ID}`));
+    assert.equal(load.id, FIXTURE_ID, "Carregamento do fixture falhou");
 
     // Alterar posições e ordem
     load.layers[0].x = 10;
@@ -36,39 +60,29 @@ function request(port, method, urlPath, body, headers = {}) {
     load.layers[2].rotation = 5;
     load.layers[3].zIndex = 10;
 
-    const save = await request(port, "POST", "/api/templates/demo", JSON.stringify(load), {
+    const save = await request(port, "POST", `/api/templates/${FIXTURE_ID}`, JSON.stringify(load), {
       "Content-Type": "application/json",
     });
-    if (save.status !== 200) {
-      console.error("Save failed:", save.body);
-      process.exit(1);
-    }
+    assert.equal(save.status, 200, `Save falhou: ${save.body}`);
 
-    const reload = JSON.parse((await request(port, "GET", "/api/templates/demo")).body);
+    const reload = assertResponseJson(await request(port, "GET", `/api/templates/${FIXTURE_ID}`));
 
-    const assertions = [
-      reload.layers[0].x === 10,
-      reload.layers[0].y === 10,
-      reload.layers[2].rotation === 5,
-      reload.layers[3].zIndex === 10,
-      reload.layers.length === load.layers.length,
-      reload.schemaVersion === 1,
-    ];
+    assert.equal(reload.layers[0].x, 10, "x preservado");
+    assert.equal(reload.layers[0].y, 10, "y preservado");
+    assert.equal(reload.layers[2].rotation, 5, "rotation preservada");
+    assert.equal(reload.layers[3].zIndex, 10, "zIndex preservado");
+    assert.equal(reload.layers.length, load.layers.length, "número de camadas preservado");
+    assert.equal(reload.schemaVersion, 1, "schemaVersion preservado");
 
-    if (assertions.every(Boolean)) {
-      console.log("Save/reload OK: posições e zIndex preservados.");
-    } else {
-      console.error("Save/reload assertions failed:", assertions);
-      process.exit(1);
-    }
+    // Verificar que demo.json não foi modificado
+    const currentDemo = fs.readFileSync(DEMO_PATH, "utf8");
+    assert.equal(currentDemo, originalDemo, "demo.json foi alterado indevidamente");
 
-    // Restaurar valores originais para não poluir o demo
-    const original = JSON.parse(fs.readFileSync("data/templates/demo.json", "utf8"));
-    await request(port, "POST", "/api/templates/demo", JSON.stringify(original), {
-      "Content-Type": "application/json",
-    });
-    console.log("Template demo restaurado.");
+    console.log("Save/reload OK: posições e zIndex preservados; demo.json intacto.");
   } finally {
     server.close();
+    if (fs.existsSync(FIXTURE_PATH)) {
+      fs.unlinkSync(FIXTURE_PATH);
+    }
   }
 })();

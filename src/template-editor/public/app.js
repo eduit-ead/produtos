@@ -114,6 +114,10 @@ async function init() {
 
   document.getElementById("uploadForm").addEventListener("submit", uploadAsset);
 
+  window.addEventListener("resize", () => {
+    applyZoom();
+  });
+
   await loadTemplateList();
   await loadAssets();
 
@@ -200,34 +204,32 @@ function syncCanvasFromTemplate() {
   if (!state.template) return;
   state.isSyncing = true;
 
+  state.canvas.discardActiveObject();
   state.canvas.clear();
   state.canvas.setWidth(state.template.canvas.width);
   state.canvas.setHeight(state.template.canvas.height);
+  state.canvas.backgroundColor = state.template.canvas.background || "#ffffff";
 
   const layers = [...state.template.layers].sort((a, b) => a.zIndex - b.zIndex);
-  let pending = layers.length;
 
-  if (pending === 0) {
-    state.isSyncing = false;
-    state.canvas.renderAll();
-    return;
-  }
-
-  for (const layer of layers) {
-    createFabricObject(layer).then((obj) => {
+  Promise.all(
+    layers.map(async (layer) => {
+      const obj = await createFabricObject(layer);
       if (obj) {
         obj.set("layerId", layer.id);
         applyLockedState(obj, layer.locked);
-        state.canvas.add(obj);
       }
-      pending--;
-      if (pending === 0) {
-        state.canvas.renderAll();
-        state.isSyncing = false;
-        restoreSelection();
-      }
+      return { layer, obj };
+    })
+  ).then((results) => {
+    results.forEach(({ obj }) => {
+      if (obj) state.canvas.add(obj);
     });
-  }
+    state.canvas.renderAll();
+    state.isSyncing = false;
+    restoreSelection();
+    applyZoom();
+  });
 }
 
 function restoreSelection() {
@@ -251,10 +253,142 @@ function applyLockedState(obj, locked) {
   });
 }
 
+function applyZoom() {
+  if (!state.template || !state.canvas) return;
+  const wrap = document.getElementById("canvasWrap");
+  const width = state.template.canvas.width;
+  const height = state.template.canvas.height;
+
+  const padding = 32;
+  const availW = Math.max(wrap.clientWidth - padding, 1);
+  const availH = Math.max(wrap.clientHeight - padding, 1);
+  const scale = Math.max(0.1, Math.min(1, availW / width, availH / height));
+
+  // Keep the logical canvas at 1080x1080 for accurate editing,
+  // but set the CSS size to the fitted viewport so it fits the panel.
+  // Fabric's viewport zoom maps pointer coordinates correctly.
+  const cssW = `${Math.round(width * scale)}px`;
+  const cssH = `${Math.round(height * scale)}px`;
+  const container = state.canvas.wrapperEl;
+  if (container) {
+    container.style.width = cssW;
+    container.style.height = cssH;
+  }
+  if (state.canvas.lowerCanvasEl) {
+    state.canvas.lowerCanvasEl.style.width = cssW;
+    state.canvas.lowerCanvasEl.style.height = cssH;
+  }
+  if (state.canvas.upperCanvasEl) {
+    state.canvas.upperCanvasEl.style.width = cssW;
+    state.canvas.upperCanvasEl.style.height = cssH;
+  }
+
+  state.canvas.setZoom(scale);
+  state.canvas.renderAll();
+}
+
 function loadImage(url) {
   return new Promise((resolve) => {
     fabric.Image.fromURL(url, (img) => resolve(img), { crossOrigin: "anonymous" });
   });
+}
+
+function applyImageFit(img, layer, fit, position) {
+  const targetW = layer.width;
+  const targetH = layer.height;
+  const imgW = img.width;
+  const imgH = img.height;
+
+  let scaleX = 1;
+  let scaleY = 1;
+  let offsetX = 0;
+  let offsetY = 0;
+
+  if (fit === "contain") {
+    const scale = Math.min(targetW / imgW, targetH / imgH);
+    scaleX = scaleY = scale;
+    const scaledW = imgW * scale;
+    const scaledH = imgH * scale;
+    offsetX = (targetW - scaledW) / 2;
+    offsetY = (targetH - scaledH) / 2;
+    if (position === "top") offsetY = 0;
+    if (position === "bottom") offsetY = targetH - scaledH;
+    if (position === "left") offsetX = 0;
+    if (position === "right") offsetX = targetW - scaledW;
+  } else if (fit === "cover") {
+    const scale = Math.max(targetW / imgW, targetH / imgH);
+    scaleX = scaleY = scale;
+    const scaledW = imgW * scale;
+    const scaledH = imgH * scale;
+    offsetX = (targetW - scaledW) / 2;
+    offsetY = (targetH - scaledH) / 2;
+    if (position === "top") offsetY = 0;
+    if (position === "bottom") offsetY = targetH - scaledH;
+    if (position === "left") offsetX = 0;
+    if (position === "right") offsetX = targetW - scaledW;
+  } else {
+    scaleX = targetW / imgW;
+    scaleY = targetH / imgH;
+  }
+
+  img._fitOffsetX = offsetX;
+  img._fitOffsetY = offsetY;
+
+  img.set({
+    scaleX,
+    scaleY,
+    left: layer.x + offsetX,
+    top: layer.y + offsetY,
+    clipPath: new fabric.Rect({
+      left: 0,
+      top: 0,
+      width: targetW,
+      height: targetH,
+      originX: "left",
+      originY: "top",
+      fill: "transparent",
+      stroke: null,
+    }),
+  });
+}
+
+function applyObjectGeometry(obj, layer) {
+  obj.set({ scaleX: 1, scaleY: 1 });
+  if (layer.type === "text") {
+    obj.set({ width: layer.width, height: layer.height });
+  } else if (layer.type === "shape") {
+    const shapeType = obj.layerShapeType || layer.properties.shapeType;
+    if (shapeType === "circle") {
+      obj.set({ radius: Math.min(layer.width, layer.height) / 2 });
+    } else if (shapeType === "ellipse") {
+      obj.set({ rx: layer.width / 2, ry: layer.height / 2 });
+    } else {
+      obj.set({ width: layer.width, height: layer.height });
+    }
+  } else {
+    obj.set({ width: layer.width, height: layer.height });
+  }
+  obj.setCoords();
+}
+
+const fontPreviewCache = new Map();
+async function loadFontForPreview(fontFamily) {
+  if (!fontFamily) return "Arial, sans-serif";
+  if (fontPreviewCache.has(fontFamily)) return fontPreviewCache.get(fontFamily);
+  let result = fontFamily;
+  if (document.fonts) {
+    try {
+      await Promise.race([
+        document.fonts.load(`12px ${fontFamily}`),
+        new Promise((_, reject) => setTimeout(reject, 300)),
+      ]);
+    } catch {
+      // Offline or font unavailable: fall back to a system font for the preview.
+      result = "Arial, sans-serif";
+    }
+  }
+  fontPreviewCache.set(fontFamily, result);
+  return result;
 }
 
 async function createFabricObject(layer) {
@@ -277,7 +411,9 @@ async function createFabricObject(layer) {
       if (layer.properties.assetId) {
         const img = await loadImage(`/api/assets/${layer.properties.assetId}`);
         if (img) {
-          img.set({ ...common, width: layer.width, height: layer.height });
+          applyImageFit(img, layer, "fill", "center");
+          img.set({ ...common });
+          img.layerAssetId = layer.properties.assetId;
           return img;
         }
       }
@@ -294,7 +430,24 @@ async function createFabricObject(layer) {
       if (layer.properties.assetId) {
         const img = await loadImage(`/api/assets/${layer.properties.assetId}`);
         if (img) {
-          img.set({ ...common, width: layer.width, height: layer.height });
+          const isOverlay = layer.type === "overlay";
+          applyImageFit(
+            img,
+            layer,
+            isOverlay ? "fill" : layer.properties.fit || "cover",
+            layer.properties.position || "center"
+          );
+          img.set({ ...common });
+          img.layerAssetId = layer.properties.assetId;
+          if (layer.type === "image") {
+            img.layerFit = layer.properties.fit;
+            img.layerPosition = layer.properties.position;
+          }
+          if (isOverlay) {
+            img.layerBlendMode = layer.properties.blendMode;
+            const blendMap = { normal: "source-over", multiply: "multiply", screen: "screen", overlay: "overlay" };
+            img.set("globalCompositeOperation", blendMap[layer.properties.blendMode] || "source-over");
+          }
           return img;
         }
       }
@@ -309,10 +462,11 @@ async function createFabricObject(layer) {
     }
 
     case "text": {
+      const renderFont = await loadFontForPreview(layer.properties.fontFamily);
       const tb = new fabric.Textbox(layer.properties.text || "", {
         ...common,
         width: layer.width,
-        fontFamily: layer.properties.fontFamily || "Arial",
+        fontFamily: renderFont,
         fontSize: layer.properties.fontSize || 16,
         fontWeight: layer.properties.fontWeight || 400,
         fill: layer.properties.fill || "#000000",
@@ -321,6 +475,7 @@ async function createFabricObject(layer) {
         charSpacing: (layer.properties.letterSpacing || 0) * 1000,
       });
       tb.set("height", layer.height);
+      tb.layerFontFamily = layer.properties.fontFamily;
       return tb;
     }
 
@@ -338,20 +493,26 @@ async function createFabricObject(layer) {
 
       if (shapeType === "circle") {
         const radius = Math.min(layer.width, layer.height) / 2;
-        return new fabric.Circle({ ...base, radius });
+        const c = new fabric.Circle({ ...base, radius });
+        c.layerShapeType = shapeType;
+        return c;
       }
       if (shapeType === "ellipse") {
-        return new fabric.Ellipse({
+        const e = new fabric.Ellipse({
           ...base,
           rx: layer.width / 2,
           ry: layer.height / 2,
         });
+        e.layerShapeType = shapeType;
+        return e;
       }
-      return new fabric.Rect({
+      const r = new fabric.Rect({
         ...base,
         rx: props.cornerRadius || 0,
         ry: props.cornerRadius || 0,
       });
+      r.layerShapeType = shapeType;
+      return r;
     }
   }
 
@@ -394,13 +555,32 @@ function updateLayerFromObject(obj) {
   const layer = state.template.layers.find((l) => l.id === obj.layerId);
   if (!layer) return;
 
-  layer.x = Math.round(obj.left);
-  layer.y = Math.round(obj.top);
+  if (layer.type === "image" || layer.type === "overlay") {
+    layer.x = Math.round(obj.left - (obj._fitOffsetX || 0));
+    layer.y = Math.round(obj.top - (obj._fitOffsetY || 0));
+  } else {
+    layer.x = Math.round(obj.left);
+    layer.y = Math.round(obj.top);
+  }
   layer.rotation = Math.round(obj.angle || 0);
   layer.width = Math.round(obj.getScaledWidth());
   layer.height = Math.round(obj.getScaledHeight());
   layer.opacity = obj.opacity ?? 1;
   layer.visible = obj.visible !== false;
+
+  if (layer.type === "image" || layer.type === "overlay") {
+    const isOverlay = layer.type === "overlay";
+    applyImageFit(
+      obj,
+      layer,
+      isOverlay ? "fill" : layer.properties.fit || "cover",
+      isOverlay ? "center" : layer.properties.position || "center"
+    );
+  } else {
+    applyObjectGeometry(obj, layer);
+  }
+
+  obj.setCoords();
 
   if (layer.type === "text") {
     layer.properties.text = obj.text || "";
@@ -409,6 +589,10 @@ function updateLayerFromObject(obj) {
 
 function renderLayerList() {
   const list = document.getElementById("layerList");
+  if (!state.template) {
+    list.innerHTML = "";
+    return;
+  }
   const layers = [...state.template.layers].sort((a, b) => b.zIndex - a.zIndex);
 
   list.innerHTML = layers
@@ -460,29 +644,33 @@ function selectLayer(id) {
 }
 
 function handleLayerAction(id, action) {
-  const index = state.template.layers.findIndex((l) => l.id === id);
+  const sorted = [...state.template.layers].sort((a, b) => a.zIndex - b.zIndex);
+  const index = sorted.findIndex((l) => l.id === id);
   if (index < 0) return;
+
+  const layer = state.template.layers.find((l) => l.id === id);
+  if (!layer) return;
 
   switch (action) {
     case "toggle":
-      state.template.layers[index].visible = !state.template.layers[index].visible;
+      layer.visible = !layer.visible;
       syncCanvasFromTemplate();
       break;
     case "lock":
-      state.template.layers[index].locked = !state.template.layers[index].locked;
+      layer.locked = !layer.locked;
       syncCanvasFromTemplate();
       break;
     case "up":
-      moveLayer(index, 1);
+      moveLayer(id, 1);
       break;
     case "down":
-      moveLayer(index, -1);
+      moveLayer(id, -1);
       break;
     case "dup":
-      duplicateLayer(index);
+      duplicateLayer(layer);
       break;
     case "delete":
-      state.template.layers.splice(index, 1);
+      state.template.layers = state.template.layers.filter((l) => l.id !== id);
       if (state.selectedLayerId === id) state.selectedLayerId = null;
       syncCanvasFromTemplate();
       renderLayerList();
@@ -491,22 +679,43 @@ function handleLayerAction(id, action) {
   }
 }
 
-function moveLayer(index, direction) {
+function moveLayer(id, direction) {
+  const layer = state.template.layers.find((l) => l.id === id);
+  if (!layer) return;
+
   const sorted = [...state.template.layers].sort((a, b) => a.zIndex - b.zIndex);
-  const current = sorted[index];
+  const index = sorted.findIndex((l) => l.id === id);
   const swapWith = direction > 0 ? sorted[index + 1] : sorted[index - 1];
   if (!swapWith) return;
 
-  const tmp = current.zIndex;
-  current.zIndex = swapWith.zIndex;
+  // Swap z-index values in the data model.
+  const tmp = layer.zIndex;
+  layer.zIndex = swapWith.zIndex;
   swapWith.zIndex = tmp;
 
-  syncCanvasFromTemplate();
+  // Apply the same order on the Fabric canvas using moveTo for every visible layer.
+  reorderCanvasObjects();
+
   renderLayerList();
+  renderProperties();
 }
 
-function duplicateLayer(index) {
-  const original = state.template.layers[index];
+function reorderCanvasObjects() {
+  if (!state.canvas || !state.template) return;
+  const visibleSorted = [...state.template.layers]
+    .filter((l) => l.visible)
+    .sort((a, b) => a.zIndex - b.zIndex);
+  const objects = state.canvas.getObjects();
+  visibleSorted.forEach((layer, targetIndex) => {
+    const obj = objects.find((o) => o.layerId === layer.id);
+    if (obj) {
+      state.canvas.moveTo(obj, targetIndex);
+    }
+  });
+  state.canvas.renderAll();
+}
+
+function duplicateLayer(original) {
   const copy = JSON.parse(JSON.stringify(original));
   copy.id = randomId("layer");
   copy.name = `${original.name} (cópia)`;
@@ -528,6 +737,10 @@ function addLayer(type) {
 
 function renderProperties() {
   const container = document.getElementById("properties");
+  if (!state.template) {
+    container.innerHTML = "<p>Selecione ou crie um template.</p>";
+    return;
+  }
   const layer = state.template.layers.find((l) => l.id === state.selectedLayerId);
 
   if (!layer) {
@@ -677,7 +890,7 @@ function attachPropertyListeners(layer) {
   const getNum = (id) => Number(getVal(id));
   const getBool = (id) => document.getElementById(id)?.checked;
 
-  const update = () => {
+  const update = async () => {
     layer.name = getVal("prop-name") || layer.name;
     layer.x = getNum("prop-x");
     layer.y = getNum("prop-y");
@@ -728,7 +941,7 @@ function attachPropertyListeners(layer) {
         break;
     }
 
-    syncObjectFromLayer(layer);
+    await syncObjectFromLayer(layer);
     state.canvas.renderAll();
     renderLayerList();
   };
@@ -741,36 +954,83 @@ function attachPropertyListeners(layer) {
   });
 }
 
-function syncObjectFromLayer(layer) {
-  const obj = state.canvas.getObjects().find((o) => o.layerId === layer.id);
+function needsRecreate(layer, obj) {
+  if (!obj) return true;
+  if (layer.type === "background" || layer.type === "image" || layer.type === "overlay") {
+    if (obj.layerAssetId !== layer.properties.assetId) return true;
+  }
+  if (layer.type === "image") {
+    if (obj.layerFit !== layer.properties.fit) return true;
+    if (obj.layerPosition !== layer.properties.position) return true;
+  }
+  if (layer.type === "shape" && obj.layerShapeType !== layer.properties.shapeType) return true;
+  return false;
+}
+
+async function syncObjectFromLayer(layer) {
+  let obj = state.canvas.getObjects().find((o) => o.layerId === layer.id);
   if (!obj) {
-    syncCanvasFromTemplate();
+    await syncCanvasFromTemplate();
     return;
   }
 
   state.isSyncing = true;
 
-  obj.set({
-    left: layer.x,
-    top: layer.y,
-    width: layer.width,
-    height: layer.height,
-    angle: layer.rotation,
-    opacity: layer.opacity,
-    visible: layer.visible,
-  });
+  if (needsRecreate(layer, obj)) {
+    const oldIndex = state.canvas.getObjects().indexOf(obj);
+    state.canvas.remove(obj);
+    const newObj = await createFabricObject(layer);
+    if (!newObj) {
+      state.isSyncing = false;
+      state.canvas.renderAll();
+      renderLayerList();
+      return;
+    }
+    applyLockedState(newObj, layer.locked);
+    newObj.set("layerId", layer.id);
+    state.canvas.add(newObj);
+    state.canvas.moveTo(newObj, oldIndex);
+    state.canvas.setActiveObject(newObj);
+    obj = newObj;
+  }
+
+  if (layer.type === "image" || layer.type === "overlay") {
+    const isOverlay = layer.type === "overlay";
+    applyImageFit(
+      obj,
+      layer,
+      isOverlay ? "fill" : layer.properties.fit || "cover",
+      isOverlay ? "center" : layer.properties.position || "center"
+    );
+    obj.set({
+      angle: layer.rotation,
+      opacity: layer.opacity,
+      visible: layer.visible,
+    });
+  } else {
+    obj.set({
+      left: layer.x,
+      top: layer.y,
+      angle: layer.rotation,
+      opacity: layer.opacity,
+      visible: layer.visible,
+    });
+    applyObjectGeometry(obj, layer);
+  }
   applyLockedState(obj, layer.locked);
 
   if (layer.type === "text") {
+    const renderFont = await loadFontForPreview(layer.properties.fontFamily);
     obj.set({
       text: layer.properties.text || "",
-      fontFamily: layer.properties.fontFamily || "Arial",
+      fontFamily: renderFont,
       fontSize: layer.properties.fontSize || 16,
       fontWeight: layer.properties.fontWeight || 400,
       fill: layer.properties.fill || "#000000",
       textAlign: layer.properties.align || "left",
       lineHeight: layer.properties.lineHeight || 1.2,
     });
+    obj.layerFontFamily = layer.properties.fontFamily;
   }
 
   if (layer.type === "shape") {
@@ -785,13 +1045,25 @@ function syncObjectFromLayer(layer) {
     }
   }
 
+  if (layer.type === "overlay") {
+    const blendMap = { normal: "source-over", multiply: "multiply", screen: "screen", overlay: "overlay" };
+    obj.set("globalCompositeOperation", blendMap[layer.properties.blendMode] || "source-over");
+  }
+
+  reorderCanvasObjects();
+
   obj.setCoords();
   state.canvas.renderAll();
   state.isSyncing = false;
+  renderLayerList();
 }
 
 function renderVariables() {
   const container = document.getElementById("variables");
+  if (!state.template) {
+    container.innerHTML = "";
+    return;
+  }
   const vars = state.template.variables || [];
 
   if (vars.length === 0) {
@@ -845,14 +1117,24 @@ async function renderPng() {
   if (!state.template) return;
   const values = collectVariables();
 
-  const res = await fetch(`/api/render/${state.template.id}`, {
+  // Default: render the current unsaved template JSON in memory.
+  let res = await fetch("/api/render", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(values),
+    body: JSON.stringify({ template: state.template, values }),
   });
 
+  // Fallback to the saved-template render route only if the in-memory route fails.
+  if (!res.ok && state.template.id) {
+    res = await fetch(`/api/render/${state.template.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(values),
+    });
+  }
+
   if (!res.ok) {
-    const data = await res.json();
+    const data = await res.json().catch(() => ({ error: "Erro desconhecido." }));
     alert(`Erro ao renderizar: ${data.error}`);
     return;
   }

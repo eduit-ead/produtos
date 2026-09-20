@@ -91,34 +91,51 @@ function computeCompositePosition(layer, rotatedWidth, rotatedHeight) {
 }
 
 function wrapText(text, maxChars) {
-  const words = String(text).split(/\s+/).filter(Boolean);
+  const paragraphs = String(text).split("\n");
   const lines = [];
-  let current = "";
 
-  for (const word of words) {
-    const candidate = current ? `${current} ${word}` : word;
-    if (candidate.length <= maxChars) {
-      current = candidate;
-    } else {
-      if (current) lines.push(current);
-      current = word.length > maxChars ? word.slice(0, maxChars) : word;
+  for (const paragraph of paragraphs) {
+    const words = paragraph.split(/\s+/).filter(Boolean);
+    let current = "";
+
+    for (const word of words) {
+      const candidate = current ? `${current} ${word}` : word;
+      if (candidate.length <= maxChars) {
+        current = candidate;
+        continue;
+      }
+
+      if (current) {
+        lines.push(current);
+        current = "";
+      }
+
+      if (word.length <= maxChars) {
+        current = word;
+      } else {
+        for (let i = 0; i < word.length; i += maxChars) {
+          const chunk = word.slice(i, i + maxChars);
+          if (i + maxChars < word.length) {
+            lines.push(chunk);
+          } else {
+            current = chunk;
+          }
+        }
+      }
     }
+
+    if (current) lines.push(current);
   }
 
-  if (current) lines.push(current);
   return lines;
 }
 
-function fitText(text, fontSize, maxWidth, maxHeight, lineHeight, maxLines) {
+function fitText(text, fontSize, maxWidth, maxHeight, lineHeight, maxLines, options = {}) {
   const maxChars = Math.max(1, Math.floor(maxWidth / (fontSize * CHAR_WIDTH_RATIO)));
-  const rawLines = wrapText(text, maxChars);
-  const lines = rawLines.slice(0, maxLines);
+  const lines = wrapText(text, maxChars);
 
-  if (rawLines.length > maxLines) {
-    const last = lines[lines.length - 1] || "";
-    if (last.length > 3) {
-      lines[lines.length - 1] = last.slice(0, -3) + "…";
-    }
+  if (options.truncate && maxLines > 0 && lines.length > maxLines) {
+    return lines.slice(0, maxLines);
   }
 
   return lines;
@@ -149,6 +166,21 @@ function mapPosition(position) {
     "bottom-right": "southeast",
   };
   return map[position] || "centre";
+}
+
+function mapPositionFactors(position) {
+  const map = {
+    center: { x: 0.5, y: 0.5 },
+    left: { x: 0, y: 0.5 },
+    right: { x: 1, y: 0.5 },
+    top: { x: 0.5, y: 0 },
+    bottom: { x: 0.5, y: 1 },
+    "top-left": { x: 0, y: 0 },
+    "top-right": { x: 1, y: 0 },
+    "bottom-left": { x: 0, y: 1 },
+    "bottom-right": { x: 1, y: 1 },
+  };
+  return map[position] || { x: 0.5, y: 0.5 };
 }
 
 function mapBlend(blendMode) {
@@ -182,6 +214,7 @@ module.exports = {
   fitText,
   mapFit,
   mapPosition,
+  mapPositionFactors,
   mapBlend,
   ASSETS_DIR,
 };
