@@ -13,6 +13,8 @@ const { loadAllCourses, loadCourseBySlug } = require("./read-courses");
 const { generateImage } = require("./generate-ai-background");
 const { renderCourseCard, prepareBackgroundBuffer } = require("./render-card");
 const { getImageBuffer } = require("./image-cache");
+const { courseFiles } = require("./batch/naming");
+const { readMetadata, writeMetadata } = require("./batch/metadata");
 
 const ROOT = path.resolve(__dirname, "..");
 const DEFAULT_CATALOG_DIR = path.join(ROOT, "output", "ai-catalog");
@@ -35,16 +37,14 @@ function courseDir(slug) {
   return dir;
 }
 
-function fundoIaPath(slug) {
-  return path.join(courseDir(slug), `${slug}-fundo-ia.png`);
+function fundoPath(slug) {
+  const files = courseFiles(slug);
+  return path.join(courseDir(slug), files.fundo);
 }
 
-function cardIaPath(slug) {
-  return path.join(courseDir(slug), `${slug}-card-ia.png`);
-}
-
-function fundoUploadPath(slug) {
-  return path.join(courseDir(slug), `${slug}-fundo-upload.png`);
+function cardPath(slug) {
+  const files = courseFiles(slug);
+  return path.join(courseDir(slug), files.card);
 }
 
 function currentCardPath(slug) {
@@ -122,10 +122,9 @@ function resolveStatus(manifestEntry, slug) {
   if (manifestEntry?.status === "rejeitado") return "rejeitado";
   if (manifestEntry?.status === "erro") return "erro";
   if (manifestEntry?.status === "gerando") return "gerando";
-  const hasUpload = fs.existsSync(fundoUploadPath(slug));
-  const hasBg = fs.existsSync(fundoIaPath(slug));
-  const hasCard = fs.existsSync(cardIaPath(slug));
-  if (hasCard || hasUpload || hasBg) return "gerado";
+  const hasBg = fs.existsSync(fundoPath(slug));
+  const hasCard = fs.existsSync(cardPath(slug));
+  if (hasCard || hasBg) return "gerado";
   return "pendente";
 }
 
@@ -180,8 +179,8 @@ async function listCourses() {
       status,
       current_card_url: fileUrl(currentCardPath(slug)),
       current_background_url: course.image_url || null,
-      ai_background_url: catalogFileUrl(slug, `${slug}-fundo-ia.png`),
-      ai_card_url: catalogFileUrl(slug, `${slug}-card-ia.png`),
+      ai_background_url: catalogFileUrl(slug, `${slug}-fundo.png`),
+      ai_card_url: catalogFileUrl(slug, `${slug}-card.png`),
       updated_at: entry?.updatedAt || null,
     };
   });
@@ -210,9 +209,8 @@ async function getCourseDetail(slug) {
     status,
     current_card_url: fileUrl(currentCardPath(validSlug)),
     current_background_url: course.image_url || null,
-    ai_background_url: catalogFileUrl(validSlug, `${validSlug}-fundo-ia.png`),
-    ai_upload_url: catalogFileUrl(validSlug, `${validSlug}-fundo-upload.png`),
-    ai_card_url: catalogFileUrl(validSlug, `${validSlug}-card-ia.png`),
+    ai_background_url: catalogFileUrl(validSlug, `${validSlug}-fundo.png`),
+    ai_card_url: catalogFileUrl(validSlug, `${validSlug}-card.png`),
     manifest: entry || null,
   };
 }
@@ -251,7 +249,7 @@ async function generateAIBackground(slug, { dryRun = false, prompt = null } = {}
   saveManifest(manifest);
 
   const outputDir = courseDir(validSlug);
-  const outputPath = fundoIaPath(validSlug);
+  const outputPath = fundoPath(validSlug);
 
   try {
     if (dryRun) {
@@ -325,7 +323,7 @@ async function uploadBackground(slug, buffer, ext) {
     .png()
     .toBuffer();
 
-  const outputPath = fundoUploadPath(validSlug);
+  const outputPath = fundoPath(validSlug);
   fs.writeFileSync(outputPath, normalizedBuffer);
 
   const manifest = loadManifest();
@@ -354,19 +352,13 @@ async function resolveBackgroundBuffer(slug, manifestEntry, course) {
     }
   }
 
-  // 2. Upload tem precedência sobre geração IA.
-  const uploadPath = fundoUploadPath(slug);
-  if (fs.existsSync(uploadPath)) {
-    return fs.readFileSync(uploadPath);
+  // 2. Fundo gerado ou enviado (nome determinístico único).
+  const bgPath = fundoPath(slug);
+  if (fs.existsSync(bgPath)) {
+    return fs.readFileSync(bgPath);
   }
 
-  // 3. Fundo gerado por IA.
-  const aiPath = fundoIaPath(slug);
-  if (fs.existsSync(aiPath)) {
-    return fs.readFileSync(aiPath);
-  }
-
-  // 4. Imagem original da planilha (nunca output/final ou output/whatsapp).
+  // 3. Imagem original da planilha (nunca output/final ou output/whatsapp).
   if (course?.image_url) {
     return getImageBuffer(course.image_url);
   }
@@ -393,22 +385,22 @@ async function renderCourse(slug) {
     duracao: course.duracao,
   });
 
-  const cardPath = cardIaPath(validSlug);
-  fs.writeFileSync(cardPath, cardBuffer);
+  const cardFile = cardPath(validSlug);
+  fs.writeFileSync(cardFile, cardBuffer);
 
   const nextStatus = resolveStatus(entry, validSlug) === "aprovado" ? "aprovado" : "gerado";
   setManifestEntry(manifest, validSlug, {
     course_id: course.course_id,
     curso: course.curso,
     status: nextStatus,
-    cardPath: path.relative(CATALOG_DIR, cardPath),
+    cardPath: path.relative(CATALOG_DIR, cardFile),
     cardSize: cardBuffer.length,
     renderedAt: new Date().toISOString(),
     error: null,
   });
   saveManifest(manifest);
 
-  return { cardPath, size: cardBuffer.length };
+  return { cardPath: cardFile, size: cardBuffer.length };
 }
 
 async function setCourseStatus(slug, newStatus) {
@@ -418,7 +410,7 @@ async function setCourseStatus(slug, newStatus) {
     throw new Error("Curso não encontrado.");
   }
 
-  if (newStatus === "aprovado" && !fs.existsSync(cardIaPath(validSlug))) {
+  if (newStatus === "aprovado" && !fs.existsSync(cardPath(validSlug))) {
     throw new Error("Não é possível aprovar sem card renderizado.");
   }
 
@@ -438,12 +430,105 @@ async function setCourseStatus(slug, newStatus) {
   return getManifestEntry(manifest, validSlug);
 }
 
+function recalcJobStats(job) {
+  const stats = {
+    total: job.courses.length,
+    completed: 0,
+    errors: 0,
+    approved: 0,
+    rejected: 0,
+    calls: 0,
+    cost_usd: 0,
+  };
+  for (const item of job.courses) {
+    if (["pronto_revisao", "aprovado", "rejeitado"].includes(item.status)) stats.completed++;
+    if (item.status === "erro") stats.errors++;
+    if (item.status === "aprovado") stats.approved++;
+    if (item.status === "rejeitado") stats.rejected++;
+    stats.calls += item.calls || 0;
+    stats.cost_usd += item.cost_usd || 0;
+  }
+  job.stats = stats;
+}
+
+const jobWriteLocks = new Map();
+
+function withJobWriteLock(jobId, fn) {
+  const current = jobWriteLocks.get(jobId) || Promise.resolve();
+  const next = current.then(
+    () => fn(),
+    () => fn()
+  );
+  jobWriteLocks.set(jobId, next);
+  next.finally(() => {
+    if (jobWriteLocks.get(jobId) === next) {
+      jobWriteLocks.delete(jobId);
+    }
+  });
+  return next;
+}
+
+async function syncJobItemStatus(slug, newStatus) {
+  const jobsDir = path.join(CATALOG_DIR, "jobs");
+  if (!fs.existsSync(jobsDir)) return;
+  const files = fs.readdirSync(jobsDir).filter((f) => f.endsWith(".json"));
+  for (const file of files) {
+    const filePath = path.join(jobsDir, file);
+    try {
+      const job = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      if (!job.id || !Array.isArray(job.courses)) continue;
+      const needsUpdate = job.courses.some(
+        (item) => item.slug === slug && ["pronto_revisao", "gerando_whatsapp", "fundo_gerado", "renderizando_card"].includes(item.status)
+      );
+      if (!needsUpdate) continue;
+
+      await withJobWriteLock(job.id, () => {
+        const fresh = JSON.parse(fs.readFileSync(filePath, "utf8"));
+        let changed = false;
+        for (const item of fresh.courses) {
+          if (item.slug === slug && ["pronto_revisao", "gerando_whatsapp", "fundo_gerado", "renderizando_card"].includes(item.status)) {
+            item.status = newStatus;
+            changed = true;
+          }
+        }
+        if (changed) {
+          recalcJobStats(fresh);
+          const tmp = path.join(jobsDir, `.tmp-${crypto.randomBytes(8).toString("hex")}.json`);
+          fs.writeFileSync(tmp, JSON.stringify(fresh, null, 2), "utf8");
+          fs.renameSync(tmp, filePath);
+        }
+      });
+    } catch {
+      // ignora jobs corrompidos
+    }
+  }
+}
+
+function syncMetadataStatus(slug, newStatus) {
+  const metadata = readMetadata(CATALOG_DIR, slug);
+  if (metadata) {
+    metadata.status = newStatus;
+    metadata.timestamps = metadata.timestamps || {};
+    metadata.timestamps.approved_at = metadata.timestamps.approved_at || new Date().toISOString();
+    metadata.timestamps.rejected_at = metadata.timestamps.rejected_at || new Date().toISOString();
+    if (newStatus === "aprovado") metadata.timestamps.approved_at = new Date().toISOString();
+    if (newStatus === "rejeitado") metadata.timestamps.rejected_at = new Date().toISOString();
+    writeMetadata(CATALOG_DIR, slug, metadata);
+  }
+}
+
 async function approveCourse(slug) {
-  return setCourseStatus(slug, "aprovado");
+  const record = await setCourseStatus(slug, "aprovado");
+  syncJobItemStatus(slug, "aprovado");
+  syncMetadataStatus(slug, "aprovado");
+  return record;
 }
 
 async function rejectCourse(slug) {
-  return setCourseStatus(slug, "rejeitado");
+  const record = await setCourseStatus(slug, "rejeitado");
+  syncJobItemStatus(slug, "rejeitado");
+  syncMetadataStatus(slug, "rejeitado");
+  return record;
 }
 
 module.exports = {

@@ -199,7 +199,7 @@ function renderDetail() {
 
   showImage("currentBgImg", c.current_background_url);
   showImage("currentCardImg", c.current_card_url);
-  showImage("aiBgImg", c.ai_background_url || c.ai_upload_url);
+  showImage("aiBgImg", c.ai_background_url);
   showImage("aiCardImg", c.ai_card_url);
 }
 

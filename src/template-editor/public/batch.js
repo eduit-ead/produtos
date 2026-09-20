@@ -9,6 +9,8 @@ const state = {
   filters: { query: "", modalidade: "", formacao: "", status: "" },
   currentJobId: null,
   pollInterval: null,
+  loading: false,
+  error: null,
 };
 
 function byId(id) {
@@ -17,11 +19,20 @@ function byId(id) {
 
 async function apiJson(url, options = {}) {
   const res = await fetch(url, options);
+  const text = await res.text().catch(() => "Erro desconhecido");
   if (!res.ok) {
-    const text = await res.text().catch(() => "Erro desconhecido");
-    throw new Error(`${res.status}: ${text}`);
+    let message = text;
+    try {
+      const parsed = JSON.parse(text);
+      message = parsed.error || JSON.stringify(parsed);
+    } catch {}
+    throw new Error(`${res.status}: ${message}`);
   }
-  return res.json();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { raw: text };
+  }
 }
 
 function setStatus(type, message) {
@@ -53,6 +64,13 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+function initials(text) {
+  if (!text) return "?";
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return (words[0][0] + words[1][0]).toUpperCase();
+}
+
 function matchesFilters(course) {
   const q = state.filters.query.trim().toLowerCase();
   const matchesQuery = !q || course.curso.toLowerCase().includes(q) || course.slug.toLowerCase().includes(q);
@@ -69,84 +87,171 @@ function filteredCourses() {
 function populateFilters() {
   const modalidades = new Set(state.courses.map((c) => c.modalidade).filter(Boolean));
   const formacoes = new Set(state.courses.map((c) => c.formacao).filter(Boolean));
+  const statuses = new Set(state.courses.map((c) => c.status).filter(Boolean));
 
-  byId("filterModalidade").innerHTML = `<option value="">Todas as modalidades</option>` +
-    [...modalidades].sort().map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join("");
+  function fillSelect(id, label, values) {
+    const el = byId(id);
+    const current = el.value;
+    el.innerHTML = `<option value="">${label}</option>` +
+      [...values].sort().map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join("");
+    el.value = current && [...values].includes(current) ? current : "";
+  }
 
-  byId("filterFormacao").innerHTML = `<option value="">Todas as formações</option>` +
-    [...formacoes].sort().map((f) => `<option value="${escapeHtml(f)}">${escapeHtml(f)}</option>`).join("");
+  fillSelect("filterModalidade", "Todas as modalidades", modalidades);
+  fillSelect("filterFormacao", "Todas as formações", formacoes);
+  fillSelect("filterStatus", "Todos os status", statuses);
+}
+
+function renderSkeletonGrid(count = 20) {
+  const grid = byId("courseGrid");
+  grid.innerHTML = "";
+  for (let i = 0; i < count; i++) {
+    const card = document.createElement("div");
+    card.className = "skeleton-card";
+    card.innerHTML = `
+      <div class="skeleton-thumb"></div>
+      <div class="skeleton-lines">
+        <div class="skeleton-line"></div>
+        <div class="skeleton-line short"></div>
+      </div>
+    `;
+    grid.appendChild(card);
+  }
+}
+
+function renderGridError(message) {
+  const grid = byId("courseGrid");
+  grid.innerHTML = "";
+  const msg = byId("gridMessage");
+  msg.className = "grid-message error";
+  msg.innerHTML = `
+    <p>${escapeHtml(message)}</p>
+    <button id="btnRetryLoad" class="secondary" style="margin-top:12px">Tentar novamente</button>
+  `;
+  msg.classList.remove("hidden");
+  byId("btnRetryLoad").addEventListener("click", loadCatalog);
+}
+
+function hideGridMessage() {
+  const msg = byId("gridMessage");
+  msg.className = "grid-message hidden";
+  msg.innerHTML = "";
+}
+
+function thumbnailUrl(course) {
+  // Prefer current card; fallback to current background if card file is missing.
+  return course.current_card_url || course.current_background_url || null;
 }
 
 function renderCatalog() {
   const grid = byId("courseGrid");
   grid.innerHTML = "";
+  hideGridMessage();
+
+  if (state.loading) {
+    renderSkeletonGrid(20);
+    return;
+  }
+
+  if (state.error) {
+    renderGridError(state.error);
+    return;
+  }
+
   const list = filteredCourses();
   byId("summaryFiltered").textContent = list.length;
 
   if (list.length === 0) {
-    grid.innerHTML = "<p class='empty-msg'>Nenhum curso encontrado.</p>";
+    grid.innerHTML = "<p class='grid-message'>Nenhum curso encontrado.</p>";
     return;
   }
 
   for (const c of list) {
     const card = document.createElement("div");
-    card.className = "course-card";
+    card.className = "course-card" + (state.selected.has(c.slug) ? " selected" : "");
+    card.dataset.slug = c.slug;
 
     const selectWrap = document.createElement("div");
     selectWrap.className = "select-wrap";
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.checked = state.selected.has(c.slug);
-    checkbox.addEventListener("change", () => toggleSelection(c.slug, checkbox.checked));
+    checkbox.addEventListener("click", (e) => e.stopPropagation());
+    checkbox.addEventListener("change", (e) => toggleSelection(c.slug, e.target.checked));
     selectWrap.appendChild(checkbox);
 
     const thumb = document.createElement("div");
     thumb.className = "thumb";
-    if (c.current_card_url) {
+    const url = thumbnailUrl(c);
+    if (url) {
       const img = document.createElement("img");
-      img.src = c.current_card_url;
+      img.src = url;
       img.alt = c.curso;
+      img.loading = "lazy";
+      img.addEventListener("error", () => {
+        thumb.innerHTML = "";
+        thumb.appendChild(placeholderThumb(c.curso));
+      });
       thumb.appendChild(img);
     } else {
-      thumb.innerHTML = "<span class='placeholder'>Sem imagem</span>";
+      thumb.appendChild(placeholderThumb(c.curso));
     }
 
-    const info = document.createElement("div");
-    info.className = "info";
-    info.innerHTML = `
-      <h3>${escapeHtml(c.curso)}</h3>
-      <div class="meta">${escapeHtml(c.modalidade)} · ${escapeHtml(c.formacao)} · ${escapeHtml(c.duracao)}</div>
-      <span class="status status-${c.status}">${formatStatus(c.status)}</span>
-    `;
+    const overlay = document.createElement("div");
+    overlay.className = "card-overlay";
+    const hasImage = !!url;
+    if (hasImage) {
+      overlay.innerHTML = `<span class="status status-${c.status}">${formatStatus(c.status)}</span>`;
+    } else {
+      overlay.innerHTML = `
+        <h3>${escapeHtml(c.curso)}</h3>
+        <div class="meta">${escapeHtml(c.modalidade)} · ${escapeHtml(c.formacao)} · ${escapeHtml(c.duracao)}</div>
+        <span class="status status-${c.status}">${formatStatus(c.status)}</span>
+      `;
+    }
 
     card.appendChild(selectWrap);
     card.appendChild(thumb);
-    card.appendChild(info);
+    card.appendChild(overlay);
+    card.addEventListener("click", () => {
+      const checked = !state.selected.has(c.slug);
+      toggleSelection(c.slug, checked);
+      checkbox.checked = checked;
+    });
+
     grid.appendChild(card);
   }
+}
+
+function placeholderThumb(name) {
+  const div = document.createElement("div");
+  div.className = "placeholder";
+  div.innerHTML = `<div class="initial">${escapeHtml(initials(name))}</div>`;
+  return div;
 }
 
 function updateSummary() {
   byId("summaryTotal").textContent = state.courses.length;
   byId("summarySelected").textContent = state.selected.size;
-}
-
-function toggleSelection(slug, checked) {
-  if (checked) state.selected.add(slug);
-  else state.selected.delete(slug);
-  updateSummary();
   updateSelectionSummary();
 }
 
 function updateSelectionSummary() {
+  const count = state.selected.size;
   const selectedCourses = state.courses.filter((c) => state.selected.has(c.slug));
-  const el = byId("selectionSummary");
-  if (selectedCourses.length === 0) {
-    el.textContent = "Nenhum curso selecionado";
-    byId("btnCreateBatch").disabled = true;
+  const text = count === 0 ? "Nenhum curso selecionado" : `${count} curso(s) selecionado(s)`;
+
+  byId("summarySelected").textContent = count;
+  byId("selectionSummary").textContent = text;
+  byId("btnCreateBatch").disabled = count === 0;
+
+  const bar = byId("selectionBar");
+  const barText = byId("selectionBarText");
+  if (count === 0) {
+    bar.classList.add("hidden");
   } else {
-    el.textContent = `${selectedCourses.length} curso(s) selecionado(s)`;
-    byId("btnCreateBatch").disabled = false;
+    bar.classList.remove("hidden");
+    barText.textContent = `${count} selecionado(s)`;
   }
   updateEstimate();
 }
@@ -155,22 +260,26 @@ function updateEstimate() {
   const selectedCount = state.selected.size;
   const dryRun = byId("dryRun").checked;
   const calls = dryRun ? 0 : selectedCount;
-  // Custo aproximado por chamada: ~0.03 USD para 1024x1024 (ajustar conforme pricing real).
   const costPerCall = 0.03;
   const cost = dryRun ? 0 : selectedCount * costPerCall;
   byId("estimate").textContent = `Estimativa: ${calls} chamada(s) · USD ${cost.toFixed(2)}`;
 }
 
 async function loadCatalog() {
-  setStatus("loading", "Carregando catálogo...");
+  state.loading = true;
+  state.error = null;
+  renderCatalog();
   try {
     state.courses = await apiJson("/api/courses");
+    state.loading = false;
     populateFilters();
     renderCatalog();
     updateSummary();
-    setStatus("ready", `${state.courses.length} cursos carregados`);
   } catch (err) {
-    setStatus("error", `Erro: ${err.message}`);
+    state.loading = false;
+    state.error = err.message;
+    renderCatalog();
+    updateSummary();
   }
 }
 
@@ -180,7 +289,7 @@ async function loadBatches() {
     const list = byId("batchList");
     list.innerHTML = "";
     if (batches.length === 0) {
-      list.innerHTML = "<p class='empty-msg'>Nenhum lote criado.</p>";
+      list.innerHTML = "<p class='grid-message'>Nenhum lote criado.</p>";
       return;
     }
     for (const b of batches.slice().reverse()) {
@@ -189,7 +298,7 @@ async function loadBatches() {
       row.innerHTML = `
         <div class="batch-id">${escapeHtml(b.id)}</div>
         <div class="batch-meta">
-          ${escapeHtml(b.status)} · ${b.courses?.length || 0} cursos
+          ${escapeHtml(formatStatus(b.status))} · ${b.courses?.length || 0} cursos
           ${b.dryRun ? "· dry-run" : ""}
         </div>
       `;
@@ -197,8 +306,15 @@ async function loadBatches() {
       list.appendChild(row);
     }
   } catch (err) {
-    setStatus("error", `Erro ao listar lotes: ${err.message}`);
+    byId("batchList").innerHTML = `<p class='grid-message error'>Erro ao listar lotes: ${escapeHtml(err.message)}</p>`;
   }
+}
+
+function toggleSelection(slug, checked) {
+  if (checked) state.selected.add(slug);
+  else state.selected.delete(slug);
+  renderCatalog();
+  updateSelectionSummary();
 }
 
 async function createBatch() {
@@ -231,7 +347,6 @@ async function createBatch() {
     });
     state.selected.clear();
     updateSummary();
-    updateSelectionSummary();
     renderCatalog();
     await loadBatches();
     openBatch(result.job.id);
@@ -244,16 +359,14 @@ function showCatalog() {
   stopPolling();
   state.currentJobId = null;
   byId("batchStage").classList.add("hidden");
-  byId("catalogStage").classList.remove("hidden");
-  byId("configStage").classList.remove("hidden");
+  byId("batchPage").classList.remove("hidden");
   loadCatalog();
   loadBatches();
 }
 
 function openBatch(jobId) {
   state.currentJobId = jobId;
-  byId("catalogStage").classList.add("hidden");
-  byId("configStage").classList.add("hidden");
+  byId("batchPage").classList.add("hidden");
   byId("batchStage").classList.remove("hidden");
   byId("batchTitle").textContent = jobId;
   startPolling();
@@ -283,7 +396,7 @@ function stopPolling() {
 }
 
 function renderBatch(job) {
-  byId("batchStatusBadge").textContent = job.status;
+  byId("batchStatusBadge").textContent = formatStatus(job.status);
   byId("batchStatusBadge").className = `status-badge status-${job.status}`;
 
   const stats = job.stats || {};
@@ -301,13 +414,13 @@ function renderBatch(job) {
   byId("statCalls").textContent = stats.calls || 0;
   byId("statCost").textContent = (stats.cost_usd || 0).toFixed(2);
 
-  // Botões
   const running = job.status === "executando";
   const createdOrPaused = job.status === "criado" || job.status === "pausado";
+  const final = ["concluido", "concluido_com_erros", "cancelado", "bloqueado"].includes(job.status);
   byId("btnStart").disabled = !createdOrPaused;
   byId("btnResume").disabled = !createdOrPaused;
   byId("btnPause").disabled = !running;
-  byId("btnCancel").disabled = job.status === "concluido" || job.status === "cancelado" || job.status === "bloqueado";
+  byId("btnCancel").disabled = final;
   byId("btnRetryErrors").disabled = running;
   byId("btnRetryRejected").disabled = running;
 
@@ -323,7 +436,7 @@ function renderItems(job) {
   list.innerHTML = "";
   const courses = job.courses || [];
   if (courses.length === 0) {
-    list.innerHTML = "<p class='empty-msg'>Nenhum item no lote.</p>";
+    list.innerHTML = "<p class='grid-message'>Nenhum item no lote.</p>";
     return;
   }
 
@@ -351,22 +464,23 @@ function renderItems(job) {
     const actions = document.createElement("div");
     actions.className = "item-actions";
 
-    const files = {
-      fundo: `${item.slug}-fundo.png`,
-      card: `${item.slug}-card.png`,
-      whatsapp: `${item.slug}-whatsapp.jpg`,
-    };
+    const hasBackground = ["fundo_gerado", "renderizando_card", "gerando_whatsapp", "pronto_revisao", "aprovado", "rejeitado"].includes(item.status);
+    const hasCard = ["pronto_revisao", "aprovado", "rejeitado", "gerando_whatsapp"].includes(item.status);
 
-    if (["pronto_revisao", "aprovado", "rejeitado", "gerando_whatsapp", "fundo_gerado", "renderizando_card"].includes(item.status)) {
-      actions.appendChild(linkButton("Fundo", catalogFileUrl(item.slug, files.fundo)));
+    if (hasBackground) {
+      actions.appendChild(linkButton("Fundo", catalogFileUrl(item.slug, `${item.slug}-fundo.png`)));
     }
-    if (["pronto_revisao", "aprovado", "rejeitado", "gerando_whatsapp"].includes(item.status)) {
-      actions.appendChild(linkButton("Card", catalogFileUrl(item.slug, files.card)));
-      actions.appendChild(linkButton("WhatsApp", catalogFileUrl(item.slug, files.whatsapp)));
+    if (hasCard) {
+      actions.appendChild(linkButton("Card", catalogFileUrl(item.slug, `${item.slug}-card.png`)));
+      actions.appendChild(linkButton("WhatsApp", catalogFileUrl(item.slug, `${item.slug}-whatsapp.jpg`)));
     }
     if (item.status === "pronto_revisao" || item.status === "gerando_whatsapp") {
       actions.appendChild(actionButton("Aprovar", () => approveItem(item.slug), "success"));
       actions.appendChild(actionButton("Rejeitar", () => rejectItem(item.slug), "danger"));
+    }
+
+    if (actions.children.length === 0) {
+      actions.innerHTML = `<span style="font-size:12px;color:#64748b">Aguardando processamento</span>`;
     }
 
     card.appendChild(actions);
@@ -379,7 +493,7 @@ function linkButton(label, url) {
   a.href = url;
   a.target = "_blank";
   a.textContent = label;
-  a.className = "secondary";
+  a.className = "secondary button-link";
   return a;
 }
 
@@ -423,7 +537,6 @@ async function dryRunSync() {
     const report = result.report;
     const msg = `Dry-run: ${report.summary.wouldChange} alterações, ${report.summary.skipped} ignorados, ${report.summary.notFound} não encontrados.`;
     setStatus(report.summary.wouldChange > 0 ? "loading" : "ready", msg);
-    console.log("dry-run sync", report);
   } catch (err) {
     setStatus("error", `Erro no dry-run: ${err.message}`);
   }
@@ -440,7 +553,6 @@ async function syncSpreadsheet() {
     });
     const report = result.report;
     setStatus("ready", `Sincronizado: ${report.summary.wouldChange} alterações. Backup: ${result.backup || "nenhum"}`);
-    console.log("sync", report);
   } catch (err) {
     setStatus("error", `Erro ao sincronizar: ${err.message}`);
   }
@@ -450,8 +562,7 @@ async function exportSpreadsheet() {
   setStatus("loading", "Exportando planilha...");
   try {
     const result = await apiJson("/api/xlsx/export", { method: "POST" });
-    setStatus("ready", `Exportado para: ${result.outputPath || result.reportPath || "output/ai-catalog/cursos-export.xlsx"}`);
-    console.log("export", result);
+    setStatus("ready", `Exportado para: ${result.outputPath || "output/ai-catalog/cursos-export.xlsx"}`);
   } catch (err) {
     setStatus("error", `Erro ao exportar: ${err.message}`);
   }
@@ -478,13 +589,16 @@ function init() {
   byId("btnSelectAll").addEventListener("click", () => {
     for (const c of filteredCourses()) state.selected.add(c.slug);
     renderCatalog();
-    updateSummary();
     updateSelectionSummary();
   });
   byId("btnClearSelection").addEventListener("click", () => {
     state.selected.clear();
     renderCatalog();
-    updateSummary();
+    updateSelectionSummary();
+  });
+  byId("btnBarClear").addEventListener("click", () => {
+    state.selected.clear();
+    renderCatalog();
     updateSelectionSummary();
   });
 

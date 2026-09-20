@@ -108,14 +108,14 @@ function hashFile(filePath) {
     assert.equal(genRecord.dryRun, true, "deve ser dry-run");
     assert.equal(genRecord.model, "mock", "modelo mock em dry-run");
     assert.equal(genRecord.prompt, customPrompt, "prompt customizado deve ser usado");
-    assert.ok(fs.existsSync(path.join(TEMP_DIR, slug, `${slug}-fundo-ia.png`)), "fundo IA deve existir");
+    assert.ok(fs.existsSync(path.join(TEMP_DIR, slug, `${slug}-fundo.png`)), "fundo IA deve existir");
 
     // 8. Renderizar card com fundo mock.
     const render = await request(port, "POST", `/api/courses/${slug}/render`, "", {});
     assert.equal(render.status, 200, `Render falhou: ${render.body}`);
     const renderResult = assertJson(render);
     assert.ok(renderResult.cardPath, "deve retornar cardPath");
-    assert.ok(fs.existsSync(path.join(TEMP_DIR, slug, `${slug}-card-ia.png`)), "card IA deve existir");
+    assert.ok(fs.existsSync(path.join(TEMP_DIR, slug, `${slug}-card.png`)), "card IA deve existir");
 
     // 9. Aprovar curso com card renderizado.
     const approve = await request(port, "POST", `/api/courses/${slug}/approve`);
@@ -147,7 +147,7 @@ function hashFile(filePath) {
     );
     assert.equal(upload.status, 200, `Upload falhou: ${upload.body}`);
     const uploadResult = assertJson(upload);
-    assert.ok(uploadResult.path.endsWith("-fundo-upload.png"), "upload deve ser salvo como PNG");
+    assert.ok(uploadResult.path.endsWith("-fundo.png"), "upload deve ser salvo com nome determinístico");
 
     // 12. Manifesto criado/atualizado atomicamente.
     assert.ok(fs.existsSync(MANIFEST_FILE), "manifest.json deve existir");

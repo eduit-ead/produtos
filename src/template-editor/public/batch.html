@@ -18,28 +18,36 @@
       </nav>
     </header>
 
-    <main class="studio-workspace">
-      <section id="catalogStage" class="catalog-stage">
-        <div class="summary-bar" id="summaryBar">
-          <div class="summary-item"><span id="summaryTotal">0</span><label>Total</label></div>
-          <div class="summary-item"><span id="summarySelected">0</span><label>Selecionados</label></div>
-          <div class="summary-item"><span id="summaryFiltered">0</span><label>Filtrados</label></div>
+    <main class="batch-page" id="batchPage">
+      <section class="top-bar">
+        <div class="summary-compact">
+          <div class="summary-pill"><span id="summaryTotal">0</span><label>Total</label></div>
+          <div class="summary-pill"><span id="summarySelected">0</span><label>Selecionados</label></div>
+          <div class="summary-pill"><span id="summaryFiltered">0</span><label>Filtrados</label></div>
         </div>
-
-        <div class="catalog-toolbar">
-          <input type="text" id="searchInput" placeholder="Buscar por nome...">
-          <select id="filterModalidade"><option value="">Todas as modalidades</option></select>
-          <select id="filterFormacao"><option value="">Todas as formações</option></select>
-          <select id="filterStatus"><option value="">Todos os status</option></select>
-          <button id="btnSelectAll" class="secondary">Selecionar todos os filtrados</button>
-          <button id="btnClearSelection" class="secondary">Limpar seleção</button>
-        </div>
-
-        <div id="courseGrid" class="course-grid"></div>
       </section>
 
-      <section id="configStage" class="config-stage">
-        <aside class="config-panel">
+      <section class="filters-bar">
+        <input type="text" id="searchInput" placeholder="Buscar por nome...">
+        <select id="filterModalidade"><option value="">Todas as modalidades</option></select>
+        <select id="filterFormacao"><option value="">Todas as formações</option></select>
+        <select id="filterStatus"><option value="">Todos os status</option></select>
+        <button id="btnSelectAll" class="secondary">Selecionar todos os filtrados</button>
+        <button id="btnClearSelection" class="secondary">Limpar seleção</button>
+      </section>
+
+      <div class="batch-layout">
+        <section class="courses-area">
+          <div id="courseGrid" class="course-grid"></div>
+          <div id="gridMessage" class="grid-message hidden"></div>
+
+          <section class="existing-batches">
+            <h2>Lotes existentes</h2>
+            <div id="batchList" class="batch-list"></div>
+          </section>
+        </section>
+
+        <aside class="config-panel" id="configPanel">
           <h2>Novo lote</h2>
           <div id="selectionSummary" class="selection-summary">Nenhum curso selecionado</div>
 
@@ -87,21 +95,23 @@
 
           <button id="btnCreateBatch" class="primary" disabled>Criar lote</button>
         </aside>
+      </div>
+    </main>
 
-        <section class="batch-list-panel">
-          <h2>Lotes existentes</h2>
-          <div id="batchList" class="batch-list"></div>
-        </section>
-      </section>
+    <div id="selectionBar" class="selection-bar hidden">
+      <span id="selectionBarText">0 curso(s) selecionado(s)</span>
+      <button id="btnBarClear" class="secondary">Limpar</button>
+    </div>
 
-      <section id="batchStage" class="batch-stage hidden">
+    <section id="batchStage" class="batch-stage hidden">
+      <div class="batch-stage-inner">
         <aside class="batch-detail-panel">
           <div class="batch-detail-header">
             <button id="btnBackToCatalog" class="secondary">Voltar ao catálogo</button>
             <h2 id="batchTitle">Lote</h2>
           </div>
 
-          <div class="batch-status">
+          <div class="batch-status-row">
             <span id="batchStatusBadge" class="status-badge">-</span>
             <span id="batchProgressText">0 / 0</span>
           </div>
@@ -140,8 +150,8 @@
           <h2>Itens do lote</h2>
           <div id="itemsList" class="items-list"></div>
         </section>
-      </section>
-    </main>
+      </div>
+    </section>
   </div>
 
   <script src="/batch.js"></script>
