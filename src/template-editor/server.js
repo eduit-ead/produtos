@@ -1,0 +1,27 @@
+/**
+ * Servidor local do editor de templates.
+ *
+ * Comando:
+ *   npm run template:editor
+ */
+
+const path = require("path");
+const express = require("express");
+const { createRouter } = require("./api");
+
+const ROOT = path.resolve(__dirname, "..", "..");
+const PUBLIC_DIR = path.join(__dirname, "public");
+const PORT = process.env.PORT || 3000;
+
+const app = express();
+
+app.use("/api", createRouter());
+app.use(express.static(PUBLIC_DIR));
+
+app.get("/", (req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, "index.html"));
+});
+
+app.listen(PORT, () => {
+  console.log(`Editor de templates rodando em http://localhost:${PORT}`);
+});

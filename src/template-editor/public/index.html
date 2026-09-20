@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Compositor de Templates</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div id="app">
+    <header class="toolbar">
+      <h1>Compositor de Templates</h1>
+      <div class="actions">
+        <select id="templateSelect"></select>
+        <button id="btnNew">Novo</button>
+        <button id="btnSave">Salvar</button>
+        <button id="btnRender">Exportar PNG</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="panel" id="layersPanel">
+        <h2>Camadas</h2>
+        <div id="layerList"></div>
+        <div class="panel-actions">
+          <button id="btnAddText">+ Texto</button>
+          <button id="btnAddImage">+ Imagem</button>
+          <button id="btnAddShape">+ Forma</button>
+        </div>
+      </aside>
+
+      <section class="canvas-area">
+        <div id="canvasWrap">
+          <canvas id="editorCanvas"></canvas>
+        </div>
+      </section>
+
+      <aside class="panel" id="propsPanel">
+        <h2>Propriedades</h2>
+        <div id="properties"></div>
+
+        <h2>Variáveis</h2>
+        <div id="variables"></div>
+
+        <h2>Assets</h2>
+        <form id="uploadForm" enctype="multipart/form-data">
+          <input type="file" name="file" accept=".png,.jpg,.jpeg,.svg" required>
+          <button type="submit">Upload</button>
+        </form>
+        <ul id="assetList"></ul>
+      </aside>
+    </main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/fabric@5.3.0/dist/fabric.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

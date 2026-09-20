@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 1,
+  "id": "demo",
+  "name": "Template de demonstração",
+  "canvas": {
+    "width": 1080,
+    "height": 1080,
+    "background": "#0b1120"
+  },
+  "variables": [
+    {
+      "key": "titulo",
+      "label": "Título",
+      "type": "string",
+      "defaultValue": "Título do Curso",
+      "required": true
+    },
+    {
+      "key": "subtitulo",
+      "label": "Subtítulo",
+      "type": "string",
+      "defaultValue": "Bacharelado | 8 semestres",
+      "required": false
+    }
+  ],
+  "assets": [
+    "demo-bg.jpg",
+    "demo-overlay.png"
+  ],
+  "layers": [
+    {
+      "id": "bg-image",
+      "type": "image",
+      "name": "Imagem de fundo",
+      "x": 10,
+      "y": 10,
+      "width": 1080,
+      "height": 1080,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "zIndex": 0,
+      "locked": true,
+      "properties": {
+        "assetId": "demo-bg.jpg",
+        "fit": "cover",
+        "position": "center"
+      }
+    },
+    {
+      "id": "gradient-overlay",
+      "type": "overlay",
+      "name": "Overlay transparente",
+      "x": 0,
+      "y": 0,
+      "width": 1080,
+      "height": 1080,
+      "rotation": 0,
+      "opacity": 0.9,
+      "visible": true,
+      "zIndex": 1,
+      "locked": false,
+      "properties": {
+        "assetId": "demo-overlay.png",
+        "blendMode": "normal"
+      }
+    },
+    {
+      "id": "title",
+      "type": "text",
+      "name": "Título",
+      "x": 80,
+      "y": 700,
+      "width": 700,
+      "height": 180,
+      "rotation": 5,
+      "opacity": 1,
+      "visible": true,
+      "zIndex": 2,
+      "locked": false,
+      "properties": {
+        "text": "{{titulo}}",
+        "fontFamily": "Inter, Arial, sans-serif",
+        "fontSize": 78,
+        "fontWeight": 800,
+        "fill": "#ffffff",
+        "align": "left",
+        "verticalAlign": "top",
+        "lineHeight": 1,
+        "letterSpacing": -1.2,
+        "autoFit": true,
+        "minFontSize": 32,
+        "padding": 0,
+        "maxLines": 2,
+        "overflow": "shrink"
+      }
+    },
+    {
+      "id": "subtitle",
+      "type": "text",
+      "name": "Subtítulo",
+      "x": 80,
+      "y": 880,
+      "width": 700,
+      "height": 60,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "zIndex": 10,
+      "locked": false,
+      "properties": {
+        "text": "{{subtitulo}}",
+        "fontFamily": "Inter, Arial, sans-serif",
+        "fontSize": 34,
+        "fontWeight": 700,
+        "fill": "#6EA0FF",
+        "align": "left",
+        "verticalAlign": "top",
+        "lineHeight": 1.2,
+        "letterSpacing": 0.5,
+        "autoFit": false,
+        "minFontSize": 16,
+        "padding": 0,
+        "maxLines": 1,
+        "overflow": "clip"
+      }
+    }
+  ],
+  "metadata": {
+    "createdAt": "2026-09-20T13:30:00.000Z",
+    "updatedAt": "2026-09-20T16:37:26.703Z"
+  }
+}

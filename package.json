@@ -12,7 +12,9 @@
     "content:demographics:plan": "node src/plan-demographic-rebalance.js",
     "image:pilot": "node src/generate-ai-background.js",
     "image:preview": "node src/generate-ai-preview.js",
-    "image:pilot-batch": "node src/generate-ai-pilot.js"
+    "image:pilot-batch": "node src/generate-ai-pilot.js",
+    "image:catalog": "node src/generate-ai-catalog.js",
+    "template:editor": "node src/template-editor/server.js"
   },
   "keywords": [],
   "author": "",
@@ -21,6 +23,8 @@
   "dependencies": {
     "dotenv": "^18.0.1",
     "exceljs": "^4.4.0",
+    "express": "^4.21.0",
+    "multer": "^1.4.5-lts.1",
     "openai": "^7.20.0",
     "sharp": "^0.35.4",
     "xlsx": "^0.18.5"
