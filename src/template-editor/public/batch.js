@@ -1,12 +1,17 @@
 /**
- * Painel de Produção em Lote.
- * Seleção, criação, acompanhamento e exportação de lotes.
+ * Painel de Produção em Lote genérico.
+ * Suporta múltiplas coleções e templates.
  */
 
 const state = {
+  collections: [],
+  templates: [],
+  collectionId: null,
+  collection: null,
   courses: [],
   selected: new Set(),
-  filters: { query: "", modalidade: "", formacao: "", status: "" },
+  filters: { query: "" },
+  filterDefs: [],
   currentJobId: null,
   pollInterval: null,
   loading: false,
@@ -71,13 +76,28 @@ function initials(text) {
   return (words[0][0] + words[1][0]).toUpperCase();
 }
 
-function matchesFilters(course) {
+function getItemTitle(item) {
+  return item.title || item.curso || item.slug || "Sem título";
+}
+
+function getFilterFields() {
+  if (state.collection?.filters?.length > 0) {
+    return state.collection.filters.map((f) => f.field);
+  }
+  return ["modalidade", "formacao", "conteudo_status"];
+}
+
+function matchesFilters(item) {
   const q = state.filters.query.trim().toLowerCase();
-  const matchesQuery = !q || course.curso.toLowerCase().includes(q) || course.slug.toLowerCase().includes(q);
-  const matchesModalidade = !state.filters.modalidade || course.modalidade === state.filters.modalidade;
-  const matchesFormacao = !state.filters.formacao || course.formacao === state.filters.formacao;
-  const matchesStatus = !state.filters.status || course.status === state.filters.status;
-  return matchesQuery && matchesModalidade && matchesFormacao && matchesStatus;
+  const title = getItemTitle(item);
+  const matchesQuery = !q || title.toLowerCase().includes(q) || item.slug.toLowerCase().includes(q);
+  if (!matchesQuery) return false;
+  for (const field of getFilterFields()) {
+    const value = state.filters[field] || "";
+    if (!value) continue;
+    if ((item[field] || item.fields?.[field] || "") !== value) return false;
+  }
+  return true;
 }
 
 function filteredCourses() {
@@ -85,21 +105,31 @@ function filteredCourses() {
 }
 
 function populateFilters() {
-  const modalidades = new Set(state.courses.map((c) => c.modalidade).filter(Boolean));
-  const formacoes = new Set(state.courses.map((c) => c.formacao).filter(Boolean));
-  const statuses = new Set(state.courses.map((c) => c.status).filter(Boolean));
+  const fields = getFilterFields();
+  const container = byId("filtersBar");
+  if (!container) return;
 
-  function fillSelect(id, label, values) {
-    const el = byId(id);
-    const current = el.value;
-    el.innerHTML = `<option value="">${label}</option>` +
-      [...values].sort().map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join("");
-    el.value = current && [...values].includes(current) ? current : "";
+  // Limpa selects dinâmicos antigos, mantendo busca e botões.
+  const keep = ["searchInput", "btnSelectAll", "btnClearSelection"];
+  for (const child of Array.from(container.children)) {
+    if (!keep.includes(child.id)) child.remove();
   }
 
-  fillSelect("filterModalidade", "Todas as modalidades", modalidades);
-  fillSelect("filterFormacao", "Todas as formações", formacoes);
-  fillSelect("filterStatus", "Todos os status", statuses);
+  for (const field of fields) {
+    const label = state.collection?.filters?.find((f) => f.field === field)?.label || field;
+    const values = new Set(state.courses.map((c) => c[field] || c.fields?.[field]).filter(Boolean));
+    const select = document.createElement("select");
+    select.id = `filter-${field}`;
+    select.innerHTML =
+      `<option value="">Todas(os) ${escapeHtml(label)}</option>` +
+      [...values].sort().map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join("");
+    select.value = state.filters[field] || "";
+    select.addEventListener("change", (e) => {
+      state.filters[field] = e.target.value;
+      renderCatalog();
+    });
+    container.insertBefore(select, byId("btnSelectAll"));
+  }
 }
 
 function renderSkeletonGrid(count = 20) {
@@ -138,9 +168,17 @@ function hideGridMessage() {
   msg.innerHTML = "";
 }
 
-function thumbnailUrl(course) {
-  // Prefer current card; fallback to current background if card file is missing.
-  return course.current_card_url || course.current_background_url || null;
+function thumbnailUrl(item) {
+  return item.current_card_url || item.ai_card_url || item.current_background_url || item.ai_background_url || null;
+}
+
+function metaText(item) {
+  if (item.modalidade || item.formacao || item.duracao) {
+    return [item.modalidade, item.formacao, item.duracao].filter(Boolean).join(" · ");
+  }
+  const fields = state.collection?.filters?.map((f) => item.fields?.[f.field]).filter(Boolean) || [];
+  if (fields.length > 0) return fields.join(" · ");
+  return item.slug;
 }
 
 function renderCatalog() {
@@ -162,7 +200,7 @@ function renderCatalog() {
   byId("summaryFiltered").textContent = list.length;
 
   if (list.length === 0) {
-    grid.innerHTML = "<p class='grid-message'>Nenhum curso encontrado.</p>";
+    grid.innerHTML = "<p class='grid-message'>Nenhum item encontrado.</p>";
     return;
   }
 
@@ -186,29 +224,24 @@ function renderCatalog() {
     if (url) {
       const img = document.createElement("img");
       img.src = url;
-      img.alt = c.curso;
+      img.alt = getItemTitle(c);
       img.loading = "lazy";
       img.addEventListener("error", () => {
         thumb.innerHTML = "";
-        thumb.appendChild(placeholderThumb(c.curso));
+        thumb.appendChild(placeholderThumb(getItemTitle(c)));
       });
       thumb.appendChild(img);
     } else {
-      thumb.appendChild(placeholderThumb(c.curso));
+      thumb.appendChild(placeholderThumb(getItemTitle(c)));
     }
 
     const overlay = document.createElement("div");
     overlay.className = "card-overlay";
-    const hasImage = !!url;
-    if (hasImage) {
-      overlay.innerHTML = `<span class="status status-${c.status}">${formatStatus(c.status)}</span>`;
-    } else {
-      overlay.innerHTML = `
-        <h3>${escapeHtml(c.curso)}</h3>
-        <div class="meta">${escapeHtml(c.modalidade)} · ${escapeHtml(c.formacao)} · ${escapeHtml(c.duracao)}</div>
-        <span class="status status-${c.status}">${formatStatus(c.status)}</span>
-      `;
-    }
+    overlay.innerHTML = `
+      <h3>${escapeHtml(getItemTitle(c))}</h3>
+      <div class="meta">${escapeHtml(metaText(c))}</div>
+      <span class="status status-${c.status}">${formatStatus(c.status)}</span>
+    `;
 
     card.appendChild(selectWrap);
     card.appendChild(thumb);
@@ -238,9 +271,7 @@ function updateSummary() {
 
 function updateSelectionSummary() {
   const count = state.selected.size;
-  const selectedCourses = state.courses.filter((c) => state.selected.has(c.slug));
-  const text = count === 0 ? "Nenhum curso selecionado" : `${count} curso(s) selecionado(s)`;
-
+  const text = count === 0 ? "Nenhum item selecionado" : `${count} item(s) selecionado(s)`;
   byId("summarySelected").textContent = count;
   byId("selectionSummary").textContent = text;
   byId("btnCreateBatch").disabled = count === 0;
@@ -261,9 +292,61 @@ function updateEstimate() {
   const dryRun = byId("dryRun").checked;
   const maxCallsInput = byId("maxCalls").value.trim();
   const costPerCall = 0.03;
-  const calls = dryRun ? 0 : (maxCallsInput ? Math.min(parseInt(maxCallsInput, 10) || 0, selectedCount) : selectedCount);
+  const calls = dryRun
+    ? 0
+    : maxCallsInput
+    ? Math.min(parseInt(maxCallsInput, 10) || 0, selectedCount)
+    : selectedCount;
   const cost = dryRun ? 0 : calls * costPerCall;
-  byId("estimate").textContent = `${selectedCount} curso(s) · até ${calls} chamada(s) · estimativa US$ ${cost.toFixed(2)}`;
+  byId("estimate").textContent = `${selectedCount} item(s) · até ${calls} chamada(s) · estimativa US$ ${cost.toFixed(2)}`;
+}
+
+async function loadCollections() {
+  try {
+    state.collections = await apiJson("/api/collections");
+    const params = new URLSearchParams(window.location.search);
+    const requested = params.get("collection");
+    const found =
+      state.collections.find((c) => c.id === requested) ||
+      state.collections.find((c) => c.id === "graduacao-cruzeiro") ||
+      state.collections[0];
+
+    const select = byId("collectionSelect");
+    select.innerHTML = state.collections
+      .map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`)
+      .join("");
+    select.value = found?.id || "";
+    select.addEventListener("change", () => selectCollection(select.value));
+    await selectCollection(select.value);
+  } catch (err) {
+    state.error = err.message;
+    renderCatalog();
+    updateSummary();
+  }
+}
+
+async function loadTemplates() {
+  try {
+    state.templates = await apiJson("/api/templates");
+    const select = byId("templateSelect");
+    select.innerHTML = state.templates
+      .map((t) => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name || t.id)}</option>`)
+      .join("");
+    select.addEventListener("change", updateEstimate);
+  } catch (err) {
+    console.error("Erro ao carregar templates:", err);
+  }
+}
+
+async function selectCollection(id) {
+  state.collectionId = id;
+  state.collection = state.collections.find((c) => c.id === id) || null;
+  if (state.collection?.defaultTemplateId) {
+    byId("templateSelect").value = state.collection.defaultTemplateId;
+  }
+  state.filters = { query: "" };
+  state.selected.clear();
+  await loadCatalog();
 }
 
 async function loadCatalog() {
@@ -271,7 +354,7 @@ async function loadCatalog() {
   state.error = null;
   renderCatalog();
   try {
-    state.courses = await apiJson("/api/courses");
+    state.courses = await apiJson(`/api/items?collection=${encodeURIComponent(state.collectionId || "graduacao-cruzeiro")}`);
     state.loading = false;
     populateFilters();
     renderCatalog();
@@ -296,10 +379,11 @@ async function loadBatches() {
     for (const b of batches.slice().reverse()) {
       const row = document.createElement("div");
       row.className = "batch-row";
+      const collectionName = state.collections.find((c) => c.id === b.collectionId)?.name || b.collectionId || "padrão";
       row.innerHTML = `
         <div class="batch-id">${escapeHtml(b.id)}</div>
         <div class="batch-meta">
-          ${escapeHtml(formatStatus(b.status))} · ${b.courses?.length || 0} cursos
+          ${escapeHtml(formatStatus(b.status))} · ${b.courses?.length || 0} itens · ${escapeHtml(collectionName)}
           ${b.dryRun ? "· dry-run" : ""}
         </div>
       `;
@@ -327,8 +411,9 @@ async function createBatch() {
   const maxCostUsd = byId("maxCostUsd").value.trim();
 
   const body = {
-    courses: selectedCourses.map((c) => ({ course_id: c.course_id, slug: c.slug })),
-    template_id: byId("templateId").value.trim() || "cruzeiro-graduacao-v1",
+    collection_id: state.collectionId || "graduacao-cruzeiro",
+    courses: selectedCourses.map((c) => ({ course_id: c.course_id || c.record_id || c.slug, slug: c.slug })),
+    template_id: byId("templateSelect").value.trim() || state.collection?.defaultTemplateId || "demo",
     background_source: byId("backgroundSource").value,
     batch_size: parseInt(byId("batchSize").value, 10) || 1,
     max_calls: maxCalls ? parseInt(maxCalls, 10) : null,
@@ -428,8 +513,16 @@ function renderBatch(job) {
   renderItems(job);
 }
 
-function catalogFileUrl(slug, file) {
-  return `/api/catalog/${encodeURIComponent(slug)}/${encodeURIComponent(file)}`;
+function catalogFileUrl(item, file) {
+  if (item.ai_background_url) {
+    const url = new URL(item.ai_background_url, window.location.origin);
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (parts.length === 4) {
+      return `/api/catalog/${encodeURIComponent(parts[2])}/${encodeURIComponent(item.slug)}/${encodeURIComponent(file)}`;
+    }
+    return `/api/catalog/${encodeURIComponent(item.slug)}/${encodeURIComponent(file)}`;
+  }
+  return `/api/catalog/${encodeURIComponent(item.slug)}/${encodeURIComponent(file)}`;
 }
 
 function renderItems(job) {
@@ -445,7 +538,7 @@ function renderItems(job) {
     const card = document.createElement("div");
     card.className = "item-card";
     const course = state.courses.find((c) => c.slug === item.slug);
-    const name = course ? course.curso : item.slug;
+    const name = course ? getItemTitle(course) : item.slug;
 
     const header = document.createElement("div");
     header.className = "item-header";
@@ -469,11 +562,11 @@ function renderItems(job) {
     const hasCard = ["pronto_revisao", "aprovado", "rejeitado", "gerando_whatsapp"].includes(item.status);
 
     if (hasBackground) {
-      actions.appendChild(linkButton("Fundo", catalogFileUrl(item.slug, `${item.slug}-fundo.png`)));
+      actions.appendChild(linkButton("Fundo", catalogFileUrl(course || item, `${item.slug}-fundo.png`)));
     }
     if (hasCard) {
-      actions.appendChild(linkButton("Card", catalogFileUrl(item.slug, `${item.slug}-card.png`)));
-      actions.appendChild(linkButton("WhatsApp", catalogFileUrl(item.slug, `${item.slug}-whatsapp.jpg`)));
+      actions.appendChild(linkButton("Card", catalogFileUrl(course || item, `${item.slug}-card.png`)));
+      actions.appendChild(linkButton("WhatsApp", catalogFileUrl(course || item, `${item.slug}-whatsapp.jpg`)));
     }
     if (item.status === "pronto_revisao" || item.status === "gerando_whatsapp") {
       actions.appendChild(actionButton("Aprovar", () => approveItem(item.slug), "success"));
@@ -521,13 +614,13 @@ async function batchAction(method, pathSuffix, confirmMsg) {
 
 async function approveItem(slug) {
   if (!window.confirm(`Aprovar card de "${slug}"?`)) return;
-  await apiJson(`/api/courses/${encodeURIComponent(slug)}/approve`, { method: "POST" });
+  await apiJson(`/api/items/${encodeURIComponent(slug)}/approve?collection=${encodeURIComponent(state.collectionId || "graduacao-cruzeiro")}`, { method: "POST" });
   await refreshBatch();
 }
 
 async function rejectItem(slug) {
   if (!window.confirm(`Rejeitar card de "${slug}"?`)) return;
-  await apiJson(`/api/courses/${encodeURIComponent(slug)}/reject`, { method: "POST" });
+  await apiJson(`/api/items/${encodeURIComponent(slug)}/reject?collection=${encodeURIComponent(state.collectionId || "graduacao-cruzeiro")}`, { method: "POST" });
   await refreshBatch();
 }
 
@@ -544,7 +637,7 @@ async function dryRunSync() {
 }
 
 async function syncSpreadsheet() {
-  if (!window.confirm("Sincronizar a planilha input/cursos.xlsx com os cursos aprovados? Será feito backup antes.")) return;
+  if (!window.confirm("Sincronizar a planilha input/cursos.xlsx com os itens aprovados? Será feito backup antes.")) return;
   setStatus("loading", "Sincronizando planilha...");
   try {
     const result = await apiJson("/api/xlsx/sync", {
@@ -569,21 +662,9 @@ async function exportSpreadsheet() {
   }
 }
 
-function init() {
+async function init() {
   byId("searchInput").addEventListener("input", (e) => {
     state.filters.query = e.target.value;
-    renderCatalog();
-  });
-  byId("filterModalidade").addEventListener("change", (e) => {
-    state.filters.modalidade = e.target.value;
-    renderCatalog();
-  });
-  byId("filterFormacao").addEventListener("change", (e) => {
-    state.filters.formacao = e.target.value;
-    renderCatalog();
-  });
-  byId("filterStatus").addEventListener("change", (e) => {
-    state.filters.status = e.target.value;
     renderCatalog();
   });
 
@@ -621,7 +702,8 @@ function init() {
   byId("btnSync").addEventListener("click", syncSpreadsheet);
   byId("btnExport").addEventListener("click", exportSpreadsheet);
 
-  loadCatalog();
+  await loadTemplates();
+  await loadCollections();
   loadBatches();
 }
 

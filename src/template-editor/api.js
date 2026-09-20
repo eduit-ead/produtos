@@ -1,5 +1,5 @@
 /**
- * Rotas da API do editor de templates e do catálogo de imagens.
+ * Rotas da API do editor de templates, catálogo de imagens e coleções.
  */
 
 const fs = require("fs");
@@ -9,18 +9,11 @@ const crypto = require("crypto");
 const express = require("express");
 const multer = require("multer");
 const sharp = require("sharp");
+
 const { validateTemplate, createEmptyTemplate } = require("./schema/template-schema");
 const { renderTemplate } = require("./renderer");
-const {
-  listCourses,
-  getCourseDetail,
-  generateAIBackground,
-  uploadBackground,
-  renderCourse,
-  approveCourse,
-  rejectCourse,
-  CATALOG_DIR,
-} = require("../course-production-service");
+const courseService = require("../course-production-service");
+const genericProduction = require("../production/generic-production-service");
 const { LocalStorageProvider } = require("../storage/local-storage-provider");
 const { BatchExecutor } = require("../batch/executor");
 const { listJobs, readJob, writeJob } = require("../batch/job");
@@ -35,23 +28,19 @@ const {
 } = require("../batch/metadata");
 const { courseFiles } = require("../batch/naming");
 const { convertCardToWhatsAppJpeg } = require("../whatsapp-image");
-const {
-  addImageColumnsIfNeeded,
-  buildSyncPlan,
-  dryRunSyncPlan,
-  syncWorkbook,
-  exportUpdatedSpreadsheet,
-  loadWorkbook,
-} = require("../xlsx-sync");
+const xlsxSync = require("../xlsx-sync");
 const { loadCourseBySlug, loadAllCourses, INPUT_FILE } = require("../read-courses");
+const { listCollections, loadCollection, saveCollection, deleteCollection } = require("../collections/manager");
+const { validateCollection } = require("../collections/schema");
+const { getDataSource } = require("../data-sources");
 
 const DATA_DIR = path.join(__dirname, "..", "..", "data");
 const TEMPLATES_DIR = path.join(DATA_DIR, "templates");
 const ASSETS_DIR = path.join(DATA_DIR, "assets");
+const IMPORTS_DIR = path.join(DATA_DIR, "imports");
 const BACKUPS_DIR = path.join(__dirname, "..", "..", "input", "backups");
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
-// Apenas PNG/JPEG são armazenados. SVG é rasterizado para PNG no upload.
 const ALLOWED_MIMETYPES = {
   "image/png": "png",
   "image/jpeg": "jpg",
@@ -67,6 +56,7 @@ const SAVED_MIMETYPES = {
 function ensureDirs() {
   fs.mkdirSync(TEMPLATES_DIR, { recursive: true });
   fs.mkdirSync(ASSETS_DIR, { recursive: true });
+  fs.mkdirSync(IMPORTS_DIR, { recursive: true });
 }
 
 function sanitizeFilename(name) {
@@ -92,10 +82,7 @@ function writeFileAtomic(filePath, data) {
 }
 
 async function rasterizeSvg(buffer) {
-  // Usa densidade razoável para SVG; limite de dimensões é aplicado pelo sharp por padrão.
-  return sharp(buffer, { density: 144 })
-    .png()
-    .toBuffer();
+  return sharp(buffer, { density: 144 }).png().toBuffer();
 }
 
 const upload = multer({
@@ -114,11 +101,12 @@ function createRouter() {
   const router = express.Router();
   ensureDirs();
 
-  const catalogDir = getCatalogDir();
-  const storage = new LocalStorageProvider(catalogDir);
-  const executor = new BatchExecutor({ catalogDir, storageProvider: storage });
+  const executor = new BatchExecutor({ catalogDir: getCatalogDir() });
 
-  // Listar templates
+  // ============================================================
+  // Templates
+  // ============================================================
+
   router.get("/templates", (req, res) => {
     const files = fs
       .readdirSync(TEMPLATES_DIR)
@@ -130,7 +118,6 @@ function createRouter() {
     res.json(files);
   });
 
-  // Carregar template
   router.get("/templates/:id", (req, res) => {
     const id = path.basename(req.params.id);
     const filePath = path.join(TEMPLATES_DIR, `${id}.json`);
@@ -145,30 +132,6 @@ function createRouter() {
     }
   });
 
-  // Salvar template
-  router.post("/templates/:id", express.json({ limit: "2mb" }), (req, res) => {
-    const id = path.basename(req.params.id);
-    if (!id || id.startsWith(".")) {
-      return res.status(400).json({ error: "ID de template inválido." });
-    }
-
-    const template = req.body;
-    const errors = validateTemplate(template, { routeId: id });
-    if (errors.length > 0) {
-      return res.status(400).json({ error: "Template inválido.", details: errors });
-    }
-
-    template.metadata = {
-      ...(template.metadata || {}),
-      updatedAt: new Date().toISOString(),
-    };
-
-    const filePath = path.join(TEMPLATES_DIR, `${id}.json`);
-    writeFileAtomic(filePath, JSON.stringify(template, null, 2));
-    res.json({ ok: true, id });
-  });
-
-  // Criar template vazio
   router.post("/templates", express.json({ limit: "2mb" }), (req, res) => {
     const { width = 1080, height = 1080 } = req.body || {};
     const template = createEmptyTemplate(width, height);
@@ -177,28 +140,50 @@ function createRouter() {
     res.json({ ok: true, template });
   });
 
-  // Upload de asset
+  router.post("/templates/:id", express.json({ limit: "2mb" }), (req, res) => {
+    const id = path.basename(req.params.id);
+    if (!id || id.startsWith(".")) {
+      return res.status(400).json({ error: "ID de template inválido." });
+    }
+    const template = req.body;
+    const errors = validateTemplate(template, { routeId: id });
+    if (errors.length > 0) {
+      return res.status(400).json({ error: "Template inválido.", details: errors });
+    }
+    template.metadata = { ...(template.metadata || {}), updatedAt: new Date().toISOString() };
+    const filePath = path.join(TEMPLATES_DIR, `${id}.json`);
+    writeFileAtomic(filePath, JSON.stringify(template, null, 2));
+    res.json({ ok: true, id });
+  });
+
+  router.delete("/templates/:id", (req, res) => {
+    const id = path.basename(req.params.id);
+    const filePath = path.join(TEMPLATES_DIR, `${id}.json`);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: "Template não encontrado." });
+    fs.unlinkSync(filePath);
+    res.json({ ok: true });
+  });
+
+  // ============================================================
+  // Assets
+  // ============================================================
+
   router.post("/upload", upload.single("file"), async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: "Nenhum arquivo enviado." });
     }
-
     try {
       let buffer = req.file.buffer;
       let ext = ALLOWED_MIMETYPES[req.file.mimetype];
       let mimetype = req.file.mimetype;
-
       if (req.file.mimetype === "image/svg+xml") {
         buffer = await rasterizeSvg(buffer);
         ext = "png";
         mimetype = "image/png";
       }
-
       const assetId = generateAssetId(buffer, ext);
       const assetPath = path.join(ASSETS_DIR, assetId);
-
       fs.writeFileSync(assetPath, buffer);
-
       res.json({
         ok: true,
         assetId,
@@ -213,33 +198,22 @@ function createRouter() {
     }
   });
 
-  // Servir asset (apenas PNG/JPEG; nunca SVG bruto)
   router.get("/assets/:assetId", (req, res) => {
     const assetId = path.basename(req.params.assetId);
     const assetPath = path.join(ASSETS_DIR, assetId);
-
     if (!fs.existsSync(assetPath)) {
       return res.status(404).json({ error: "Asset não encontrado." });
     }
-
     const ext = path.extname(assetId).toLowerCase();
-    const mime =
-      ext === ".png"
-        ? "image/png"
-        : ext === ".jpg" || ext === ".jpeg"
-        ? "image/jpeg"
-        : null;
-
+    const mime = ext === ".png" ? "image/png" : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : null;
     if (!mime) {
       return res.status(400).json({ error: "Formato de asset não suportado." });
     }
-
     res.setHeader("Content-Type", mime);
     res.setHeader("Cache-Control", "public, max-age=3600");
     res.sendFile(assetPath);
   });
 
-  // Listar assets
   router.get("/assets", (req, res) => {
     const files = fs
       .readdirSync(ASSETS_DIR)
@@ -252,15 +226,16 @@ function createRouter() {
     res.json(files);
   });
 
-  // Renderizar template salvo
+  // ============================================================
+  // Render
+  // ============================================================
+
   router.post("/render/:id", express.json({ limit: "1mb" }), async (req, res) => {
     const id = path.basename(req.params.id);
     const filePath = path.join(TEMPLATES_DIR, `${id}.json`);
-
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: "Template não encontrado." });
     }
-
     try {
       const template = JSON.parse(fs.readFileSync(filePath, "utf8"));
       const buffer = await renderTemplate(template, req.body || {});
@@ -273,14 +248,12 @@ function createRouter() {
     }
   });
 
-  // Renderizar template JSON em memória
   router.post("/render", express.json({ limit: "2mb" }), async (req, res) => {
     const { template, values } = req.body || {};
     const errors = validateTemplate(template);
     if (errors.length > 0) {
       return res.status(400).json({ error: "Template inválido.", details: errors });
     }
-
     try {
       const buffer = await renderTemplate(template, values || {});
       res.setHeader("Content-Type", "image/png");
@@ -291,9 +264,13 @@ function createRouter() {
     }
   });
 
-  // === Controlled output file serving ===
+  // ============================================================
+  // Controlled output file serving
+  // ============================================================
+
   const OUTPUT_DIR = path.join(__dirname, "..", "..", "output");
   const SLUG_FILENAME_REGEX = /^[A-Za-z0-9_-]+$/;
+
   function serveOutputFile(req, res, subPathFn) {
     const slug = req.params.slug;
     if (!slug || !SLUG_FILENAME_REGEX.test(slug)) {
@@ -322,17 +299,251 @@ function createRouter() {
     serveOutputFile(req, res, (slug) => path.join("whatsapp", `${slug}.jpg`));
   });
 
-  // === Health ===
+  // ============================================================
+  // Health
+  // ============================================================
+
   router.get("/health", async (req, res) => {
+    const storage = new LocalStorageProvider(getCatalogDir());
     const storageHealth = await storage.healthCheck();
-    res.json({
-      ok: storageHealth.ok,
-      storage: storageHealth,
-      timestamp: new Date().toISOString(),
-    });
+    res.json({ ok: storageHealth.ok, storage: storageHealth, timestamp: new Date().toISOString() });
   });
 
-  // === Cursos ===
+  // ============================================================
+  // Coleções
+  // ============================================================
+
+  router.get("/collections", (req, res) => {
+    try {
+      res.json(listCollections());
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.get("/collections/:id", (req, res) => {
+    try {
+      res.json(loadCollection(req.params.id));
+    } catch (err) {
+      console.error(err);
+      const status = err.message?.includes("não encontrada") ? 404 : 400;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
+  router.post("/collections", express.json({ limit: "1mb" }), async (req, res) => {
+    try {
+      const body = req.body || {};
+      const errors = validateCollection(body);
+      if (errors.length > 0) {
+        return res.status(400).json({ error: "Coleção inválida.", details: errors });
+      }
+      const collection = saveCollection({ ...body, createdAt: new Date().toISOString() });
+      res.status(201).json({ ok: true, collection });
+    } catch (err) {
+      console.error(err);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  router.put("/collections/:id", express.json({ limit: "1mb" }), async (req, res) => {
+    try {
+      const id = path.basename(req.params.id);
+      const body = req.body || {};
+      const existing = loadCollection(id);
+      const updated = { ...existing, ...body, id };
+      const errors = validateCollection(updated);
+      if (errors.length > 0) {
+        return res.status(400).json({ error: "Coleção inválida.", details: errors });
+      }
+      const collection = saveCollection(updated);
+      res.json({ ok: true, collection });
+    } catch (err) {
+      console.error(err);
+      const status = err.message?.includes("não encontrada") ? 404 : 400;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
+  router.delete("/collections/:id", (req, res) => {
+    try {
+      deleteCollection(req.params.id);
+      res.json({ ok: true });
+    } catch (err) {
+      console.error(err);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  router.get("/collections/:id/records", async (req, res) => {
+    try {
+      const collection = loadCollection(req.params.id);
+      const source = getDataSource(collection);
+      const records = await source.listRecords();
+      res.json(records);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.get("/collections/:id/filters/:field/options", async (req, res) => {
+    try {
+      const collection = loadCollection(req.params.id);
+      const source = getDataSource(collection);
+      const options = await source.getFilterOptions(req.params.field);
+      res.json({ field: req.params.field, options });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.get("/collections/:id/fields", async (req, res) => {
+    try {
+      const collection = loadCollection(req.params.id);
+      const source = getDataSource(collection);
+      const fields = await source.getFields();
+      res.json({ fields });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Upload de arquivo de importação para uma coleção.
+  router.post("/collections/:id/import", upload.single("file"), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "Nenhum arquivo enviado." });
+      const id = path.basename(req.params.id);
+      const ext = path.extname(req.file.originalname).toLowerCase();
+      const allowed = new Set([".csv", ".json", ".xlsx"]);
+      if (!allowed.has(ext)) {
+        return res.status(400).json({ error: "Extensão não permitida." });
+      }
+      const dir = path.join(IMPORTS_DIR, id);
+      fs.mkdirSync(dir, { recursive: true });
+      const destName = `${id}${ext}`;
+      const destPath = path.join(dir, destName);
+      let buffer = req.file.buffer;
+      if (ext === ".svg") {
+        // SVG não é permitido como fonte de dados.
+        return res.status(400).json({ error: "SVG não é permitido como fonte de dados." });
+      }
+      fs.writeFileSync(destPath, buffer);
+      res.json({ ok: true, collectionId: id, path: path.relative(process.cwd(), destPath), filename: destName });
+    } catch (err) {
+      console.error(err);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // ============================================================
+  // Itens de produção genérica (fallback legado em /api/courses)
+  // ============================================================
+
+  router.get("/items", async (req, res) => {
+    const collectionId = req.query.collection || genericProduction.LEGACY_COLLECTION_ID;
+    try {
+      const items = await genericProduction.listItems(collectionId);
+      res.json(items);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.get("/items/:slug", async (req, res) => {
+    const collectionId = req.query.collection || genericProduction.LEGACY_COLLECTION_ID;
+    try {
+      const item = await genericProduction.getItem(collectionId, req.params.slug);
+      if (!item) return res.status(404).json({ error: "Item não encontrado." });
+      res.json(item);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post("/items/:slug/generate", express.json(), async (req, res) => {
+    const collectionId = req.query.collection || genericProduction.LEGACY_COLLECTION_ID;
+    try {
+      const body = req.body || {};
+      const record = await genericProduction.generateAIBackground(collectionId, req.params.slug, {
+        dryRun: body.dryRun === true,
+        prompt: typeof body.prompt === "string" ? body.prompt : undefined,
+      });
+      res.json({ ok: true, record });
+    } catch (err) {
+      console.error(err);
+      res.status(err.message?.includes("OPENAI_API_KEY") ? 400 : 500).json({ error: err.message });
+    }
+  });
+
+  router.post("/items/:slug/upload", upload.single("file"), async (req, res) => {
+    const collectionId = req.query.collection || genericProduction.LEGACY_COLLECTION_ID;
+    if (!req.file) return res.status(400).json({ error: "Nenhum arquivo enviado." });
+    try {
+      const ext = path.extname(req.file.originalname).toLowerCase();
+      const result = await genericProduction.uploadBackground(collectionId, req.params.slug, req.file.buffer, ext);
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      console.error(err);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  router.post("/items/:slug/render", async (req, res) => {
+    const collectionId = req.query.collection || genericProduction.LEGACY_COLLECTION_ID;
+    try {
+      const result = await genericProduction.renderItem(collectionId, req.params.slug, {
+        templateId: req.query.template,
+      });
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post("/items/:slug/approve", async (req, res) => {
+    const collectionId = req.query.collection || genericProduction.LEGACY_COLLECTION_ID;
+    try {
+      const record = await genericProduction.approveItem(collectionId, req.params.slug);
+      res.json({ ok: true, record });
+    } catch (err) {
+      console.error(err);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  router.post("/items/:slug/reject", async (req, res) => {
+    const collectionId = req.query.collection || genericProduction.LEGACY_COLLECTION_ID;
+    try {
+      const record = await genericProduction.rejectItem(collectionId, req.params.slug);
+      res.json({ ok: true, record });
+    } catch (err) {
+      console.error(err);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  router.post("/items/:slug/whatsapp", async (req, res) => {
+    const collectionId = req.query.collection || genericProduction.LEGACY_COLLECTION_ID;
+    try {
+      const result = await genericProduction.generateWhatsApp(collectionId, req.params.slug);
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ============================================================
+  // Cursos (API legada compatível)
+  // ============================================================
+
   const EXPECTED_COURSE_ERRORS = new Set([
     "Slug inválido.",
     "Curso não encontrado.",
@@ -349,7 +560,7 @@ function createRouter() {
 
   router.get("/courses", async (req, res) => {
     try {
-      const courses = await listCourses();
+      const courses = await courseService.listCourses();
       res.json(courses);
     } catch (err) {
       if (!isExpectedCourseError(err)) console.error(err);
@@ -359,10 +570,8 @@ function createRouter() {
 
   router.get("/courses/:slug", async (req, res) => {
     try {
-      const course = await getCourseDetail(req.params.slug);
-      if (!course) {
-        return res.status(404).json({ error: "Curso não encontrado." });
-      }
+      const course = await courseService.getCourseDetail(req.params.slug);
+      if (!course) return res.status(404).json({ error: "Curso não encontrado." });
       res.json(course);
     } catch (err) {
       if (!isExpectedCourseError(err)) console.error(err);
@@ -374,26 +583,23 @@ function createRouter() {
   router.post("/courses/:slug/generate", express.json(), async (req, res) => {
     try {
       const body = req.body || {};
-      const result = await generateAIBackground(req.params.slug, {
+      const result = await courseService.generateAIBackground(req.params.slug, {
         dryRun: body.dryRun === true,
         prompt: typeof body.prompt === "string" ? body.prompt : undefined,
       });
       res.json({ ok: true, record: result });
     } catch (err) {
       if (!isExpectedCourseError(err)) console.error(err);
-      const status =
-        err.message === "Slug inválido." || err.message === "Curso não encontrado." ? 404 : 400;
+      const status = err.message === "Slug inválido." || err.message === "Curso não encontrado." ? 404 : 400;
       res.status(status).json({ error: err.message || "Erro ao gerar fundo." });
     }
   });
 
   router.post("/courses/:slug/upload", upload.single("file"), async (req, res) => {
-    if (!req.file) {
-      return res.status(400).json({ error: "Nenhum arquivo enviado." });
-    }
+    if (!req.file) return res.status(400).json({ error: "Nenhum arquivo enviado." });
     try {
       const ext = path.extname(req.file.originalname).toLowerCase();
-      const result = await uploadBackground(req.params.slug, req.file.buffer, ext);
+      const result = await courseService.uploadBackground(req.params.slug, req.file.buffer, ext);
       res.json({ ok: true, ...result });
     } catch (err) {
       if (!isExpectedCourseError(err)) console.error(err);
@@ -404,7 +610,7 @@ function createRouter() {
 
   router.post("/courses/:slug/render", async (req, res) => {
     try {
-      const result = await renderCourse(req.params.slug);
+      const result = await courseService.renderCourse(req.params.slug);
       res.json({ ok: true, ...result });
     } catch (err) {
       if (!isExpectedCourseError(err)) console.error(err);
@@ -415,78 +621,61 @@ function createRouter() {
 
   router.post("/courses/:slug/approve", async (req, res) => {
     try {
-      const record = await approveCourse(req.params.slug);
+      const record = await courseService.approveCourse(req.params.slug);
       res.json({ ok: true, record });
     } catch (err) {
       if (!isExpectedCourseError(err)) console.error(err);
-      const status = err.message === "Slug inválido." ? 400 : 400;
-      res.status(status).json({ error: err.message || "Erro ao aprovar." });
+      res.status(400).json({ error: err.message || "Erro ao aprovar." });
     }
   });
 
   router.post("/courses/:slug/reject", async (req, res) => {
     try {
-      const record = await rejectCourse(req.params.slug);
+      const record = await courseService.rejectCourse(req.params.slug);
       res.json({ ok: true, record });
     } catch (err) {
       if (!isExpectedCourseError(err)) console.error(err);
-      const status = err.message === "Slug inválido." ? 400 : 400;
-      res.status(status).json({ error: err.message || "Erro ao rejeitar." });
+      res.status(400).json({ error: err.message || "Erro ao rejeitar." });
     }
   });
 
-  // Gerar imagem WhatsApp a partir do card renderizado no catálogo.
   router.post("/courses/:slug/whatsapp", async (req, res) => {
     try {
       const catalogDir = getCatalogDir();
       const course = await loadCourseBySlug(req.params.slug);
-      if (!course) {
-        return res.status(404).json({ error: "Curso não encontrado." });
-      }
+      if (!course) return res.status(404).json({ error: "Curso não encontrado." });
 
       let metadata = readMetadata(catalogDir, course.slug);
-      if (!metadata) {
-        metadata = createMetadata(course);
-      }
+      if (!metadata) metadata = createMetadata(course);
 
+      const storage = new LocalStorageProvider(catalogDir);
       const cardKey = metadata.storage.keys.card;
       if (!(await storage.exists(cardKey))) {
         return res.status(400).json({ error: "Card ainda não foi renderizado." });
       }
-
       const cardPath = storage.resolveLocalPath(cardKey);
       const cardBuffer = fs.readFileSync(cardPath);
       const whatsappBuffer = await convertCardToWhatsAppJpeg(cardBuffer);
-
-      await storage.save(metadata.storage.keys.whatsapp, whatsappBuffer, {
-        contentType: "image/jpeg",
-      });
-
+      await storage.save(metadata.storage.keys.whatsapp, whatsappBuffer, { contentType: "image/jpeg" });
       metadata.hashes.whatsapp = sha256(whatsappBuffer);
-      metadata.timestamps.whatsapp_at = new Date().toISOString();
+      metadata.timestamps.whatsapp_at = nowIso();
       metadata.status = metadata.status === "aprovado" ? "aprovado" : "pronto_revisao";
       await updateMetadataUrls(metadata, storage);
       writeMetadata(catalogDir, course.slug, metadata);
-
-      res.json({
-        ok: true,
-        slug: course.slug,
-        whatsapp_url: metadata.urls.whatsapp,
-        whatsapp_file: metadata.files.whatsapp,
-        size: whatsappBuffer.length,
-      });
+      res.json({ ok: true, slug: course.slug, whatsapp_url: metadata.urls.whatsapp, whatsapp_file: metadata.files.whatsapp, size: whatsappBuffer.length });
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: err.message || "Erro ao gerar imagem WhatsApp." });
     }
   });
 
-  // === Catálogo local ===
-  router.get("/catalog/:slug/:file", (req, res) => {
-    const slug = req.params.slug;
-    const file = req.params.file;
+  // ============================================================
+  // Catálogo local
+  // ============================================================
+
+  function serveCatalogFile(collectionId, slug, file, res) {
     const files = courseFiles(slug);
-    const ALLOWED_FILES = new Set([
+    const allowed = new Set([
       `${slug}-fundo-ia.png`,
       `${slug}-card-ia.png`,
       `${slug}-fundo-upload.png`,
@@ -494,16 +683,19 @@ function createRouter() {
       files.card,
       files.whatsapp,
     ]);
-    if (!slug || !file || !ALLOWED_FILES.has(file)) {
+    if (!SLUG_FILENAME_REGEX.test(slug) || !allowed.has(file)) {
       return res.status(400).json({ error: "Arquivo inválido." });
     }
-    const filePath = path.join(getCatalogDir(), slug, file);
+
+    const catalogDir =
+      collectionId === genericProduction.LEGACY_COLLECTION_ID || !collectionId
+        ? getCatalogDir()
+        : path.join(getCatalogDir(), "..", collectionId);
+
+    const filePath = path.join(catalogDir, slug, file);
     const resolved = path.resolve(filePath);
-    const courseDirResolved = path.resolve(path.join(getCatalogDir(), slug));
-    if (
-      !resolved.startsWith(courseDirResolved + path.sep) &&
-      resolved !== courseDirResolved
-    ) {
+    const courseDirResolved = path.resolve(path.join(catalogDir, slug));
+    if (!resolved.startsWith(courseDirResolved + path.sep) && resolved !== courseDirResolved) {
       return res.status(400).json({ error: "Caminho inválido." });
     }
     if (!fs.existsSync(filePath)) {
@@ -514,16 +706,22 @@ function createRouter() {
     res.setHeader("Content-Type", mime);
     res.setHeader("Cache-Control", "public, max-age=60");
     res.sendFile(filePath);
+  }
+
+  router.get("/catalog/:slug/:file", (req, res) => {
+    serveCatalogFile(null, req.params.slug, req.params.file, res);
   });
 
-  // === Arquivos via StorageProvider ===
+  router.get("/catalog/:collectionId/:slug/:file", (req, res) => {
+    serveCatalogFile(req.params.collectionId, req.params.slug, req.params.file, res);
+  });
+
   router.get("/files/:encodedKey", (req, res) => {
     try {
       const key = Buffer.from(req.params.encodedKey, "base64url").toString("utf8");
+      const storage = new LocalStorageProvider(getCatalogDir());
       const filePath = storage.resolveLocalPath(key);
-      if (!fs.existsSync(filePath)) {
-        return res.status(404).json({ error: "Arquivo não encontrado." });
-      }
+      if (!fs.existsSync(filePath)) return res.status(404).json({ error: "Arquivo não encontrado." });
       const ext = path.extname(filePath).toLowerCase();
       const mime = ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : "image/png";
       res.setHeader("Content-Type", mime);
@@ -535,10 +733,49 @@ function createRouter() {
     }
   });
 
-  // === Lotes ===
+  // ============================================================
+  // Lotes
+  // ============================================================
+
+  function listAllJobs() {
+    const catalogRoot = getCatalogDir();
+    const jobs = [...listJobs(catalogRoot)];
+    if (fs.existsSync(catalogRoot)) {
+      for (const entry of fs.readdirSync(catalogRoot, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const subDir = path.join(catalogRoot, entry.name);
+        const jobsDir = path.join(subDir, "jobs");
+        if (!fs.existsSync(jobsDir)) continue;
+        for (const f of fs.readdirSync(jobsDir).filter((f) => f.endsWith(".json"))) {
+          try {
+            jobs.push(JSON.parse(fs.readFileSync(path.join(jobsDir, f), "utf8")));
+          } catch {
+            // ignora
+          }
+        }
+      }
+    }
+    return jobs;
+  }
+
+  function findJobFile(jobId) {
+    const catalogRoot = getCatalogDir();
+    const candidates = [path.join(catalogRoot, "jobs", `${jobId}.json`)];
+    if (fs.existsSync(catalogRoot)) {
+      for (const entry of fs.readdirSync(catalogRoot, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        candidates.push(path.join(catalogRoot, entry.name, "jobs", `${jobId}.json`));
+      }
+    }
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) return candidate;
+    }
+    return null;
+  }
+
   router.get("/batches", (req, res) => {
     try {
-      const jobs = listJobs(getCatalogDir());
+      const jobs = listAllJobs();
       res.json(jobs);
     } catch (err) {
       console.error(err);
@@ -551,9 +788,15 @@ function createRouter() {
       const body = req.body || {};
       const courses = Array.isArray(body.courses) ? body.courses : [];
       if (courses.length === 0) {
-        return res.status(400).json({ error: "Lista de cursos vazia." });
+        return res.status(400).json({ error: "Lista de itens vazia." });
       }
+      const collectionId = body.collection_id || genericProduction.LEGACY_COLLECTION_ID;
+      if (collectionId !== genericProduction.LEGACY_COLLECTION_ID) {
+        loadCollection(collectionId); // valida existência
+      }
+
       const job = BatchExecutor.createJob(courses, {
+        collectionId,
         template_id: body.template_id,
         background_source: body.background_source,
         batch_size: body.batch_size,
@@ -565,8 +808,10 @@ function createRouter() {
         size: body.size,
         dryRun: body.dryRun !== false,
       });
-      fs.mkdirSync(path.join(getCatalogDir(), "jobs"), { recursive: true });
-      writeJob(getCatalogDir(), job);
+
+      const catalogDir = genericProduction.catalogDirFor(collectionId);
+      fs.mkdirSync(path.join(catalogDir, "jobs"), { recursive: true });
+      writeJob(catalogDir, job);
       res.status(201).json({ ok: true, job });
     } catch (err) {
       console.error(err);
@@ -576,9 +821,9 @@ function createRouter() {
 
   router.get("/batches/:id", (req, res) => {
     try {
-      const job = readJob(getCatalogDir(), req.params.id);
-      if (!job) return res.status(404).json({ error: "Lote não encontrado." });
-      res.json(job);
+      const file = findJobFile(req.params.id);
+      if (!file) return res.status(404).json({ error: "Lote não encontrado." });
+      res.json(JSON.parse(fs.readFileSync(file, "utf8")));
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: err.message || "Erro ao ler lote." });
@@ -587,8 +832,9 @@ function createRouter() {
 
   router.get("/batches/:id/items", (req, res) => {
     try {
-      const job = readJob(getCatalogDir(), req.params.id);
-      if (!job) return res.status(404).json({ error: "Lote não encontrado." });
+      const file = findJobFile(req.params.id);
+      if (!file) return res.status(404).json({ error: "Lote não encontrado." });
+      const job = JSON.parse(fs.readFileSync(file, "utf8"));
       res.json(job.courses);
     } catch (err) {
       console.error(err);
@@ -596,9 +842,17 @@ function createRouter() {
     }
   });
 
+  async function runBatchAction(jobId, action) {
+    const file = findJobFile(jobId);
+    if (!file) throw new Error("Lote não encontrado.");
+    const catalogDir = path.dirname(path.dirname(file));
+    const exec = new BatchExecutor({ catalogDir, storageProvider: new LocalStorageProvider(catalogDir) });
+    return exec[action](jobId);
+  }
+
   router.post("/batches/:id/start", async (req, res) => {
     try {
-      const job = await executor.start(req.params.id);
+      const job = await runBatchAction(req.params.id, "start");
       res.json({ ok: true, job });
     } catch (err) {
       console.error(err);
@@ -608,7 +862,7 @@ function createRouter() {
 
   router.post("/batches/:id/pause", async (req, res) => {
     try {
-      const job = await executor.pause(req.params.id);
+      const job = await runBatchAction(req.params.id, "pause");
       res.json({ ok: true, job });
     } catch (err) {
       console.error(err);
@@ -618,7 +872,7 @@ function createRouter() {
 
   router.post("/batches/:id/resume", async (req, res) => {
     try {
-      const job = await executor.resume(req.params.id);
+      const job = await runBatchAction(req.params.id, "resume");
       res.json({ ok: true, job });
     } catch (err) {
       console.error(err);
@@ -628,7 +882,7 @@ function createRouter() {
 
   router.post("/batches/:id/cancel", async (req, res) => {
     try {
-      const job = await executor.cancel(req.params.id);
+      const job = await runBatchAction(req.params.id, "cancel");
       res.json({ ok: true, job });
     } catch (err) {
       console.error(err);
@@ -638,7 +892,7 @@ function createRouter() {
 
   router.post("/batches/:id/retry-errors", async (req, res) => {
     try {
-      const job = await executor.retryErrors(req.params.id);
+      const job = await runBatchAction(req.params.id, "retryErrors");
       res.json({ ok: true, job });
     } catch (err) {
       console.error(err);
@@ -648,7 +902,7 @@ function createRouter() {
 
   router.post("/batches/:id/retry-rejected", async (req, res) => {
     try {
-      const job = await executor.retryRejected(req.params.id);
+      const job = await runBatchAction(req.params.id, "retryRejected");
       res.json({ ok: true, job });
     } catch (err) {
       console.error(err);
@@ -656,14 +910,17 @@ function createRouter() {
     }
   });
 
-  // === XLSX sync ===
+  // ============================================================
+  // XLSX sync (coleção padrão legada)
+  // ============================================================
+
   router.post("/xlsx/sync-preview", express.json(), async (req, res) => {
     try {
       const coursesMetadata = listMetadata(getCatalogDir());
-      const workbook = await loadWorkbook(INPUT_FILE);
-      addImageColumnsIfNeeded(workbook);
-      const plan = buildSyncPlan(coursesMetadata, workbook, { approvedOnly: true });
-      const report = dryRunSyncPlan(plan);
+      const workbook = await xlsxSync.loadWorkbook(INPUT_FILE);
+      xlsxSync.addImageColumnsIfNeeded(workbook);
+      const plan = xlsxSync.buildSyncPlan(coursesMetadata, workbook, { approvedOnly: true });
+      const report = xlsxSync.dryRunSyncPlan(plan);
       res.json({ ok: true, mode: "dry-run", report });
     } catch (err) {
       console.error(err);
@@ -680,19 +937,16 @@ function createRouter() {
         });
       }
       const coursesMetadata = listMetadata(getCatalogDir());
-      const workbook = await loadWorkbook(INPUT_FILE);
-      addImageColumnsIfNeeded(workbook);
-      const plan = buildSyncPlan(coursesMetadata, workbook, { approvedOnly: true });
-
+      const workbook = await xlsxSync.loadWorkbook(INPUT_FILE);
+      xlsxSync.addImageColumnsIfNeeded(workbook);
+      const plan = xlsxSync.buildSyncPlan(coursesMetadata, workbook, { approvedOnly: true });
       if (plan.wouldChangeCount === 0) {
-        return res.json({ ok: true, mode: "sync", report: dryRunSyncPlan(plan), backup: null });
+        return res.json({ ok: true, mode: "sync", report: xlsxSync.dryRunSyncPlan(plan), backup: null });
       }
-
       fs.mkdirSync(BACKUPS_DIR, { recursive: true });
       const backupPath = path.join(BACKUPS_DIR, `cursos-${Date.now()}.xlsx`);
-      await syncWorkbook(workbook, plan, backupPath);
-
-      res.json({ ok: true, mode: "sync", report: dryRunSyncPlan(plan), backup: backupPath });
+      await xlsxSync.syncWorkbook(workbook, plan, backupPath);
+      res.json({ ok: true, mode: "sync", report: xlsxSync.dryRunSyncPlan(plan), backup: backupPath });
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: err.message || "Erro ao sincronizar planilha." });
@@ -704,7 +958,7 @@ function createRouter() {
       const body = req.body || {};
       const outputPath = body.outputPath || path.join(getCatalogDir(), "cursos-export.xlsx");
       const coursesMetadata = listMetadata(getCatalogDir());
-      const report = await exportUpdatedSpreadsheet(coursesMetadata, outputPath);
+      const report = await xlsxSync.exportUpdatedSpreadsheet(coursesMetadata, outputPath);
       res.json({ ok: true, mode: "export", report, outputPath });
     } catch (err) {
       console.error(err);
@@ -712,12 +966,71 @@ function createRouter() {
     }
   });
 
-  // Middleware de erro: garante respostas JSON
+  // ============================================================
+  // Exportação e sincronização genérica por coleção
+  // ============================================================
+
+  router.post("/collections/:id/sync-preview", express.json(), async (req, res) => {
+    try {
+      const collection = loadCollection(req.params.id);
+      const source = getDataSource(collection);
+      const catalogDir = genericProduction.catalogDirFor(collection.id);
+      const metadataList = genericProduction.listMetadataForCollection
+        ? await genericProduction.listMetadataForCollection(collection.id)
+        : [];
+      const plan = await source.syncApprovedRecords(metadataList, { approvedOnly: true });
+      res.json({ ok: true, collectionId: collection.id, plan });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post("/collections/:id/sync", express.json(), async (req, res) => {
+    try {
+      const body = req.body || {};
+      if (body.confirm !== true) {
+        return res.status(400).json({ error: "Confirmação necessária. Envie { confirm: true }." });
+      }
+      const collection = loadCollection(req.params.id);
+      const source = getDataSource(collection);
+      const metadataList = genericProduction.listMetadataForCollection
+        ? await genericProduction.listMetadataForCollection(collection.id)
+        : [];
+      fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+      const backupPath = path.join(BACKUPS_DIR, `${collection.id}-${Date.now()}${path.extname(collection.source.path)}`);
+      const result = await source.syncApprovedRecords(metadataList, { backupPath, confirm: true });
+      res.json({ ok: true, collectionId: collection.id, result });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post("/collections/:id/export", express.json(), async (req, res) => {
+    try {
+      const collection = loadCollection(req.params.id);
+      const source = getDataSource(collection);
+      const metadataList = genericProduction.listMetadataForCollection
+        ? await genericProduction.listMetadataForCollection(collection.id)
+        : [];
+      const body = req.body || {};
+      const outputPath = body.outputPath || path.join(getCatalogDir(), "..", "exports", `${collection.id}-com-imagens${path.extname(collection.source.path) || ".xlsx"}`);
+      const plan = await source.exportUpdatedCopy(metadataList, outputPath);
+      res.json({ ok: true, collectionId: collection.id, outputPath, plan });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ============================================================
+  // Middleware de erro
+  // ============================================================
+
   router.use((err, req, res, next) => {
     console.error(err);
-    if (res.headersSent) {
-      return next(err);
-    }
+    if (res.headersSent) return next(err);
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Erro interno.";
     res.status(status >= 100 && status < 600 ? status : 500).json({ error: message });

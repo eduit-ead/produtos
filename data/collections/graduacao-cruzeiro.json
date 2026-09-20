@@ -1,0 +1,44 @@
+{
+  "id": "graduacao-cruzeiro",
+  "name": "Graduação Cruzeiro do Sul",
+  "description": "Coleção legada de 128 cursos de graduação. Preservada como preset para manter compatibilidade com o fluxo original.",
+  "source": {
+    "type": "xlsx",
+    "path": "input/cursos.xlsx",
+    "sheet": "Graduação"
+  },
+  "primaryKey": "course_id",
+  "displayField": "curso",
+  "searchFields": ["curso", "modalidade", "formacao"],
+  "fieldMappings": {
+    "title": "curso",
+    "subtitle": "descricao_curta",
+    "prompt": "prompt_imagem",
+    "sourceImage": "Image",
+    "status": "conteudo_status",
+    "slug": "slug"
+  },
+  "filters": [
+    { "field": "modalidade", "label": "Modalidade" },
+    { "field": "formacao", "label": "Formação" },
+    { "field": "conteudo_status", "label": "Status" }
+  ],
+  "templateIds": ["cruzeiro-graduacao-v1"],
+  "defaultTemplateId": "cruzeiro-graduacao-v1",
+  "filenamePattern": "{{slug}}",
+  "outputColumns": {
+    "backgroundFilename": "imagem_fundo_arquivo",
+    "cardFilename": "imagem_card_arquivo",
+    "whatsappFilename": "imagem_whatsapp_arquivo",
+    "backgroundUrl": "imagem_fundo_url",
+    "cardUrl": "imagem_card_url",
+    "whatsappUrl": "imagem_whatsapp_url",
+    "productionStatus": "imagem_producao_status",
+    "templateId": "imagem_template_id",
+    "updatedAt": "imagem_atualizada_em"
+  },
+  "templateBindings": [
+    { "templateVariable": "titulo", "sourceField": "curso" },
+    { "templateVariable": "subtitulo", "sourceField": "descricao_curta" }
+  ]
+}

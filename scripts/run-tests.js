@@ -13,6 +13,7 @@ const tests = [
   "test-whatsapp-conversion.js",
   "test-xlsx-sync.js",
   "test-batch-lifecycle.js",
+  "test-generic-collections.js",
 ];
 
 let failed = false;

@@ -12,6 +12,7 @@
       <h1>Produção em Lote</h1>
       <nav class="nav-links">
         <a href="/">Estúdio</a>
+        <a href="/collections.html">Coleções</a>
         <a href="/cursos.html">Cursos</a>
         <a href="/batch.html" class="active">Produção em lote</a>
         <a href="/editor.html">Editor avançado</a>
@@ -51,13 +52,16 @@
           <h2>Novo lote</h2>
           <div id="selectionSummary" class="selection-summary">Nenhum curso selecionado</div>
 
+          <label>Coleção</label>
+          <select id="collectionSelect"></select>
+
           <label>Template</label>
-          <input type="text" id="templateId" value="cruzeiro-graduacao-v1" readonly>
+          <select id="templateSelect"></select>
 
           <label>Origem do fundo</label>
           <select id="backgroundSource">
             <option value="ia">Geração por IA</option>
-            <option value="original">Imagem atual do curso</option>
+            <option value="original">Imagem atual do item</option>
           </select>
 
           <label class="checkbox-label">

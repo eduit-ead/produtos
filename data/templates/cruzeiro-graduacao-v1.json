@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "cruzeiro-graduacao-v1",
+  "name": "Cruzeiro Graduação v1 (legado)",
+  "canvas": {
+    "width": 1080,
+    "height": 1080,
+    "background": "#0b1120"
+  },
+  "variables": [
+    {
+      "key": "titulo",
+      "label": "Título",
+      "type": "string",
+      "defaultValue": "Curso",
+      "required": true
+    }
+  ],
+  "assets": [],
+  "layers": [
+    {
+      "id": "bg",
+      "type": "background",
+      "name": "Fundo",
+      "x": 0,
+      "y": 0,
+      "width": 1080,
+      "height": 1080,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "zIndex": 0,
+      "locked": true,
+      "properties": {
+        "color": "#0b1120",
+        "assetId": null
+      }
+    }
+  ],
+  "metadata": {
+    "createdAt": "2026-09-20T00:00:00.000Z",
+    "updatedAt": "2026-09-20T00:00:00.000Z",
+    "legacy": true
+  }
+}

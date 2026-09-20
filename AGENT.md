@@ -117,3 +117,32 @@ Retorna `{ slug, fundo: "<slug>-fundo.png", card: "<slug>-card.png", whatsapp: "
 - Novos scripts de teste.
 - `server.js` usa `HOST` e `PORT` configuráveis.
 - Dockerfile e `.env.example` adicionados.
+
+## 2026-09-20 — Generalização para coleções configuráveis
+
+### Contexto
+Transformar o sistema de produção de artes de um fluxo fixo de cursos de graduação em uma plataforma genérica baseada em coleções versionadas (cursos, produtos, posts etc.), preservando a coleção legada e sem duplicar renderizador.
+
+### Decisão
+- Coleção é a unidade central: `data/collections/<id>.json` define fonte de dados (XLSX/CSV/JSON), mapeamento de campos, filtros, templates permitidos, filename pattern e colunas de saída.
+- Coleção padrão versionada: `data/collections/graduacao-cruzeiro.json` mantém o fluxo legado intacto e não é recriada automaticamente.
+- DataSources desacoplados: `src/data-sources/{xlsx,csv,json}-data-source.js` normalizam registros para `{ id, title, slug, fields, prompt, sourceImage, sourceStatus }`.
+- `src/production/generic-production-service.js` implementa operações genéricas e delega à API legada (`course-production-service`) quando `collectionId === "graduacao-cruzeiro"`.
+- `src/batch/executor.js` carrega um provider por coleção: para a coleção legada usa `loadAllCourses`/`renderCourseCard`; para outras coleções usa DataSource + `renderTemplate`.
+- Arquivos de saída por coleção: legado continua em `output/ai-catalog/`; novas coleções usam `output/ai-catalog/<collectionId>/`.
+- Segurança de arquivos: imports enviados vão para `data/imports/<collection-id>/`; path traversal bloqueado; API nunca aceita caminho absoluto do navegador.
+- Identidade genérica: telas genéricas não mencionam curso/modalidade/Cruzeiro; termos legados ficam apenas na configuração da coleção padrão.
+- Templates continuam usando o schema/renderizador genérico já existente; o template legado `cruzeiro-graduacao-v1` é tratado como caso especial fora do renderer genérico.
+- S3/Supabase continuam apenas como interfaces/documentação; `LocalStorageProvider` é a única implementação ativa.
+
+### Alternativas descartadas
+- Migrar o template Cruzeiro para JSON e usar `renderTemplate`: descartado porque o template aprovado é complexo e a migração introduziria risco visual; mantido como renderizador legado delegado.
+- Deletar `course-production-service.js` nesta etapa: descartado para preservar paridade funcional; remoção exigirá comprovação completa.
+- Criar um banco/SaaS para coleções: descartado; arquivos JSON versionados atendem à necessidade atual.
+
+### Impacto
+- Novos módulos: `src/collections/`, `src/data-sources/`, `src/production/generic-production-service.js`.
+- Coleção padrão versionada: `data/collections/graduacao-cruzeiro.json`.
+- Novas rotas: `/api/collections/*`, `/api/items*`, endpoints genéricos de batch/export/sync por coleção.
+- Telas: `collections.html` para listar/importar coleções; navegação atualizada em todas as páginas; `batch.html` com seletor de coleção/template.
+- Testes: `scripts/test-generic-collections.js` cobre graduação legada, CSV, JSON e XLSX.

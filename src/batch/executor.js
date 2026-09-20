@@ -1,13 +1,9 @@
 /**
- * Executor de jobs em lote.
+ * Executor de jobs em lote com suporte a coleções.
  *
- * Implementa todos os estados de job e item, dry-run por padrão,
- * batch_size, concurrency=1, maxCalls, maxCostUsd, pause/resume/cancel,
- * retry de erros/rejeitados, persistência após cada passo, e bloqueio do
- * job em erros de API key/billing/modelo.
- *
- * A escrita no arquivo do job é serializada por JobQueue, permitindo que
- * pause/cancel/cancel sejam aplicados entre passos sem deadlock.
+ * Mantém estados, dry-run, retry, pause/resume/cancel, limites e
+ * persistência atômica. Para cada coleção carrega um provider que
+ * fornece mapa de itens, geração de fundo e renderização de card.
  */
 
 const fs = require("fs");
@@ -15,6 +11,8 @@ const path = require("path");
 const os = require("os");
 const crypto = require("crypto");
 const sharp = require("sharp");
+
+const ROOT = path.resolve(__dirname, "..", "..");
 
 const { JobQueue } = require("./job-queue");
 const { readJob, writeJob, generateJobId } = require("./job");
@@ -32,6 +30,16 @@ const { renderCourseCard, prepareBackgroundBuffer } = require("../render-card");
 const { convertCardToWhatsAppJpeg } = require("../whatsapp-image");
 const { loadAllCourses } = require("../read-courses");
 const { getImageBuffer } = require("../image-cache");
+const {
+  LEGACY_COLLECTION_ID,
+  LEGACY_TEMPLATE_ID,
+  catalogDirFor: catalogDirForCollection,
+  loadCollectionAndRecords,
+  resolveTemplateBindingsValues,
+} = require("../production/generic-production-service");
+const { getDataSource } = require("../data-sources");
+const { loadCollection } = require("../collections/manager");
+const { renderTemplate } = require("../template-editor/renderer");
 
 const MAX_ATTEMPTS = 3;
 
@@ -61,13 +69,11 @@ const BLOCKING_PATTERNS = [
 ];
 
 function isTransientError(err) {
-  const message = err?.message || "";
-  return TRANSIENT_PATTERNS.some((p) => p.test(message));
+  return TRANSIENT_PATTERNS.some((p) => p.test(err?.message || ""));
 }
 
 function isBlockingError(err) {
-  const message = err?.message || "";
-  return BLOCKING_PATTERNS.some((p) => p.test(message));
+  return BLOCKING_PATTERNS.some((p) => p.test(err?.message || ""));
 }
 
 function nowIso() {
@@ -76,15 +82,15 @@ function nowIso() {
 
 async function createMockBackgroundBuffer() {
   return sharp({
-    create: {
-      width: 1080,
-      height: 1080,
-      channels: 3,
-      background: { r: 11, g: 17, b: 32 },
-    },
+    create: { width: 1080, height: 1080, channels: 3, background: { r: 11, g: 17, b: 32 } },
   })
     .png()
     .toBuffer();
+}
+
+function catalogDirFor(job) {
+  const collectionId = job.collectionId || LEGACY_COLLECTION_ID;
+  return catalogDirForCollection(collectionId);
 }
 
 function stepNameFromStatus(status) {
@@ -108,29 +114,177 @@ function stepNameFromStatus(status) {
   }
 }
 
+// ============================================================
+// Providers de coleção
+// ============================================================
+
+function createLegacyProvider() {
+  return {
+    async loadMap() {
+      const courses = await loadAllCourses();
+      const map = {};
+      for (const c of courses) map[c.slug] = c;
+      return map;
+    },
+    async generateBackground(job, item, course, metadata) {
+      if (job.background_source === "original") {
+        if (!course.image_url) throw new Error("Curso não possui imagem original.");
+        return getImageBuffer(course.image_url);
+      }
+      if (job.dryRun) return createMockBackgroundBuffer();
+      if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY não configurada.");
+
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "batch-bg-"));
+      try {
+        const record = await generateImage(
+          {
+            course_id: course.course_id,
+            slug: course.slug,
+            curso: course.curso,
+            prompt: metadata.prompt || course.prompt_imagem,
+          },
+          { outputDir: tempDir }
+        );
+        metadata.model = record.modelo || job.model || DEFAULT_MODEL;
+        metadata.quality = record.qualidade || job.quality || DEFAULT_QUALITY;
+        metadata.size = record.tamanho || job.size || DEFAULT_SIZE;
+        metadata.prompt = record.prompt || metadata.prompt;
+        item.cost_usd = (item.cost_usd || 0) + (record.custo_estimado_usd?.totalCostUsd || 0);
+        metadata.cost_usd = item.cost_usd;
+        item.calls = (item.calls || 0) + 1;
+        metadata.attempts = item.attempts || 0;
+        return fs.readFileSync(record.caminho_arquivo);
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    async renderCard(job, item, course, backgroundBuffer) {
+      const prepared = await prepareBackgroundBuffer(backgroundBuffer);
+      return renderCourseCard(prepared, {
+        curso: course.curso,
+        modalidade: course.modalidade,
+        formacao: course.formacao,
+        duracao: course.duracao,
+      });
+    },
+  };
+}
+
+function createGenericProvider(collectionId) {
+  const collection = loadCollection(collectionId);
+  const source = getDataSource(collection);
+
+  async function loadMap() {
+    const { records } = await loadCollectionAndRecords(collectionId);
+    const map = {};
+    for (const r of records) map[r.slug] = r;
+    return map;
+  }
+
+  async function generateBackground(job, item, record, metadata) {
+    if (job.background_source === "original") {
+      if (!record.sourceImage) throw new Error("Item não possui imagem original.");
+      return getImageBuffer(record.sourceImage);
+    }
+    if (job.dryRun) return createMockBackgroundBuffer();
+    if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY não configurada.");
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "batch-bg-"));
+    try {
+      const recordImage = await generateImage(
+        {
+          course_id: record.id,
+          slug: record.slug,
+          curso: record.title,
+          prompt: metadata.prompt || record.prompt || record.title,
+        },
+        { outputDir: tempDir }
+      );
+      metadata.model = recordImage.modelo || job.model || DEFAULT_MODEL;
+      metadata.quality = recordImage.qualidade || job.quality || DEFAULT_QUALITY;
+      metadata.size = recordImage.tamanho || job.size || DEFAULT_SIZE;
+      metadata.prompt = recordImage.prompt || metadata.prompt;
+      item.cost_usd = (item.cost_usd || 0) + (recordImage.custo_estimado_usd?.totalCostUsd || 0);
+      metadata.cost_usd = item.cost_usd;
+      item.calls = (item.calls || 0) + 1;
+      metadata.attempts = item.attempts || 0;
+      return fs.readFileSync(recordImage.caminho_arquivo);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  }
+
+  async function renderCard(job, item, record, backgroundBuffer) {
+    const templateId = job.template_id || collection.defaultTemplateId;
+    if (templateId === LEGACY_TEMPLATE_ID) {
+      throw new Error("Template Cruzeiro não pode ser usado fora da coleção padrão.");
+    }
+    const ASSETS_DIR = path.join(ROOT, "data", "assets");
+    fs.mkdirSync(ASSETS_DIR, { recursive: true });
+
+    const templatePath = path.join(ROOT, "data", "templates", `${templateId}.json`);
+    const template = JSON.parse(fs.readFileSync(templatePath, "utf8"));
+    const values = resolveTemplateBindingsValues(collection, record);
+
+    // Preenche placeholders com valores default.
+    for (const v of template.variables || []) {
+      if (Object.hasOwn(values, v.key)) continue;
+      if (v.defaultValue !== undefined) values[v.key] = v.defaultValue;
+    }
+
+    // Salva o fundo gerado como asset e associa à variável de imagem do template.
+    const backgroundAssetId = `batch-bg-${item.slug}.png`;
+    const assetPath = path.join(ASSETS_DIR, backgroundAssetId);
+    fs.writeFileSync(assetPath, backgroundBuffer);
+
+    const imageVar = (template.variables || []).find(
+      (v) => v.type === "image" && v.binding && v.binding.property === "assetId"
+    );
+    if (imageVar) {
+      values[imageVar.key] = backgroundAssetId;
+    } else {
+      const bgLayer = template.layers.find((l) => l.type === "background");
+      if (bgLayer) bgLayer.properties = { ...bgLayer.properties, assetId: backgroundAssetId };
+    }
+
+    const missing = (template.variables || [])
+      .filter((v) => v.required && (!values[v.key] || values[v.key] === ""))
+      .map((v) => v.key);
+    if (missing.length > 0) {
+      throw new Error(`Variáveis obrigatórias sem binding: ${missing.join(", ")}`);
+    }
+
+    return renderTemplate(template, values);
+  }
+
+  return { loadMap, generateBackground, renderCard };
+}
+
+function getProvider(job) {
+  const collectionId = job.collectionId || LEGACY_COLLECTION_ID;
+  if (collectionId === LEGACY_COLLECTION_ID) {
+    return createLegacyProvider();
+  }
+  return createGenericProvider(collectionId);
+}
+
+// ============================================================
+// BatchExecutor
+// ============================================================
+
 class BatchExecutor {
   constructor({ catalogDir, storageProvider, maxAttempts = MAX_ATTEMPTS } = {}) {
     this.catalogDir = catalogDir || getCatalogDir();
     this.storage = storageProvider;
     this.queue = new JobQueue();
     this.maxAttempts = maxAttempts;
-    this._activeRuns = new Map(); // jobId -> Promise
+    this._activeRuns = new Map();
   }
 
   _ensureStorage() {
     if (!this.storage) {
       throw new Error("StorageProvider não configurado no executor.");
     }
-  }
-
-  _loadCourseMap() {
-    return loadAllCourses().then((courses) => {
-      const map = {};
-      for (const c of courses) {
-        map[c.slug] = c;
-      }
-      return map;
-    });
   }
 
   _refreshJob(jobId) {
@@ -148,9 +302,7 @@ class BatchExecutor {
       cost_usd: 0,
     };
     for (const item of job.courses) {
-      if (item.status === "pronto_revisao" || item.status === "aprovado") {
-        stats.completed++;
-      }
+      if (item.status === "pronto_revisao" || item.status === "aprovado") stats.completed++;
       if (item.status === "erro") stats.errors++;
       if (item.status === "aprovado") stats.approved++;
       if (item.status === "rejeitado") stats.rejected++;
@@ -162,9 +314,7 @@ class BatchExecutor {
 
   _finalizeJob(job) {
     this._updateStats(job);
-    if (job.status === "cancelado" || job.status === "bloqueado") {
-      return;
-    }
+    if (job.status === "cancelado" || job.status === "bloqueado") return;
     const hasPending = job.courses.some((c) =>
       ["pendente", "gerando_fundo", "fundo_gerado", "renderizando_card", "gerando_whatsapp"].includes(c.status)
     );
@@ -219,120 +369,56 @@ class BatchExecutor {
     }
   }
 
-  async _generateBackground(job, item, course, metadata) {
-    if (job.background_source === "original") {
-      if (!course.image_url) {
-        throw new Error("Curso não possui imagem original.");
-      }
-      return getImageBuffer(course.image_url);
-    }
-
-    if (job.background_source === "upload") {
-      throw new Error("Fonte de fundo 'upload' não suportada em lote.");
-    }
-
-    if (job.dryRun) {
-      return createMockBackgroundBuffer();
-    }
-
-    if (!process.env.OPENAI_API_KEY) {
-      throw new Error("OPENAI_API_KEY não configurada.");
-    }
-
-    // Verifica limites antes da chamada real. Se atingidos, pausa o job sem
-    // marcar o item como erro, permitindo retomada posterior.
+  _checkLimits(job) {
     this._updateStats(job);
     if (job.max_calls != null && job.stats.calls >= job.max_calls) {
       job.status = "pausado";
       job.error = `Limite de chamadas atingido (${job.max_calls}).`;
       writeJob(this.catalogDir, job);
-      return null;
+      return false;
     }
     if (job.max_cost_usd != null && job.stats.cost_usd >= job.max_cost_usd) {
       job.status = "pausado";
       job.error = `Limite de custo atingido (${job.max_cost_usd}).`;
       writeJob(this.catalogDir, job);
-      return null;
-    }
-
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "batch-bg-"));
-    try {
-      const record = await generateImage(
-        {
-          course_id: course.course_id,
-          slug: course.slug,
-          curso: course.curso,
-          prompt: metadata.prompt || course.prompt_imagem,
-        },
-        { outputDir: tempDir }
-      );
-
-      const generatedPath = record.caminho_arquivo;
-      if (!fs.existsSync(generatedPath)) {
-        throw new Error("Arquivo gerado não foi encontrado após a API.");
-      }
-      const buffer = fs.readFileSync(generatedPath);
-
-      metadata.model = record.modelo || job.model || DEFAULT_MODEL;
-      metadata.quality = record.qualidade || job.quality || DEFAULT_QUALITY;
-      metadata.size = record.tamanho || job.size || DEFAULT_SIZE;
-      metadata.prompt = record.prompt || metadata.prompt;
-      const cost = record.custo_estimado_usd?.totalCostUsd || 0;
-      item.cost_usd = (item.cost_usd || 0) + cost;
-      metadata.cost_usd = item.cost_usd;
-      item.calls = (item.calls || 0) + 1;
-      metadata.attempts = item.attempts || 0;
-
-      return buffer;
-    } finally {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    }
-  }
-
-  async _doFundoStep(job, item, course, metadata) {
-    item.status = "gerando_fundo";
-    metadata.status = "gerando_fundo";
-
-    const bgBuffer = await this._withRetry(item, metadata, () =>
-      this._generateBackground(job, item, course, metadata)
-    );
-
-    if (!bgBuffer) {
-      // Limite atingido: o job já foi pausado; aborta este passo sem erro.
       return false;
     }
+    return true;
+  }
 
-    await this.storage.save(metadata.storage.keys.fundo, bgBuffer, {
-      contentType: "image/png",
-    });
-    metadata.hashes.fundo = sha256(bgBuffer);
+  async _generateBackground(job, item, course, metadata, provider) {
+    if (job.background_source === "upload") {
+      throw new Error("Fonte de fundo 'upload' não suportada em lote.");
+    }
+
+    const buffer = await this._withRetry(item, metadata, () =>
+      provider.generateBackground(job, item, course, metadata)
+    );
+
+    if (!buffer) return false;
+
+    await this.storage.save(metadata.storage.keys.fundo, buffer, { contentType: "image/png" });
+    metadata.hashes.fundo = sha256(buffer);
     metadata.timestamps.generated_at = nowIso();
     metadata.status = "fundo_gerado";
+    metadata.background_origin = job.background_source || "ia";
     item.status = "fundo_gerado";
     item.error = null;
     await updateMetadataUrls(metadata, this.storage);
+    return true;
   }
 
-  async _doCardStep(job, item, course, metadata) {
+  async _doCardStep(job, item, course, metadata, provider) {
     item.status = "renderizando_card";
     metadata.status = "renderizando_card";
 
-    const fundoPath = this.storage.resolveLocalPath
-      ? this.storage.resolveLocalPath(metadata.storage.keys.fundo)
-      : path.join(this.catalogDir, item.slug, courseFiles(item.slug).fundo);
+    const fundoPath = this.storage.resolveLocalPath(metadata.storage.keys.fundo);
     const bgBuffer = fs.readFileSync(fundoPath);
+    const cardBuffer = await this._withRetry(item, metadata, () =>
+      provider.renderCard(job, item, course, bgBuffer)
+    );
 
-    const prepared = await prepareBackgroundBuffer(bgBuffer);
-    const cardBuffer = await renderCourseCard(prepared, {
-      curso: course.curso,
-      modalidade: course.modalidade,
-      formacao: course.formacao,
-      duracao: course.duracao,
-    });
-
-    await this.storage.save(metadata.storage.keys.card, cardBuffer, {
-      contentType: "image/png",
-    });
+    await this.storage.save(metadata.storage.keys.card, cardBuffer, { contentType: "image/png" });
     metadata.hashes.card = sha256(cardBuffer);
     metadata.timestamps.rendered_at = nowIso();
     metadata.status = "gerando_whatsapp";
@@ -341,19 +427,14 @@ class BatchExecutor {
     await updateMetadataUrls(metadata, this.storage);
   }
 
-  async _doWhatsappStep(job, item, course, metadata) {
+  async _doWhatsappStep(job, item, metadata) {
     item.status = "gerando_whatsapp";
     metadata.status = "gerando_whatsapp";
 
-    const cardPath = this.storage.resolveLocalPath
-      ? this.storage.resolveLocalPath(metadata.storage.keys.card)
-      : path.join(this.catalogDir, item.slug, courseFiles(item.slug).card);
+    const cardPath = this.storage.resolveLocalPath(metadata.storage.keys.card);
     const cardBuffer = fs.readFileSync(cardPath);
-
     const whatsappBuffer = await convertCardToWhatsAppJpeg(cardBuffer);
-    await this.storage.save(metadata.storage.keys.whatsapp, whatsappBuffer, {
-      contentType: "image/jpeg",
-    });
+    await this.storage.save(metadata.storage.keys.whatsapp, whatsappBuffer, { contentType: "image/jpeg" });
     metadata.hashes.whatsapp = sha256(whatsappBuffer);
     metadata.timestamps.whatsapp_at = nowIso();
     metadata.status = "pronto_revisao";
@@ -367,27 +448,21 @@ class BatchExecutor {
       const fresh = readJob(this.catalogDir, job.id);
       if (!fresh) throw new Error("Job não encontrado.");
 
-      // Se o job foi pausado/cancelado/bloqueado por outra operação, respeitamos.
       if (["pausado", "cancelado", "bloqueado"].includes(fresh.status)) {
-        // Reverte o status do item para refletir a interrupção, se ainda estava em progresso.
         if (
           !["pronto_revisao", "aprovado", "rejeitado", "erro", "cancelado"].includes(item.status)
         ) {
           item.status = fresh.status === "pausado" ? item.status : "cancelado";
           metadata.status = item.status;
         }
-        // Mesmo interrompido, persistimos o metadata atual.
         this._updateStats(fresh);
         writeMetadata(this.catalogDir, item.slug, metadata);
         writeJob(this.catalogDir, fresh);
         return { aborted: true, job: fresh };
       }
 
-      // Atualiza o item no job fresco.
       const idx = fresh.courses.findIndex((c) => c.slug === item.slug);
-      if (idx >= 0) {
-        fresh.courses[idx] = item;
-      }
+      if (idx >= 0) fresh.courses[idx] = item;
       this._updateStats(fresh);
       writeMetadata(this.catalogDir, item.slug, metadata);
       writeJob(this.catalogDir, fresh);
@@ -395,11 +470,10 @@ class BatchExecutor {
     });
   }
 
-  async _processOneStep(jobId, courseMap) {
+  async _processOneStep(jobId, courseMap, provider) {
     const job = this._refreshJob(jobId);
     if (!job) throw new Error("Job não encontrado.");
 
-    // Transição para executando, se aplicável.
     if (job.status === "criado" || job.status === "pausado") {
       await this._setJobStatus(jobId, "executando");
     }
@@ -412,7 +486,7 @@ class BatchExecutor {
       !["pronto_revisao", "aprovado", "rejeitado", "cancelado", "erro"].includes(c.status)
     );
     if (!item) {
-      return await this._withJobLock(jobId, () => {
+      return this._withJobLock(jobId, () => {
         const fresh = readJob(this.catalogDir, jobId);
         this._finalizeJob(fresh);
         writeJob(this.catalogDir, fresh);
@@ -423,38 +497,39 @@ class BatchExecutor {
     const course = courseMap[item.slug];
     if (!course) {
       item.status = "erro";
-      item.error = "Curso não encontrado na planilha.";
-      await this._persistItem(job, item, readMetadata(this.catalogDir, item.slug) || createMetadata(item));
+      item.error = "Item não encontrado na fonte de dados.";
+      let metadata = readMetadata(this.catalogDir, item.slug);
+      if (!metadata) {
+        metadata = this._createMetadata({ id: item.course_id, slug: item.slug }, job, item);
+      }
+      metadata.status = "erro";
+      metadata.error = item.error;
+      await this._persistItem(job, item, metadata);
       return { done: false, job: this._refreshJob(jobId) };
     }
 
     let metadata = readMetadata(this.catalogDir, item.slug);
     if (!metadata) {
-      metadata = createMetadata(course, {
-        template_id: job.template_id,
-        model: job.model,
-        quality: job.quality,
-        size: job.size,
-        background_origin: job.background_source || "ia",
-      });
+      metadata = this._createMetadata(course, job, item);
     }
 
     const step = stepNameFromStatus(item.status);
 
     try {
       if (step === "fundo") {
-        const proceed = await this._doFundoStep(job, item, course, metadata);
-        if (proceed === false) {
+        if (!this._checkLimits(job)) {
           return { done: false, job: this._refreshJob(jobId) };
         }
+        const proceed = await this._generateBackground(job, item, course, metadata, provider);
+        if (!proceed) return { done: false, job: this._refreshJob(jobId) };
         const result = await this._persistItem(job, item, metadata);
         if (result.aborted) return { done: true, job: result.job };
       } else if (step === "card") {
-        await this._doCardStep(job, item, course, metadata);
+        await this._doCardStep(job, item, course, metadata, provider);
         const result = await this._persistItem(job, item, metadata);
         if (result.aborted) return { done: true, job: result.job };
       } else if (step === "whatsapp") {
-        await this._doWhatsappStep(job, item, course, metadata);
+        await this._doWhatsappStep(job, item, metadata);
         const result = await this._persistItem(job, item, metadata);
         if (result.aborted) return { done: true, job: result.job };
       }
@@ -472,27 +547,49 @@ class BatchExecutor {
           throw err;
         });
       }
-
-      // Erros não transientes já foram marcados em item/metadata pelo _withRetry.
       await this._persistItem(job, item, metadata);
     }
 
     return { done: false, job: this._refreshJob(jobId) };
   }
 
+  _createMetadata(course, job, item) {
+    const template_id = job.template_id || "cruzeiro-graduacao-v1";
+    const title = course.curso || course.title || course.name || "";
+    const prompt =
+      (course.prompt_imagem || course.prompt || title || "").toString().slice(0, 4000);
+    const recordLike = {
+      course_id: course.course_id || course.id || item.slug,
+      slug: item.slug,
+      curso: title,
+      prompt_imagem: prompt,
+    };
+    return createMetadata(recordLike, {
+      template_id,
+      model: job.model,
+      quality: job.quality,
+      size: job.size,
+      background_origin: job.background_source || "ia",
+    });
+  }
+
   async _run(jobId) {
-    if (this._activeRuns.has(jobId)) {
-      return this._activeRuns.get(jobId);
-    }
+    if (this._activeRuns.has(jobId)) return this._activeRuns.get(jobId);
 
     const runPromise = (async () => {
       try {
-        const courseMap = await this._loadCourseMap();
+        let job = this._refreshJob(jobId);
+        if (!job) throw new Error("Job não encontrado.");
+        this.catalogDir = catalogDirFor(job);
+        this.storage = new (require("../storage/local-storage-provider").LocalStorageProvider)(this.catalogDir);
+        const provider = getProvider(job);
+        const courseMap = await provider.loadMap();
+
         let safety = 0;
         const maxSteps = 10000;
         while (safety < maxSteps) {
           safety++;
-          const { done } = await this._processOneStep(jobId, courseMap);
+          const { done } = await this._processOneStep(jobId, courseMap, provider);
           if (done) break;
         }
         return this._refreshJob(jobId);
@@ -538,9 +635,7 @@ class BatchExecutor {
       if (!job) throw new Error("Job não encontrado.");
       job.status = "cancelado";
       for (const item of job.courses) {
-        if (
-          !["pronto_revisao", "aprovado", "rejeitado", "erro"].includes(item.status)
-        ) {
+        if (!["pronto_revisao", "aprovado", "rejeitado", "erro"].includes(item.status)) {
           item.status = "cancelado";
           const metadata = readMetadata(this.catalogDir, item.slug);
           if (metadata) {
@@ -605,6 +700,7 @@ class BatchExecutor {
 
   static createJob(courses, options = {}) {
     const {
+      collectionId = LEGACY_COLLECTION_ID,
       template_id = "cruzeiro-graduacao-v1",
       background_source = "ia",
       batch_size = 1,
@@ -617,8 +713,9 @@ class BatchExecutor {
       dryRun = true,
     } = options;
 
-    const job = {
+    return {
       id: generateJobId(),
+      collectionId,
       status: "criado",
       template_id,
       background_source,
@@ -631,7 +728,7 @@ class BatchExecutor {
       size,
       dryRun,
       courses: courses.map((c) => ({
-        course_id: c.course_id,
+        course_id: c.course_id || c.id,
         slug: c.slug,
         status: "pendente",
         error: null,
@@ -653,8 +750,6 @@ class BatchExecutor {
       completed_at: null,
       error: null,
     };
-
-    return job;
   }
 }
 
@@ -664,4 +759,5 @@ module.exports = {
   isBlockingError,
   createMockBackgroundBuffer,
   stepNameFromStatus,
+  LEGACY_COLLECTION_ID,
 };
