@@ -15,6 +15,7 @@ const path = require("path");
 const http = require("http");
 const os = require("os");
 const assert = require("node:assert/strict");
+const sharp = require("sharp");
 
 const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "studio-batch-visual-"));
 process.env.APP_RUNTIME_DIR = runtimeDir;
@@ -30,6 +31,8 @@ seedRuntimeDefaults();
 const express = require("express");
 const { createRouter } = require("../src/template-editor/api");
 const { saveCollection, deleteCollection } = require("../src/collections/manager");
+const { createStorageProvider } = require("../src/storage");
+
 
 const app = express();
 app.use("/api", createRouter());
@@ -108,12 +111,54 @@ async function pollJob(port, jobId, targetStatuses, timeoutMs = 10000) {
     // Verifica que o item ainda mostra imagem original, mas possui candidato do estúdio
     const afterGenerate = await request(port, "GET", "/api/items?collection=graduacao-cruzeiro");
     const itemAfterGenerate = findItem(afterGenerate.body, sample.slug);
-    assert.equal(itemAfterGenerate.visual_status, "original", "geração sem aprovação não muda visual atual");
+    assert.equal(itemAfterGenerate.visual_status, "simulacao", "dry-run deve aparecer como simulação");
     assert.ok(itemAfterGenerate.candidate_background_url, "candidato do estúdio deve aparecer");
 
-    // 3. Aprovar fundo do Estúdio
-    const approveRes = await request(port, "POST", "/api/studio/approve-background", JSON.stringify({
+    // Dry-run não pode ser aprovado
+    const approveDryRunRes = await request(port, "POST", "/api/studio/approve-background", JSON.stringify({
       runId,
+      collectionId: "graduacao-cruzeiro",
+      itemId: sample.slug,
+      templateId: "cruzeiro-graduacao-v1",
+      values: {
+        titulo: sample.curso || sample.title || sample.slug,
+        modalidade: "EAD",
+        formacao: "Bacharelado",
+        duracao: "8 semestres",
+      },
+    }), { "Content-Type": "application/json" });
+    assert.equal(approveDryRunRes.status, 409, "dry-run não pode ser aprovado");
+
+    // 3. Aprovar fundo do Estúdio (simulando uma geração real gravando metadados manualmente)
+    const realRunId = `studio-real-${Date.now()}`;
+    const realStudioDir = path.join(runtimeDir, "output", "ai-catalog", "studio", realRunId);
+    fs.mkdirSync(realStudioDir, { recursive: true });
+    const realBgKey = `studio/${realRunId}/fundo.png`;
+    const realBgBuffer = await sharp({ create: { width: 1080, height: 1080, channels: 3, background: "#336699" } }).png().toBuffer();
+    const studioStorage = createStorageProvider({ baseDir: path.join(runtimeDir, "output", "ai-catalog") });
+    await studioStorage.save(realBgKey, realBgBuffer, { contentType: "image/png" });
+    fs.writeFileSync(
+      path.join(realStudioDir, "metadata.json"),
+      JSON.stringify({
+        runId: realRunId,
+        templateId: "cruzeiro-graduacao-v1",
+        collectionId: "graduacao-cruzeiro",
+        itemId: sample.slug,
+        dryRun: false,
+        generatedAt: new Date().toISOString(),
+        values: {
+          titulo: sample.curso || sample.title || sample.slug,
+          modalidade: "EAD",
+          formacao: "Bacharelado",
+          duracao: "8 semestres",
+        },
+        storage: { key: realBgKey },
+        urls: { fundo: `/api/files?key=${encodeURIComponent(realBgKey)}` },
+      }, null, 2)
+    );
+
+    const approveRes = await request(port, "POST", "/api/studio/approve-background", JSON.stringify({
+      runId: realRunId,
       collectionId: "graduacao-cruzeiro",
       itemId: sample.slug,
       templateId: "cruzeiro-graduacao-v1",
@@ -141,10 +186,9 @@ async function pollJob(port, jobId, targetStatuses, timeoutMs = 10000) {
     assert.equal(approved.source, "studio", "approvedVisual.source deve ser studio");
 
     // 4. Lote "Usar imagem existente" deve priorizar aprovada e produzir card real
-    const second = itemsRes.body[1];
     const batchCreate = await request(port, "POST", "/api/batches", JSON.stringify({
       collection_id: "graduacao-cruzeiro",
-      courses: [{ course_id: second.course_id || second.slug, slug: second.slug }],
+      courses: [{ course_id: sample.course_id || sample.slug, slug: sample.slug }],
       template_id: "cruzeiro-graduacao-v1",
       background_source: "original",
       dryRun: false,
@@ -158,11 +202,11 @@ async function pollJob(port, jobId, targetStatuses, timeoutMs = 10000) {
     assert.equal(finished.stats.ready, 1, "item deve estar pronto para revisão");
 
     // Aprovar no lote
-    const batchApprove = await request(port, "POST", `/api/batches/${job.id}/items/${second.slug}/approve`);
+    const batchApprove = await request(port, "POST", `/api/batches/${job.id}/items/${sample.slug}/approve`);
     assertOk(batchApprove, "aprovar no lote");
 
     const afterBatchApprove = await request(port, "GET", "/api/items?collection=graduacao-cruzeiro");
-    const itemBatch = findItem(afterBatchApprove.body, second.slug);
+    const itemBatch = findItem(afterBatchApprove.body, sample.slug);
     assert.equal(itemBatch.visual_status, "aprovado", "após aprovação do lote deve estar aprovado");
     assert.equal(itemBatch.visual_source, "batch", "fonte deve ser lote");
 

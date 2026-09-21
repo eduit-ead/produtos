@@ -5,9 +5,9 @@
 
 const fs = require("fs");
 const path = require("path");
+const { RUNTIME } = require("./config/runtime");
 
-const ROOT = path.resolve(__dirname, "..");
-const CACHE_DIR = path.join(ROOT, "input", "cache");
+const CACHE_DIR = path.join(RUNTIME.root, "input", "cache");
 
 const DOWNLOAD_TIMEOUT_MS = 60000;
 const DOWNLOAD_RETRIES = 3;
@@ -112,6 +112,18 @@ async function getImageBuffer(url) {
   if (!cleaned) {
     throw new Error("URL de imagem inválida.");
   }
+
+  // Suporte a caminhos locais absolutos ou file://, útil para testes e assets internos.
+  if (cleaned.startsWith("file://")) {
+    const filePath = cleaned.slice(7);
+    if (!fs.existsSync(filePath)) throw new Error(`Arquivo local não encontrado: ${filePath}`);
+    return fs.readFileSync(filePath);
+  }
+  if (path.isAbsolute(cleaned)) {
+    if (!fs.existsSync(cleaned)) throw new Error(`Arquivo local não encontrado: ${cleaned}`);
+    return fs.readFileSync(cleaned);
+  }
+
   const result = await downloadImage(cleaned);
   return result.buffer;
 }

@@ -10,6 +10,9 @@ const state = {
   backgroundBuffers: {},
   collectionsRecords: {},
   collectionSearchQuery: "",
+  selectedCollectionId: null,
+  selectedItemId: null,
+  selectedItemRecord: null,
   openAiConfigured: false,
   previewUrl: null,
   previewAbort: null,
@@ -136,6 +139,9 @@ async function selectTemplate(id) {
   state.activeBackgroundKey = null;
   state.backgroundBuffers = {};
   state.collectionSearchQuery = "";
+  state.selectedCollectionId = null;
+  state.selectedItemId = null;
+  state.selectedItemRecord = null;
 
   byId("templateName").textContent = tpl.name || tpl.id;
   byId("templateMeta").textContent = `${tpl.canvas?.width || 0}×${tpl.canvas?.height || 0} px · ${(tpl.variables || []).length} campo(s)`;
@@ -418,6 +424,9 @@ function showSelect() {
   state.generatedVersions = [];
   state.activeBackgroundKey = null;
   state.backgroundBuffers = {};
+  state.selectedCollectionId = null;
+  state.selectedItemId = null;
+  state.selectedItemRecord = null;
   if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
   state.previewUrl = null;
   byId("previewImg").src = "";
@@ -535,6 +544,10 @@ async function searchBaseFill(collectionId, query) {
 function applyBaseFill(collectionId, record) {
   const collection = state.collections.find((c) => c.id === collectionId);
   if (!collection || !state.selectedTemplate) return;
+
+  state.selectedCollectionId = collectionId;
+  state.selectedItemId = record[collection.primaryKey] || record.slug || record.id || null;
+  state.selectedItemRecord = record;
 
   for (const mapping of collection.templateBindings || []) {
     const source = record[mapping.sourceField];
@@ -735,13 +748,19 @@ async function generateBackground(dryRun) {
   byId("btnDryRunBg").disabled = true;
 
   try {
-    const collectionId = byId("baseFillCollection").value || null;
+    const collectionId = byId("baseFillCollection").value || state.selectedCollectionId || null;
     const itemRecord = collectionId ? state.collectionsRecords[collectionId]?.find((r) => {
       const col = state.collections.find((c) => c.id === collectionId);
       const pk = col?.primaryKey || "slug";
       return String(r[pk]) === String(state.values[col?.templateBindings?.find((m) => m.templateVariable === "titulo")?.sourceField]);
     }) : null;
     const itemId = itemRecord ? String(itemRecord[state.collections.find((c) => c.id === collectionId)?.primaryKey || "slug"]) : null;
+
+    if (collectionId && itemId) {
+      state.selectedCollectionId = collectionId;
+      state.selectedItemId = itemId;
+      state.selectedItemRecord = itemRecord;
+    }
 
     const res = await api.json("/api/studio/generate-background", {
       method: "POST",
@@ -768,7 +787,16 @@ async function generateBackground(dryRun) {
     const base64 = arrayBufferToBase64(buffer);
 
     state.backgroundBuffers[key] = base64;
-    const version = { key, runId: res.metadata.runId, generatedAt: res.metadata.generatedAt, dryRun, cost: res.metadata.cost };
+    const version = {
+      key,
+      runId: res.metadata.runId,
+      generatedAt: res.metadata.generatedAt,
+      dryRun,
+      cost: res.metadata.cost,
+      collectionId: state.selectedCollectionId,
+      itemId: state.selectedItemId,
+      approved: false,
+    };
     const existing = state.generatedVersions.find((v) => v.key === key);
     if (!existing) {
       state.generatedVersions.push(version);
@@ -794,18 +822,83 @@ function renderVersions() {
   container.innerHTML = "";
   if (!state.generatedVersions.length) return;
 
+  const needsSelection = !state.selectedCollectionId || !state.selectedItemId;
+
   for (const v of state.generatedVersions) {
     const chip = document.createElement("div");
-    chip.className = `version-chip${v.key === state.activeBackgroundKey ? " active" : ""}`;
-    const label = v.dryRun ? "teste" : "v." + v.runId.slice(-4);
-    chip.innerHTML = `<button type="button" data-key="${escapeHtml(v.key)}">${escapeHtml(label)} · ${new Date(v.generatedAt).toLocaleTimeString()}</button>`;
-    chip.querySelector("button").addEventListener("click", () => {
+    chip.className = `version-chip${v.key === state.activeBackgroundKey ? " active" : ""}${v.approved ? " approved" : ""}${v.dryRun ? " simulation" : ""}`;
+    const label = v.dryRun ? "Simulação" : "v." + v.runId.slice(-4);
+
+    let action = "";
+    if (v.approved) {
+      action = `<span class="version-approved">Aprovada</span>`;
+    } else if (v.dryRun) {
+      action = `<span class="version-hint">Simulação · não aprovável</span>`;
+    } else if (needsSelection) {
+      action = `<span class="version-hint">Selecione um item da base para aprovar</span>`;
+    } else {
+      action = `<button type="button" class="btn-primary btn-small btn-approve-version" data-key="${escapeHtml(v.key)}">Usar como imagem oficial</button>`;
+    }
+
+    chip.innerHTML = `
+      <div class="version-main">
+        <button type="button" class="btn-select-version" data-key="${escapeHtml(v.key)}">${escapeHtml(label)} · ${new Date(v.generatedAt).toLocaleTimeString()}</button>
+        ${action}
+      </div>
+    `;
+    chip.querySelector(".btn-select-version").addEventListener("click", () => {
       state.activeBackgroundKey = v.key;
       state.values.imagemFundo = v.key;
       renderVersions();
       scheduleRender();
     });
+    const approveBtn = chip.querySelector(".btn-approve-version");
+    if (approveBtn) {
+      approveBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        approveVersion(v.key);
+      });
+    }
     container.appendChild(chip);
+  }
+}
+
+async function approveVersion(key) {
+  const version = state.generatedVersions.find((v) => v.key === key);
+  if (!version) return;
+  if (version.dryRun) {
+    setStatus("bgGenerationStatus", "warning", "Versões de simulação não podem ser aprovadas.");
+    return;
+  }
+  if (!state.selectedCollectionId || !state.selectedItemId) {
+    setStatus("bgGenerationStatus", "warning", "Selecione um item da base para aprovar esta imagem.");
+    return;
+  }
+
+  const ok = await confirmModal("Definir esta versão como imagem oficial aprovada?");
+  if (!ok) return;
+
+  setStatus("bgGenerationStatus", "loading", "Aprovando imagem...");
+  try {
+    await api.json("/api/studio/approve-background", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        runId: version.runId,
+        collectionId: state.selectedCollectionId,
+        itemId: state.selectedItemId,
+        templateId: state.selectedTemplate.id,
+        values: state.values,
+      }),
+    });
+    version.approved = true;
+    state.activeBackgroundKey = key;
+    state.values.imagemFundo = key;
+    renderVersions();
+    scheduleRender();
+    setStatus("bgGenerationStatus", "success", "Imagem aprovada e definida como atual.");
+  } catch (err) {
+    handleApiError(err, "bgGenerationStatus");
   }
 }
 

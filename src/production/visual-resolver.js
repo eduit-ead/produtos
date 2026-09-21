@@ -1,12 +1,10 @@
 /**
  * Resolvedor compartilhado do visual atual de um item.
  *
- * Prioridade:
- * 1. card/fundo explicitamente aprovado mais recentemente;
- * 2. card/fundo produzido mais recentemente e pronto para revisão;
- * 3. imagem configurada na coleção/manifesto;
- * 4. imagem original da fonte de dados;
- * 5. sem imagem.
+ * Regras:
+ * - current_* = somente imagem oficial: approvedVisual ou imagem original da fonte.
+ * - candidate_* = nova versão ainda não aprovada (card+fundo ou fundo isolado).
+ * - nunca usa candidato pendente como imagem atual automaticamente.
  */
 
 const fs = require("fs");
@@ -74,7 +72,7 @@ async function listStudioMetadata(catalogDir) {
 
 function findStudioMetadataForItem(studioMetas, collectionId, itemId) {
   const id = itemId || "";
-  return studioMetas.find((m) => m.collectionId === collectionId && (m.itemId === id || m.itemId === null)) || null;
+  return studioMetas.find((m) => m.collectionId === collectionId && m.itemId === id) || null;
 }
 
 async function keyToPublicUrl(storage, key) {
@@ -106,7 +104,7 @@ async function resolveItemVisual(collectionId, slug, record) {
   const studioMetas = await listStudioMetadata(catalogDir);
   const studioMeta = findStudioMetadataForItem(studioMetas, collectionId, record?.id || slug);
 
-  // 1. Aprovado
+  // 1. Aprovado oficial
   const approvedVisual = entry.approvedVisual || null;
   if (approvedVisual && await keyExists(storage, approvedVisual.backgroundKey) && await keyExists(storage, approvedVisual.cardKey)) {
     return {
@@ -127,109 +125,84 @@ async function resolveItemVisual(collectionId, slug, record) {
     };
   }
 
-  // 2. Candidatos produzidos
+  // Coleta candidatos (nunca aprovados)
   const candidates = [];
 
   if (batchMeta?.storage?.keys) {
     candidates.push({
       source: "batch",
+      hasCard: true,
       backgroundKey: batchMeta.storage.keys.fundo,
       cardKey: batchMeta.storage.keys.card,
       whatsappKey: batchMeta.storage.keys.whatsapp,
       updatedAt: batchMeta.updatedAt,
       generatedAt: batchMeta.timestamps?.generated_at,
-      status: batchMeta.status,
       dryRun: batchMeta.dryRun,
     });
   }
 
-  if (entry.backgroundPath && entry.cardPath) {
+  if (entry.backgroundPath) {
     candidates.push({
       source: entry.selectedBackground === "upload" ? "upload" : "batch",
+      hasCard: !!entry.cardPath,
       backgroundKey: entry.backgroundPath,
-      cardKey: entry.cardPath,
-      whatsappKey: entry.whatsappPath || `${path.dirname(entry.cardPath)}/${slug}-whatsapp.jpg`,
+      cardKey: entry.cardPath || null,
+      whatsappKey: entry.whatsappPath || null,
       updatedAt: entry.updatedAt,
       generatedAt: entry.generatedAt || entry.renderedAt,
-      status: entry.status,
       dryRun: entry.dryRun,
     });
   }
 
   if (studioMeta?.storage?.key) {
-    const studioBackgroundKey = studioMeta.storage.key;
-    // Card do estúdio ainda não existe por padrão; aqui só registramos o fundo como candidato.
     candidates.push({
       source: "studio",
-      backgroundKey: studioBackgroundKey,
+      hasCard: false,
+      backgroundKey: studioMeta.storage.key,
       cardKey: null,
       whatsappKey: null,
       updatedAt: studioMeta.generatedAt,
       generatedAt: studioMeta.generatedAt,
-      status: "gerado",
-      dryRun: false,
+      dryRun: studioMeta.dryRun === true,
       runId: studioMeta.runId,
     });
   }
 
-  // Filtra candidatos com background válido
-  const validCandidates = [];
-  const pendingBackgrounds = [];
+  // Candidatos com fundo realmente existente
+  const existingCandidates = [];
   for (const c of candidates) {
     if (!c.backgroundKey) continue;
-    const hasBg = await keyExists(storage, c.backgroundKey);
-    const hasCard = c.cardKey ? await keyExists(storage, c.cardKey) : false;
-    if (hasBg && hasCard) {
-      validCandidates.push({ ...c, hasBg, hasCard });
-    } else if (hasBg) {
-      pendingBackgrounds.push({ ...c, hasBg, hasCard });
+    if (await keyExists(storage, c.backgroundKey)) {
+      existingCandidates.push(c);
     }
   }
 
-  const latest = pickLatest(validCandidates);
+  const latestCandidate = pickLatest(existingCandidates);
 
-  if (latest) {
-    return {
-      visualStatus: latest.status === "pronto_revisao" || latest.status === "gerado" || latest.dryRun
-        ? "aguardando_revisao"
-        : (latest.status || "aguardando_revisao"),
-      currentBackgroundUrl: await keyToPublicUrl(storage, latest.backgroundKey),
-      currentCardUrl: await keyToPublicUrl(storage, latest.cardKey),
-      currentWhatsAppUrl: latest.whatsappKey && (await keyExists(storage, latest.whatsappKey))
-        ? await keyToPublicUrl(storage, latest.whatsappKey)
-        : null,
-      candidateBackgroundUrl: await keyToPublicUrl(storage, latest.backgroundKey),
-      candidateCardUrl: await keyToPublicUrl(storage, latest.cardKey),
-      visualUpdatedAt: latest.updatedAt || latest.generatedAt || null,
-      visualSource: latest.source,
-      approvedVisual: null,
-      backgroundKey: latest.backgroundKey,
-      cardKey: latest.cardKey,
-      whatsappKey: latest.whatsappKey || null,
-    };
-  }
+  // 2. Imagem original da fonte de dados (current oficial quando não há aprovado)
+  const originalUrl = record?.sourceImage || record?.image_url || null;
 
-  // Fundo gerado isolado (sem card) ainda é mostrado como candidato, mas não muda o status atual.
-  const latestBg = pickLatest(pendingBackgrounds);
-  if (latestBg) {
+  if (latestCandidate) {
+    const isSimulation = latestCandidate.dryRun === true;
     return {
-      visualStatus: "original",
-      currentBackgroundUrl: null,
+      visualStatus: isSimulation ? "simulacao" : "aguardando_revisao",
+      currentBackgroundUrl: originalUrl || null,
       currentCardUrl: null,
       currentWhatsAppUrl: null,
-      candidateBackgroundUrl: await keyToPublicUrl(storage, latestBg.backgroundKey),
-      candidateCardUrl: null,
-      visualUpdatedAt: latestBg.updatedAt || latestBg.generatedAt || null,
-      visualSource: latestBg.source,
+      candidateBackgroundUrl: await keyToPublicUrl(storage, latestCandidate.backgroundKey),
+      candidateCardUrl: latestCandidate.cardKey && (await keyExists(storage, latestCandidate.cardKey))
+        ? await keyToPublicUrl(storage, latestCandidate.cardKey)
+        : null,
+      visualUpdatedAt: latestCandidate.updatedAt || latestCandidate.generatedAt || null,
+      visualSource: latestCandidate.source,
       approvedVisual: null,
-      backgroundKey: latestBg.backgroundKey,
-      cardKey: null,
-      whatsappKey: null,
+      backgroundKey: latestCandidate.backgroundKey,
+      cardKey: latestCandidate.cardKey || null,
+      whatsappKey: latestCandidate.whatsappKey || null,
     };
   }
 
-  // 3. Imagem original da fonte de dados
-  const originalUrl = record?.sourceImage || record?.image_url || null;
+  // 3. Apenas imagem original
   if (originalUrl) {
     return {
       visualStatus: "original",
@@ -266,16 +239,16 @@ async function resolveItemVisual(collectionId, slug, record) {
 
 async function resolveBackgroundBufferForItem(collectionId, slug, record) {
   const visual = await resolveItemVisual(collectionId, slug, record);
-  if (!visual.backgroundKey) {
-    if (record?.sourceImage || record?.image_url) {
-      const { getImageBuffer } = require("../image-cache");
-      return getImageBuffer(record.sourceImage || record.image_url);
-    }
-    throw new Error("Nenhum fundo disponível para renderizar.");
+  if (visual.visualStatus === "aprovado" && visual.backgroundKey) {
+    const catalogDir = catalogDirFor(collectionId);
+    const storage = createStorageProvider({ baseDir: catalogDir });
+    return storage.read(visual.backgroundKey);
   }
-  const catalogDir = catalogDirFor(collectionId);
-  const storage = createStorageProvider({ baseDir: catalogDir });
-  return storage.read(visual.backgroundKey);
+  if (visual.visualStatus === "original" && (record?.sourceImage || record?.image_url)) {
+    const { getImageBuffer } = require("../image-cache");
+    return getImageBuffer(record.sourceImage || record.image_url);
+  }
+  throw new Error("Nenhum fundo oficial disponível para renderizar.");
 }
 
 module.exports = {

@@ -426,6 +426,9 @@ function createRouter() {
       const metaPath = path.join(catalogDir, "studio", runId, "metadata.json");
       if (!fs.existsSync(metaPath)) return res.status(404).json({ error: "Fundo do estúdio não encontrado." });
       const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+      if (meta.dryRun === true) {
+        return res.status(409).json({ error: "Versões de simulação/dry-run não podem ser aprovadas." });
+      }
       const backgroundKey = meta.storage?.key;
       if (!backgroundKey || !(await storage.exists(backgroundKey))) {
         return res.status(404).json({ error: "Fundo do estúdio não disponível." });

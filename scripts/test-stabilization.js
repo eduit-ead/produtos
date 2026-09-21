@@ -8,18 +8,21 @@ const ExcelJS = require("exceljs");
 const sharp = require("sharp");
 
 const TEMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "stabilization-test-"));
+process.env.APP_RUNTIME_DIR = TEMP_DIR;
 process.env.AI_CATALOG_DIR = TEMP_DIR;
 process.env.STORAGE_LOCAL_DIR = TEMP_DIR;
 
 const express = require("express");
 const { createRouter } = require("../src/template-editor/api");
+const { seedRuntimeDefaults } = require("../src/config/seed");
+seedRuntimeDefaults();
 const { saveCollection, deleteCollection, listCollections } = require("../src/collections/manager");
 const genericProduction = require("../src/production/generic-production-service");
 const { renderTemplate } = require("../src/template-editor/renderer");
 
 const ROOT = path.resolve(__dirname, "..");
 const ASSETS_DIR = path.join(ROOT, "data", "assets");
-const IMPORTS_DIR = path.join(ROOT, "data", "imports");
+const IMPORTS_DIR = path.join(TEMP_DIR, "data", "imports");
 
 const app = express();
 app.use("/api", createRouter());
@@ -142,12 +145,16 @@ function makeOutputColumns() {
     const csvSemicolonDir = path.join(IMPORTS_DIR, "test-semicolon");
     fs.mkdirSync(csvSemicolonDir, { recursive: true });
     const csvSemicolonPath = path.join(csvSemicolonDir, "produtos.csv");
+    const bgA = path.join(csvSemicolonDir, "bg-a.png");
+    const bgB = path.join(csvSemicolonDir, "bg-b.png");
+    fs.writeFileSync(bgA, await sharp({ create: { width: 1080, height: 1080, channels: 3, background: "#4488cc" } }).png().toBuffer());
+    fs.writeFileSync(bgB, await sharp({ create: { width: 1080, height: 1080, channels: 3, background: "#cc8844" } }).png().toBuffer());
     const bom = "\ufeff";
     fs.writeFileSync(
       csvSemicolonPath,
       `${bom}SKU;Nome;Categoria;Descrição;image_url\n` +
-        `ABC-123;"Produto ""Premium""";Eletrônicos;"Produto de alta\nqualidade";https://i.ibb.co/Z6b3dBtT/Jornalismo.png\n` +
-        `DEF-456;Cafeteira;Cozinha;"Cafeteira  premium";https://i.ibb.co/svKGPvYR/Digital-Influence.png\n`,
+        `ABC-123;"Produto ""Premium""";Eletrônicos;"Produto de alta\nqualidade";${bgA}\n` +
+        `DEF-456;Cafeteira;Cozinha;"Cafeteira  premium";${bgB}\n`,
       "utf8"
     );
     createdImportDirs.push(csvSemicolonDir);
@@ -347,10 +354,12 @@ function makeOutputColumns() {
     const stabXlsxDir = path.join(IMPORTS_DIR, "test-stab-xlsx");
     fs.mkdirSync(stabXlsxDir, { recursive: true });
     const stabXlsxPath = path.join(stabXlsxDir, "stab.xlsx");
+    const stabBg = path.join(stabXlsxDir, "bg-x.png");
+    fs.writeFileSync(stabBg, await sharp({ create: { width: 1080, height: 1080, channels: 3, background: "#66aa88" } }).png().toBuffer());
     const stabWorkbook = new ExcelJS.Workbook();
     const stabSheet = stabWorkbook.addWorksheet("Dados");
     stabSheet.addRow(["id", "nome", "image_url"]);
-    stabSheet.addRow(["x-001", "Item X", "https://i.ibb.co/Z6b3dBtT/Jornalismo.png"]);
+    stabSheet.addRow(["x-001", "Item X", stabBg]);
     await stabWorkbook.xlsx.writeFile(stabXlsxPath);
     createdImportDirs.push(stabXlsxDir);
 
@@ -374,6 +383,7 @@ function makeOutputColumns() {
     createdCollections.push(xlsxCollection.id);
 
     const xItems = assertJson(await request(port, "GET", `/api/items?collection=${xlsxCollection.id}`));
+
     const xCreate = await request(
       port,
       "POST",

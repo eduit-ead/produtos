@@ -210,6 +210,7 @@ async function generateStudioBackground({
     format: DEFAULT_FORMAT,
     usage,
     cost,
+    dryRun: shouldDryRun,
     hashes: { fundo: sha256(buffer) },
     storage: {
       provider: process.env.STORAGE_PROVIDER || "local",

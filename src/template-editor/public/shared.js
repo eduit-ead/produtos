@@ -300,6 +300,7 @@ const STATUS_LABELS = {
   rejeitado: "Rejeitado",
   ignorado: "Ignorado",
   simulacao: "Simulação",
+  sem_imagem: "Sem imagem",
   erro: "Erro",
   cancelado: "Cancelado",
   concluido: "Concluído",

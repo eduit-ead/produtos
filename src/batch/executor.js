@@ -44,7 +44,7 @@ const {
 const { getDataSource } = require("../data-sources");
 const { loadCollection } = require("../collections/manager");
 const { renderTemplate } = require("../template-editor/renderer");
-const { resolveItemVisual } = require("../production/visual-resolver");
+const { resolveItemVisual, resolveBackgroundBufferForItem } = require("../production/visual-resolver");
 
 const MAX_ATTEMPTS = 3;
 
@@ -100,19 +100,7 @@ function catalogDirFor(job) {
 
 async function resolveOriginalBackgroundBuffer(job, item, record) {
   const collectionId = job.collectionId || LEGACY_COLLECTION_ID;
-  try {
-    const visual = await resolveItemVisual(collectionId, record.slug, record);
-    if (visual.backgroundKey) {
-      const storage = createStorageProvider({ baseDir: catalogDirFor(job) });
-      if (await storage.exists(visual.backgroundKey)) {
-        return storage.read(visual.backgroundKey);
-      }
-    }
-  } catch {}
-
-  const originalUrl = record.sourceImage || record.image_url;
-  if (originalUrl) return getImageBuffer(originalUrl);
-  throw new Error("Item não possui imagem original.");
+  return resolveBackgroundBufferForItem(collectionId, record.slug, record);
 }
 
 const TERMINAL_STATUSES = new Set([
@@ -169,8 +157,11 @@ function createLegacyProvider() {
       for (const c of courses) map[c.slug] = c;
       return map;
     },
-    async generateBackground(job, item, course, metadata) {
+    async generateBackground(job, item, course, metadata, storage) {
       if (job.background_source === "original") {
+        if (metadata?.storage?.keys?.fundo && await storage.exists(metadata.storage.keys.fundo)) {
+          return storage.read(metadata.storage.keys.fundo);
+        }
         try {
           return await resolveOriginalBackgroundBuffer(job, item, course);
         } catch (err) {
@@ -227,10 +218,13 @@ function createGenericProvider(collectionId) {
     return map;
   }
 
-  async function generateBackground(job, item, record, metadata) {
+  async function generateBackground(job, item, record, metadata, storage) {
     if (job.background_source === "original") {
+      if (metadata?.storage?.keys?.fundo && await storage.exists(metadata.storage.keys.fundo)) {
+        return storage.read(metadata.storage.keys.fundo);
+      }
       try {
-        return await resolveOriginalBackgroundBuffer(job, item, record);
+        return await resolveBackgroundBufferForItem(job.collectionId || LEGACY_COLLECTION_ID, record.slug, record);
       } catch (err) {
         throw new Error(err.message || "Item não possui imagem original.");
       }
@@ -433,7 +427,7 @@ class BatchExecutor {
     }
 
     const buffer = await this._withRetry(item, metadata, () =>
-      provider.generateBackground(job, item, course, metadata)
+      provider.generateBackground(job, item, course, metadata, this.storage)
     );
 
     if (!buffer) return false;
@@ -774,7 +768,9 @@ class BatchExecutor {
         if (job.background_source === "original") {
           try {
             const visual = await resolveItemVisual(job.collectionId || LEGACY_COLLECTION_ID, item.slug, course);
-            if (!visual.backgroundKey && !(course.image_url || course.sourceImage || "").trim()) {
+            const hasOfficialOrOriginal = visual.visualStatus === "aprovado" || visual.visualStatus === "original";
+            const hasOriginalUrl = !!(course.image_url || course.sourceImage || "").trim();
+            if (!hasOfficialOrOriginal && !hasOriginalUrl) {
               item.status = "ignorado";
               item.error = "Ignorado — imagem de origem ausente";
               changed = true;

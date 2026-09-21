@@ -8,6 +8,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const assert = require("node:assert/strict");
+const sharp = require("sharp");
 const JSZip = require("jszip");
 const { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadBucketCommand, ListObjectsV2Command } = require("@aws-sdk/client-s3");
 
@@ -126,8 +127,9 @@ function waitForJob(exec, jobId, timeoutMs = 10000) {
   const importDir = path.join(runtimeDir, "data", "imports", collectionId);
   fs.mkdirSync(importDir, { recursive: true });
   const csvPath = path.join(importDir, "produtos.csv");
-  const imageUrl = "https://i.ibb.co/Z6b3dBtT/Jornalismo.png";
-  fs.writeFileSync(csvPath, `SKU,Nome,Categoria,image_url\nSKU-001,Produto A,Categoria A,${imageUrl}`, "utf8");
+  const localImage = path.join(importDir, "bg.png");
+  fs.writeFileSync(localImage, await sharp({ create: { width: 1080, height: 1080, channels: 3, background: "#44aa88" } }).png().toBuffer());
+  fs.writeFileSync(csvPath, `SKU,Nome,Categoria,image_url\nSKU-001,Produto A,Categoria A,${localImage}`, "utf8");
 
   const collection = {
     id: collectionId,

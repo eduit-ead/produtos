@@ -20,6 +20,7 @@ const state = {
 const LEGACY_ID = "graduacao-cruzeiro";
 const COST_PER_CALL = 0.03;
 const BATCH_STATUS_LABELS = {
+  sem_imagem: "Sem imagem",
   simulacao: "Simulação",
   nao_produzido: "Não produzido",
   produzindo: "Produzindo",
@@ -42,7 +43,7 @@ function uiStatus(item) {
 }
 
 function hasSourceImage(item) {
-  const url = item?.candidate_background_url || item?.current_background_url || item?.image_url || item?.sourceImage || "";
+  const url = item?.current_background_url || item?.image_url || item?.sourceImage || "";
   return url.trim().length > 0;
 }
 
@@ -421,8 +422,17 @@ function renderItems() {
     const status = uiStatus(item);
     const hasCandidate = item.candidate_background_url && status !== "aprovado";
     const thumbUrl = item.current_card_url || item.current_background_url || null;
+    const candidateThumbUrl = hasCandidate
+      ? (item.candidate_card_url || item.candidate_background_url)
+      : null;
     const updatedAt = item.visual_updated_at ? formatDate(item.visual_updated_at) : "nunca";
     const sourceLabel = { studio: "estúdio", batch: "lote", upload: "upload", spreadsheet: "planilha", null: null }[item.visual_source] || null;
+
+    let badges = `<span class="status-tag ${status}">${escapeHtml(BATCH_STATUS_LABELS[status] || status)}</span>`;
+    if (status === "aprovado") badges += `<span class="source-badge">aprovada</span>`;
+    else if (status === "simulacao") badges += `<span class="source-badge" style="background:rgba(124,58,237,0.9);color:#fff;">simulação</span>`;
+    else if (hasCandidate) badges += `<span class="source-badge" style="background:rgba(245,158,11,0.9);color:#000;">nova imagem</span>`;
+
     card.innerHTML = `
       <div class="select-marker"></div>
       ${sourceOk ? `<span class="source-badge">imagem</span>` : `<span class="source-badge missing">sem imagem</span>`}
@@ -430,6 +440,9 @@ function renderItems() {
         ${thumbUrl
           ? `<img src="${escapeHtml(thumbUrl)}" alt="" loading="lazy">`
           : `<span class="placeholder">${initials(getItemTitle(item))}</span>`}
+        ${candidateThumbUrl
+          ? `<div class="candidate-overlay"><img src="${escapeHtml(candidateThumbUrl)}" alt="Nova" loading="lazy"><span>Nova</span></div>`
+          : ""}
       </div>
       <div class="info">
         <h4>${escapeHtml(getItemTitle(item))}</h4>
@@ -437,9 +450,7 @@ function renderItems() {
         <div class="meta">${escapeHtml(item.fields?.modalidade || "")} ${escapeHtml(item.fields?.formacao || "")} ${escapeHtml(item.fields?.duracao || "")}</div>
         <div class="meta">atualizado: ${escapeHtml(updatedAt)}${sourceLabel ? ` · ${escapeHtml(sourceLabel)}` : ""}</div>
       </div>
-      <span class="status-tag ${status}">${escapeHtml(BATCH_STATUS_LABELS[status] || status)}</span>
-      ${status === "aprovado" ? `<span class="source-badge">aprovada</span>` : ""}
-      ${hasCandidate ? `<span class="source-badge" style="background:rgba(245,158,11,0.9);color:#000;">nova imagem</span>` : ""}
+      ${badges}
     `;
     card.addEventListener("click", () => {
       if (state.selected.has(item.slug)) state.selected.delete(item.slug);

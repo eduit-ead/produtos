@@ -468,26 +468,7 @@ async function loadTemplate(templateId) {
 }
 
 async function resolveBackgroundBufferGeneric(collectionId, slug, manifestEntry, record) {
-  try {
-    return await resolveBackgroundBufferForItem(collectionId, slug, record);
-  } catch {}
-
-  const storage = storageFor(collectionId);
-  if (manifestEntry?.selectedBackground && manifestEntry?.backgroundPath) {
-    try {
-      return await storage.read(`${slug}/fundo`);
-    } catch {}
-  }
-
-  try {
-    return await storage.read(`${slug}/fundo`);
-  } catch {}
-
-  if (record?.sourceImage) {
-    return getImageBuffer(record.sourceImage);
-  }
-
-  throw new Error("Nenhum fundo disponível para renderizar.");
+  return resolveBackgroundBufferForItem(collectionId, slug, record);
 }
 
 const PRODUCTION_BACKGROUND_KEY = "__production_background__";
