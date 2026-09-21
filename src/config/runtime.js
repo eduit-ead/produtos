@@ -34,24 +34,36 @@ function ensureRuntimeDirs() {
   }
 }
 
-function copyIfMissing(src, dest) {
+function copyFileIfMissing(src, dest) {
   if (!fs.existsSync(dest)) {
     fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.cpSync(src, dest, { recursive: true });
+    fs.copyFileSync(src, dest);
+  }
+}
+
+function copyDirContentsIfMissing(srcDir, destDir) {
+  if (!fs.existsSync(srcDir)) return;
+  fs.mkdirSync(destDir, { recursive: true });
+  for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    const src = path.join(srcDir, entry.name);
+    const dest = path.join(destDir, entry.name);
+    if (entry.isDirectory()) {
+      copyDirContentsIfMissing(src, dest);
+    } else if (!fs.existsSync(dest)) {
+      fs.copyFileSync(src, dest);
+    }
   }
 }
 
 function seedDefaults() {
   if (APP_RUNTIME_DIR === ROOT) return;
 
-  const defaults = [
-    [path.join(ROOT, "data", "templates"), RUNTIME.templatesDir],
-    [path.join(ROOT, "data", "assets"), RUNTIME.assetsDir],
-    [path.join(ROOT, "data", "collections", "graduacao-cruzeiro.json"), path.join(RUNTIME.collectionsDir, "graduacao-cruzeiro.json")],
-  ];
-  for (const [src, dest] of defaults) {
-    if (fs.existsSync(src)) copyIfMissing(src, dest);
-  }
+  copyDirContentsIfMissing(path.join(ROOT, "data", "templates"), RUNTIME.templatesDir);
+  copyDirContentsIfMissing(path.join(ROOT, "data", "assets"), RUNTIME.assetsDir);
+  copyFileIfMissing(
+    path.join(ROOT, "data", "collections", "graduacao-cruzeiro.json"),
+    path.join(RUNTIME.collectionsDir, "graduacao-cruzeiro.json")
+  );
 }
 
 module.exports = {

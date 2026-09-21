@@ -1,9 +1,8 @@
 /**
- * Constrói um ZIP organizado por lote a partir do catálogo local.
+ * Constrói um ZIP organizado por lote a partir do provider de storage ativo.
  *
  * Inclui apenas itens aprovados por padrão, com nomes determinísticos e
- * relatório de arquivos ausentes. Previne path traversal validando slugs e
- * resolvendo caminhos dentro de catalogDir/<slug>.
+ * relatório de arquivos ausentes. Previne path traversal validando slugs.
  */
 
 const fs = require("fs");
@@ -14,6 +13,7 @@ const { PassThrough } = require("stream");
 const { getCatalogDir, readMetadata } = require("./metadata");
 const { readJob } = require("./job");
 const { courseFiles } = require("./naming");
+const { createStorageProvider } = require("../storage");
 
 const SAFE_SLUG_REGEX = /^[A-Za-z0-9_-]+$/;
 
@@ -35,28 +35,6 @@ function findJobFile(catalogRoot, jobId) {
   return null;
 }
 
-function resolveFilePath(catalogDir, slug, type) {
-  if (!isSafeSlug(slug)) return null;
-
-  const courseDir = path.resolve(catalogDir, slug);
-
-  let filePath;
-  if (type === "metadata") {
-    filePath = path.join(courseDir, "metadata.json");
-  } else {
-    const names = courseFiles(slug);
-    const fileName = names[type];
-    if (!fileName) return null;
-    filePath = path.join(courseDir, fileName);
-  }
-
-  const resolved = path.resolve(filePath);
-  if (!resolved.startsWith(courseDir + path.sep) && resolved !== courseDir) {
-    return null;
-  }
-  return resolved;
-}
-
 function buildFilenameSuffix(options) {
   const parts = [];
   if (options.includeCards) parts.push("cards");
@@ -66,8 +44,9 @@ function buildFilenameSuffix(options) {
   return parts.join("-") || "lote";
 }
 
-async function buildBatchZip({ catalogDir, jobId, options = {} }) {
+async function buildBatchZip({ catalogDir, storageProvider, jobId, options = {} }) {
   const root = catalogDir || getCatalogDir();
+  const storage = storageProvider || createStorageProvider({ baseDir: root });
   const jobFile = findJobFile(root, jobId);
   if (!jobFile) {
     throw new Error(`Lote não encontrado: ${jobId}`);
@@ -99,22 +78,28 @@ async function buildBatchZip({ catalogDir, jobId, options = {} }) {
     console.warn("Aviso ao montar ZIP:", err.message);
   });
 
-  function addEntry(slug, type, entryName) {
-    const filePath = resolveFilePath(jobCatalogDir, slug, type);
-    if (!filePath) {
-      missing.push({ slug, type, reason: "slug inválido ou caminho fora do diretório do curso" });
-      return;
+  async function addBufferEntry(slug, type, entryName) {
+    try {
+      const buffer = await storage.read(`${slug}/${type}`);
+      included.push({ slug, type, entryName, size: buffer.length });
+      archive.append(buffer, { name: entryName });
+    } catch (err) {
+      missing.push({ slug, type, reason: err.message || "arquivo ausente" });
     }
-    if (!fs.existsSync(filePath)) {
-      missing.push({ slug, type, path: filePath });
-      return;
-    }
-
-    const stat = fs.statSync(filePath);
-    included.push({ slug, type, entryName, size: stat.size });
-    archive.file(filePath, { name: entryName });
   }
 
+  async function addMetadataEntry(slug, entryName) {
+    try {
+      const metadata = readMetadata(jobCatalogDir, slug);
+      const buffer = Buffer.from(JSON.stringify(metadata, null, 2), "utf8");
+      included.push({ slug, type: "metadata", entryName, size: buffer.length });
+      archive.append(buffer, { name: entryName });
+    } catch (err) {
+      missing.push({ slug, type: "metadata", reason: err.message || "metadata ausente" });
+    }
+  }
+
+  const pending = [];
   for (const item of job.courses) {
     const slug = item.slug;
     if (!isSafeSlug(slug)) {
@@ -125,16 +110,16 @@ async function buildBatchZip({ catalogDir, jobId, options = {} }) {
     const metadata = readMetadata(jobCatalogDir, slug);
     if (approvedOnly && metadata?.status !== "aprovado") continue;
 
-    if (includeBackgrounds) addEntry(slug, "fundo", `${slug}-fundo.png`);
-    if (includeCards) addEntry(slug, "card", `${slug}-card.png`);
-    if (includeWhatsApp) addEntry(slug, "whatsapp", `${slug}-whatsapp.jpg`);
-    if (includeMetadata) addEntry(slug, "metadata", `${slug}/metadata.json`);
+    if (includeBackgrounds) pending.push(addBufferEntry(slug, "fundo", `${slug}-fundo.png`));
+    if (includeCards) pending.push(addBufferEntry(slug, "card", `${slug}-card.png`));
+    if (includeWhatsApp) pending.push(addBufferEntry(slug, "whatsapp", `${slug}-whatsapp.jpg`));
+    if (includeMetadata) pending.push(addMetadataEntry(slug, `${slug}/metadata.json`));
   }
+  await Promise.all(pending);
 
   if (missing.length > 0) {
     const lines = missing.map((m) => {
       let line = `${m.slug}: ${m.type}`;
-      if (m.path) line += ` (${m.path})`;
       if (m.reason) line += ` [${m.reason}]`;
       return line;
     });
@@ -150,13 +135,21 @@ async function buildBatchZip({ catalogDir, jobId, options = {} }) {
     output.on("end", () => resolve(Buffer.concat(chunks)));
     archive.finalize();
   });
+
   const suffix = buildFilenameSuffix({ includeCards, includeWhatsApp, includeBackgrounds, includeMetadata });
   const filename = `${jobId}-${suffix}.zip`;
 
   return { buffer, filename, report };
 }
 
+function findJobCatalogDir(catalogRoot, jobId) {
+  const jobFile = findJobFile(catalogRoot, jobId);
+  if (!jobFile) return null;
+  return path.dirname(path.dirname(jobFile));
+}
+
 module.exports = {
   buildBatchZip,
   isSafeSlug,
+  findJobCatalogDir,
 };

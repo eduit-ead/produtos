@@ -22,6 +22,10 @@ class StorageProvider {
     throw new Error("getPublicUrl() não implementado pelo provedor.");
   }
 
+  async read(key) {
+    throw new Error("read() não implementado pelo provedor.");
+  }
+
   async delete(key) {
     throw new Error("delete() não implementado pelo provedor.");
   }

@@ -9,6 +9,7 @@ const {
   S3Client,
   PutObjectCommand,
   HeadObjectCommand,
+  GetObjectCommand,
   DeleteObjectCommand,
   HeadBucketCommand,
   ListObjectsV2Command,
@@ -152,6 +153,31 @@ class S3StorageProvider extends StorageProvider {
       }
       throw new Error(
         `Falha ao verificar existência de '${sanitizeForLog(bucketKey)}': ${err.message}`
+      );
+    }
+  }
+
+  async read(key) {
+    const bucketKey = this._bucketKey(key);
+    try {
+      const response = await this.client.send(
+        new GetObjectCommand({
+          Bucket: this.bucket,
+          Key: bucketKey,
+        })
+      );
+      const stream = response.Body;
+      const chunks = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+      return Buffer.concat(chunks);
+    } catch (err) {
+      if (err.name === "NoSuchKey" || err.name === "NotFound" || err.$metadata?.httpStatusCode === 404) {
+        throw new Error(`Objeto não encontrado: ${sanitizeForLog(bucketKey)}`);
+      }
+      throw new Error(
+        `Falha ao ler '${sanitizeForLog(bucketKey)}': ${err.message}`
       );
     }
   }

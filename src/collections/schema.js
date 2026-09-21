@@ -10,8 +10,14 @@ const FIELD_REGEX = /^[a-zA-Z0-9_\-()\/\s]+$/i;
 
 function isSafeRelative(p) {
   if (!p || typeof p !== "string") return false;
-  const resolved = path.resolve(ROOT, p);
-  return resolved.startsWith(ROOT + path.sep) || resolved === ROOT;
+  const resolvedRoot = path.resolve(ROOT, p);
+  if (resolvedRoot.startsWith(ROOT + path.sep) || resolvedRoot === ROOT) return true;
+  const runtimeDir = process.env.APP_RUNTIME_DIR ? path.resolve(process.env.APP_RUNTIME_DIR) : null;
+  if (runtimeDir) {
+    const resolvedRuntime = path.resolve(runtimeDir, p);
+    if (resolvedRuntime.startsWith(runtimeDir + path.sep) || resolvedRuntime === runtimeDir) return true;
+  }
+  return false;
 }
 
 function validateCollection(collection) {

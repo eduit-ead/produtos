@@ -18,6 +18,8 @@ const tests = [
   "test-s3-storage.js",
   "test-batch-zip.js",
   "test-auth.js",
+  "test-s3-end-to-end.js",
+  "test-runtime-persist.js",
 ];
 
 let failed = false;

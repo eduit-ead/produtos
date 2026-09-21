@@ -5,7 +5,10 @@
  */
 
 const express = require("express");
-const { buildBatchZip } = require("./zip-download");
+const path = require("path");
+const { createStorageProvider } = require("../storage");
+const { getCatalogDir } = require("./metadata");
+const { buildBatchZip, findJobCatalogDir } = require("./zip-download");
 
 const router = express.Router();
 
@@ -32,7 +35,12 @@ router.post("/:id/download", express.json({ limit: "1mb" }), async (req, res) =>
       return res.status(400).json({ error: "Nenhum conteúdo selecionado para download." });
     }
 
-    const result = await buildBatchZip({ jobId: id, options });
+    const catalogDir = findJobCatalogDir(getCatalogDir(), id);
+    if (!catalogDir) {
+      return res.status(404).json({ error: "Lote não encontrado." });
+    }
+    const storageProvider = createStorageProvider({ baseDir: catalogDir });
+    const result = await buildBatchZip({ catalogDir, jobId: id, options, storageProvider });
 
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);

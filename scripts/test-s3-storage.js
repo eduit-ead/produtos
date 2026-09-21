@@ -47,7 +47,11 @@ function createMockClient(initialState = {}) {
 
       switch (cmdName) {
         case "PutObjectCommand": {
-          objects.set(command.input.Key, { size: command.input.Body.length, contentType: command.input.ContentType });
+          objects.set(command.input.Key, {
+            body: command.input.Body,
+            size: command.input.Body.length,
+            contentType: command.input.ContentType,
+          });
           return { ETag: `"mock-etag-${Date.now()}"` };
         }
 
@@ -64,6 +68,24 @@ function createMockClient(initialState = {}) {
         case "DeleteObjectCommand": {
           objects.delete(command.input.Key);
           return {};
+        }
+
+        case "GetObjectCommand": {
+          if (!objects.has(command.input.Key)) {
+            const err = new Error("NoSuchKey");
+            err.name = "NoSuchKey";
+            err.$metadata = { httpStatusCode: 404 };
+            throw err;
+          }
+          const obj = objects.get(command.input.Key);
+          // Simula um stream assíncrono com o conteúdo original.
+          const bodyBuffer = obj.body || Buffer.from("fake-content-" + command.input.Key);
+          const stream = {
+            async *[Symbol.asyncIterator]() {
+              yield bodyBuffer;
+            },
+          };
+          return { Body: stream, ContentType: obj.contentType };
         }
 
         case "HeadBucketCommand": {
@@ -120,6 +142,15 @@ async function run() {
     true
   );
   assert.strictEqual(await provider.exists("curso-nao-existente/card"), false);
+
+  // read retorna o mesmo buffer salvo
+  const readBuffer = await provider.read("analise-e-desenvolvimento-de-sistemas/fundos");
+  assert.ok(Buffer.isBuffer(readBuffer));
+  assert.strictEqual(readBuffer.toString("utf8"), "fake-image");
+  await assert.rejects(
+    () => provider.read("curso-nao-existente/card"),
+    /não encontrado|NoSuchKey/i
+  );
 
   // getPublicUrl não vaza credenciais
   const url = provider.getPublicUrl("marketing/whatsapp");

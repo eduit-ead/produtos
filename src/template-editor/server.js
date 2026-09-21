@@ -46,6 +46,8 @@ app.get("/", (req, res) => {
   res.sendFile(path.join(PUBLIC_DIR, "index.html"));
 });
 
-app.listen(PORT, HOST, () => {
-  console.log(`Produção Visual rodando em http://${HOST}:${PORT}`);
+const server = app.listen(PORT, HOST, () => {
+  const address = server.address();
+  const actualPort = address?.port || PORT;
+  console.log(`Produção Visual rodando em http://${HOST}:${actualPort}`);
 });

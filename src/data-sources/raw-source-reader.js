@@ -7,17 +7,10 @@ const fs = require("fs");
 const path = require("path");
 const ExcelJS = require("exceljs");
 const { parseCsvRobust, detectDelimiter } = require("./csv-parser");
-const { isSafeRelative, ROOT } = require("../collections/schema");
+const { resolveDataSourcePath } = require("./path-resolver");
 
 function resolvePath(relPath) {
-  if (!relPath || !isSafeRelative(relPath)) {
-    throw new Error("Caminho da fonte inválido ou fora do projeto.");
-  }
-  const resolved = path.resolve(ROOT, relPath);
-  if (!resolved.startsWith(ROOT + path.sep)) {
-    throw new Error("Caminho da fonte fora do projeto.");
-  }
-  return resolved;
+  return resolveDataSourcePath(relPath);
 }
 
 async function readXlsxSheets(relPath) {

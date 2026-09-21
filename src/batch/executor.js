@@ -31,6 +31,7 @@ const { convertCardToWhatsAppJpeg } = require("../whatsapp-image");
 const { createStorageProvider } = require("../storage");
 const { loadAllCourses } = require("../read-courses");
 const { getImageBuffer } = require("../image-cache");
+const { RUNTIME } = require("../config/runtime");
 const {
   LEGACY_COLLECTION_ID,
   LEGACY_TEMPLATE_ID,
@@ -223,7 +224,7 @@ function createGenericProvider(collectionId) {
       throw new Error("Template Cruzeiro não pode ser usado fora da coleção padrão.");
     }
 
-    const templatePath = path.join(ROOT, "data", "templates", `${templateId}.json`);
+    const templatePath = path.join(RUNTIME.templatesDir, `${templateId}.json`);
     const template = JSON.parse(fs.readFileSync(templatePath, "utf8"));
     const values = resolveTemplateBindingsValues(collection, record);
 
@@ -400,8 +401,7 @@ class BatchExecutor {
     item.status = "renderizando_card";
     metadata.status = "renderizando_card";
 
-    const fundoPath = this.storage.resolveLocalPath(metadata.storage.keys.fundo);
-    const bgBuffer = fs.readFileSync(fundoPath);
+    const bgBuffer = await this.storage.read(metadata.storage.keys.fundo);
     const cardBuffer = await provider.renderCard(job, item, course, bgBuffer);
     if (!Buffer.isBuffer(cardBuffer)) {
       throw new Error("Renderização do card não retornou um buffer válido.");
@@ -420,8 +420,7 @@ class BatchExecutor {
     item.status = "gerando_whatsapp";
     metadata.status = "gerando_whatsapp";
 
-    const cardPath = this.storage.resolveLocalPath(metadata.storage.keys.card);
-    const cardBuffer = fs.readFileSync(cardPath);
+    const cardBuffer = await this.storage.read(metadata.storage.keys.card);
     const whatsappBuffer = await convertCardToWhatsAppJpeg(cardBuffer);
     await this.storage.save(metadata.storage.keys.whatsapp, whatsappBuffer, { contentType: "image/jpeg" });
     metadata.hashes.whatsapp = sha256(whatsappBuffer);
@@ -571,7 +570,7 @@ class BatchExecutor {
         let job = this._refreshJob(jobId);
         if (!job) throw new Error("Job não encontrado.");
         this.catalogDir = catalogDirFor(job);
-        this.storage = this.storageProvider || createStorageProvider({ baseDir: this.catalogDir });
+        this.storage = this.storage || createStorageProvider({ baseDir: this.catalogDir });
         const provider = getProvider(job);
         const courseMap = await provider.loadMap();
 

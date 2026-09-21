@@ -12,6 +12,7 @@ const sharp = require("sharp");
 
 const { validateTemplate, createEmptyTemplate } = require("./schema/template-schema");
 const { renderTemplate } = require("./renderer");
+const { RUNTIME } = require("../config/runtime");
 const courseService = require("../course-production-service");
 const genericProduction = require("../production/generic-production-service");
 const { createStorageProvider } = require("../storage");
@@ -38,10 +39,10 @@ const { validateCollection, isSafeRelative, ROOT } = require("../collections/sch
 const { getDataSource } = require("../data-sources");
 const { readPreview, readXlsxSheets, validatePrimaryKey } = require("../data-sources/raw-source-reader");
 
-const DATA_DIR = path.join(__dirname, "..", "..", "data");
-const TEMPLATES_DIR = path.join(DATA_DIR, "templates");
-const ASSETS_DIR = path.join(DATA_DIR, "assets");
-const IMPORTS_DIR = path.join(DATA_DIR, "imports");
+const TEMPLATES_DIR = RUNTIME.templatesDir;
+const ASSETS_DIR = RUNTIME.assetsDir;
+const IMPORTS_DIR = RUNTIME.importsDir;
+const EXPORTS_DIR = RUNTIME.exportsDir;
 const BACKUPS_DIR = path.join(__dirname, "..", "..", "input", "backups");
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
@@ -72,6 +73,7 @@ function ensureDirs() {
   fs.mkdirSync(TEMPLATES_DIR, { recursive: true });
   fs.mkdirSync(ASSETS_DIR, { recursive: true });
   fs.mkdirSync(IMPORTS_DIR, { recursive: true });
+  fs.mkdirSync(EXPORTS_DIR, { recursive: true });
 }
 
 function sanitizeFilename(name) {
@@ -493,7 +495,7 @@ function createRouter() {
         return res.status(400).json({ error: "SVG não é permitido como fonte de dados." });
       }
       fs.writeFileSync(destPath, buffer);
-      res.json({ ok: true, collectionId: id, path: path.relative(process.cwd(), destPath), filename: destName });
+      res.json({ ok: true, collectionId: id, path: path.relative(RUNTIME.root, destPath), filename: destName });
     } catch (err) {
       console.error(err);
       res.status(400).json({ error: err.message });
@@ -810,8 +812,7 @@ function createRouter() {
       if (!(await storage.exists(cardKey))) {
         return res.status(400).json({ error: "Card ainda não foi renderizado." });
       }
-      const cardPath = storage.resolveLocalPath(cardKey);
-      const cardBuffer = fs.readFileSync(cardPath);
+      const cardBuffer = await storage.read(cardKey);
       const whatsappBuffer = await convertCardToWhatsAppJpeg(cardBuffer);
       await storage.save(metadata.storage.keys.whatsapp, whatsappBuffer, { contentType: "image/jpeg" });
       metadata.hashes.whatsapp = sha256(whatsappBuffer);
@@ -830,7 +831,7 @@ function createRouter() {
   // Catálogo local
   // ============================================================
 
-  function serveCatalogFile(collectionId, slug, file, res) {
+  async function serveCatalogFile(collectionId, slug, file, res) {
     const files = courseFiles(slug);
     const allowed = new Set([
       `${slug}-fundo-ia.png`,
@@ -849,28 +850,34 @@ function createRouter() {
         ? getCatalogDir()
         : path.join(getCatalogDir(), "..", collectionId);
 
-    const filePath = path.join(catalogDir, slug, file);
-    const resolved = path.resolve(filePath);
-    const courseDirResolved = path.resolve(path.join(catalogDir, slug));
-    if (!resolved.startsWith(courseDirResolved + path.sep) && resolved !== courseDirResolved) {
-      return res.status(400).json({ error: "Caminho inválido." });
+    let type = null;
+    if (file === files.fundo || file === `${slug}-fundo-ia.png` || file === `${slug}-fundo-upload.png`) type = "fundo";
+    else if (file === files.card || file === `${slug}-card-ia.png`) type = "card";
+    else if (file === files.whatsapp) type = "whatsapp";
+
+    if (!type) {
+      return res.status(400).json({ error: "Arquivo inválido." });
     }
-    if (!fs.existsSync(filePath)) {
+
+    try {
+      const storage = createStorageProvider({ baseDir: catalogDir });
+      const buffer = await storage.read(`${slug}/${type}`);
+      const ext = path.extname(file).toLowerCase();
+      const mime = ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : "image/png";
+      res.setHeader("Content-Type", mime);
+      res.setHeader("Cache-Control", "public, max-age=60");
+      res.end(buffer);
+    } catch (err) {
       return res.status(404).json({ error: "Arquivo não encontrado." });
     }
-    const ext = path.extname(file).toLowerCase();
-    const mime = ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : "image/png";
-    res.setHeader("Content-Type", mime);
-    res.setHeader("Cache-Control", "public, max-age=60");
-    res.sendFile(filePath);
   }
 
-  router.get("/catalog/:slug/:file", (req, res) => {
-    serveCatalogFile(null, req.params.slug, req.params.file, res);
+  router.get("/catalog/:slug/:file", async (req, res) => {
+    await serveCatalogFile(null, req.params.slug, req.params.file, res);
   });
 
-  router.get("/catalog/:collectionId/:slug/:file", (req, res) => {
-    serveCatalogFile(req.params.collectionId, req.params.slug, req.params.file, res);
+  router.get("/catalog/:collectionId/:slug/:file", async (req, res) => {
+    await serveCatalogFile(req.params.collectionId, req.params.slug, req.params.file, res);
   });
 
   router.get("/files/:encodedKey", async (req, res) => {
@@ -885,16 +892,16 @@ function createRouter() {
         }
       }
 
-      const filePath = storage.resolveLocalPath(key);
-      if (!fs.existsSync(filePath)) return res.status(404).json({ error: "Arquivo não encontrado." });
-      const ext = path.extname(filePath).toLowerCase();
+      const buffer = await storage.read(key);
+      const ext = path.extname(key).toLowerCase();
       const mime = ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : "image/png";
       res.setHeader("Content-Type", mime);
       res.setHeader("Cache-Control", "public, max-age=60");
-      res.sendFile(filePath);
+      res.end(buffer);
     } catch (err) {
       console.error(err);
-      res.status(400).json({ error: err.message || "Chave inválida." });
+      const status = err.message?.includes("não encontrado") ? 404 : 400;
+      res.status(status).json({ error: err.message || "Chave inválida." });
     }
   });
 
@@ -1258,7 +1265,7 @@ function createRouter() {
         ? await genericProduction.listMetadataForCollection(collection.id)
         : [];
       const body = req.body || {};
-      const outputPath = body.outputPath || path.join(getCatalogDir(), "..", "exports", `${collection.id}-com-imagens${path.extname(collection.source.path) || ".xlsx"}`);
+      const outputPath = body.outputPath || path.join(EXPORTS_DIR, `${collection.id}-com-imagens${path.extname(collection.source.path) || ".xlsx"}`);
       const plan = await source.exportUpdatedCopy(metadataList, outputPath);
       res.json({ ok: true, collectionId: collection.id, outputPath, plan });
     } catch (err) {

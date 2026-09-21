@@ -8,7 +8,8 @@ const fs = require("fs");
 const path = require("path");
 const sharp = require("sharp");
 
-const ASSETS_DIR = path.join(__dirname, "..", "..", "..", "data", "assets");
+const { RUNTIME } = require("../../config/runtime");
+const ASSETS_DIR = RUNTIME.assetsDir;
 const CHAR_WIDTH_RATIO = 0.55;
 
 function escapeXml(value = "") {

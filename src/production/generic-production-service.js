@@ -8,9 +8,10 @@ const path = require("path");
 const crypto = require("crypto");
 const sharp = require("sharp");
 
+const { RUNTIME } = require("../config/runtime");
 const { loadCollection } = require("../collections/manager");
 const { getDataSource } = require("../data-sources");
-const { LocalStorageProvider } = require("../storage/local-storage-provider");
+const { createStorageProvider } = require("../storage");
 const { courseFiles } = require("../batch/naming");
 const {
   createMetadata,
@@ -90,7 +91,7 @@ function saveManifest(collectionId, manifest) {
 }
 
 function storageFor(collectionId) {
-  return new LocalStorageProvider(catalogDirFor(collectionId));
+  return createStorageProvider({ baseDir: catalogDirFor(collectionId) });
 }
 
 function recordToMetadataRecord(record) {
@@ -151,22 +152,20 @@ function setManifestEntry(manifest, slug, partial) {
   };
 }
 
-function resolveGenericStatus(manifestEntry, catalogDir, slug) {
+async function resolveGenericStatus(manifestEntry, storage, slug) {
   if (manifestEntry?.status === "aprovado") return "aprovado";
   if (manifestEntry?.status === "rejeitado") return "rejeitado";
   if (manifestEntry?.status === "erro") return "erro";
   if (manifestEntry?.status === "gerando") return "gerando";
-  const files = courseFiles(slug);
-  const hasBg = fs.existsSync(path.join(catalogDir, slug, files.fundo));
-  const hasCard = fs.existsSync(path.join(catalogDir, slug, files.card));
+  const [hasBg, hasCard] = await Promise.all([
+    storage.exists(`${slug}/fundo`).catch(() => false),
+    storage.exists(`${slug}/card`).catch(() => false),
+  ]);
   if (hasCard || hasBg) return "gerado";
   return "pendente";
 }
 
 function catalogFileUrl(collectionId, slug, filename) {
-  const dir = catalogDirFor(collectionId);
-  const filePath = path.join(dir, slug, filename);
-  if (!fs.existsSync(filePath)) return null;
   if (isLegacyCollection(collectionId)) {
     return `/api/catalog/${encodeURIComponent(slug)}/${encodeURIComponent(filename)}`;
   }
@@ -203,10 +202,10 @@ async function listItems(collectionId) {
 
   const { records, collection } = await loadCollectionAndRecords(collectionId);
   const manifest = ensureManifest(collectionId);
-  const catalogDir = catalogDirFor(collectionId);
+  const storage = storageFor(collectionId);
 
-  return records.map((record) => {
-    const status = resolveGenericStatus(getManifestEntry(manifest, record.slug), catalogDir, record.slug);
+  return Promise.all(records.map(async (record) => {
+    const status = await resolveGenericStatus(getManifestEntry(manifest, record.slug), storage, record.slug);
     return {
       collection_id: collectionId,
       record_id: record.id,
@@ -221,7 +220,7 @@ async function listItems(collectionId) {
       source_status: record.sourceStatus,
       collection_name: collection.name,
     };
-  });
+  }));
 }
 
 async function getItem(collectionId, slug) {
@@ -232,9 +231,9 @@ async function getItem(collectionId, slug) {
   const record = await getRecord(collectionId, slug);
   if (!record) return null;
   const manifest = ensureManifest(collectionId);
-  const catalogDir = catalogDirFor(collectionId);
+  const storage = storageFor(collectionId);
   const entry = getManifestEntry(manifest, slug);
-  const status = resolveGenericStatus(entry, catalogDir, slug);
+  const status = await resolveGenericStatus(entry, storage, slug);
 
   return {
     collection_id: collectionId,
@@ -253,14 +252,12 @@ async function getItem(collectionId, slug) {
   };
 }
 
-async function createMockBackground(outputPath) {
-  const buffer = await sharp({
+async function createMockBackground() {
+  return sharp({
     create: { width: 1080, height: 1080, channels: 3, background: { r: 11, g: 17, b: 32 } },
   })
     .png()
     .toBuffer();
-  fs.writeFileSync(outputPath, buffer);
-  return buffer;
 }
 
 async function generateAIBackground(collectionId, slug, { dryRun = false, prompt = null } = {}) {
@@ -299,9 +296,7 @@ async function generateAIBackground(collectionId, slug, { dryRun = false, prompt
     let usage = null;
 
     if (dryRun) {
-      const outputPath = path.join(catalogDir, slug, files.fundo);
-      buffer = await createMockBackground(outputPath);
-      // storage.save move/atualiza se necessário; já salvamos em outputPath.
+      buffer = await createMockBackground();
     } else {
       const tempDir = fs.mkdtempSync(path.join(require("os").tmpdir(), "gen-bg-"));
       try {
@@ -379,11 +374,12 @@ async function uploadBackground(collectionId, slug, buffer, ext) {
 
   const manifest = ensureManifest(collectionId);
   const entry = getManifestEntry(manifest, slug) || {};
+  const status = await resolveGenericStatus(entry, storage, slug);
   setManifestEntry(manifest, slug, {
     ...entry,
     course_id: record.id,
     curso: record.title,
-    status: resolveGenericStatus(entry, catalogDir, slug),
+    status,
     backgroundPath: `${slug}/${files.fundo}`,
     selectedBackground: "upload",
     uploadedAt: new Date().toISOString(),
@@ -422,23 +418,23 @@ function requiredVariablesMissing(template, values) {
 }
 
 async function loadTemplate(templateId) {
-  const file = path.join(ROOT, "data", "templates", `${templateId}.json`);
+  const file = path.join(RUNTIME.templatesDir, `${templateId}.json`);
   if (!fs.existsSync(file)) throw new Error(`Template "${templateId}" não encontrado.`);
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
 async function resolveBackgroundBufferGeneric(collectionId, slug, manifestEntry, record) {
-  const catalogDir = catalogDirFor(collectionId);
   const storage = storageFor(collectionId);
-  const files = courseFiles(slug);
 
   if (manifestEntry?.selectedBackground && manifestEntry?.backgroundPath) {
-    const candidate = storage.resolveLocalPath(`${slug}/fundo`);
-    if (fs.existsSync(candidate)) return fs.readFileSync(candidate);
+    try {
+      return await storage.read(`${slug}/fundo`);
+    } catch {}
   }
 
-  const bgPath = path.join(catalogDir, slug, files.fundo);
-  if (fs.existsSync(bgPath)) return fs.readFileSync(bgPath);
+  try {
+    return await storage.read(`${slug}/fundo`);
+  } catch {}
 
   if (record?.sourceImage) {
     return getImageBuffer(record.sourceImage);
@@ -575,7 +571,8 @@ async function renderItem(collectionId, slug, { templateId = null } = {}) {
 
   await storage.save(`${slug}/card`, cardBuffer, { contentType: "image/png" });
 
-  const nextStatus = resolveGenericStatus(entry, catalogDir, slug) === "aprovado" ? "aprovado" : "gerado";
+  const resolvedStatus = await resolveGenericStatus(entry, storage, slug);
+  const nextStatus = resolvedStatus === "aprovado" ? "aprovado" : "gerado";
   setManifestEntry(manifest, slug, {
     course_id: record.id,
     curso: record.title,
@@ -598,9 +595,8 @@ async function approveItem(collectionId, slug) {
   const record = await getRecord(collectionId, validateSlug(slug));
   if (!record) throw new Error("Item não encontrado.");
 
-  const catalogDir = catalogDirFor(collectionId);
-  const files = courseFiles(slug);
-  if (!fs.existsSync(path.join(catalogDir, slug, files.card))) {
+  const storage = storageFor(collectionId);
+  if (!(await storage.exists(`${slug}/card`))) {
     throw new Error("Não é possível aprovar sem card renderizado.");
   }
 
@@ -641,13 +637,12 @@ async function rejectItem(collectionId, slug) {
 }
 
 async function generateWhatsApp(collectionId, slug) {
-  const catalogDir = catalogDirFor(collectionId);
   const storage = storageFor(collectionId);
-  const files = courseFiles(slug);
-  const cardPath = path.join(catalogDir, slug, files.card);
-  if (!fs.existsSync(cardPath)) throw new Error("Card ainda não foi renderizado.");
+  if (!(await storage.exists(`${slug}/card`))) {
+    throw new Error("Card ainda não foi renderizado.");
+  }
 
-  const cardBuffer = fs.readFileSync(cardPath);
+  const cardBuffer = await storage.read(`${slug}/card`);
   const whatsappBuffer = await convertCardToWhatsAppJpeg(cardBuffer);
   await storage.save(`${slug}/whatsapp`, whatsappBuffer, { contentType: "image/jpeg" });
 

@@ -5,14 +5,13 @@
 const fs = require("fs");
 const path = require("path");
 const { DataSource, normalizeRecord } = require("./base");
-const { isSafeRelative, ROOT } = require("../collections/schema");
+const { resolveDataSourcePath } = require("./path-resolver");
 
 class JsonDataSource extends DataSource {
   _resolvedPath() {
     const p = this.collection.source?.path;
     if (!p) throw new Error("Coleção não possui source.path.");
-    if (!isSafeRelative(p)) throw new Error("Caminho da fonte fora do projeto.");
-    return path.resolve(ROOT, p);
+    return resolveDataSourcePath(p);
   }
 
   _loadData() {

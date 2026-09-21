@@ -8,6 +8,7 @@ const path = require("path");
 const { readJob, writeJob } = require("./job");
 const { readMetadata, writeMetadata, metadataPath } = require("./metadata");
 const { courseFiles } = require("./naming");
+const { createStorageProvider } = require("../storage");
 const { catalogDirFor, ensureManifest, saveManifest, getManifestEntry, setManifestEntry } = require("../production/generic-production-service");
 
 const locks = new Map();
@@ -56,12 +57,15 @@ function withJobWriteLock(jobId, fn) {
   );
 }
 
-function cardExists(catalogDir, slug) {
+async function cardExists(catalogDir, slug, storageProvider = null) {
   const meta = readMetadata(catalogDir, slug);
   if (!meta) return false;
-  const files = courseFiles(slug);
-  const cardPath = path.join(catalogDir, slug, files.card);
-  return fs.existsSync(cardPath);
+  try {
+    const storage = storageProvider || createStorageProvider({ baseDir: catalogDir });
+    return await storage.exists(meta.storage.keys.card);
+  } catch {
+    return false;
+  }
 }
 
 function updateMetadataStatus(catalogDir, slug, status) {
@@ -113,15 +117,15 @@ function updateManifestFromMetadata(collectionId, metadata) {
   return next;
 }
 
-async function updateJobItemStatus(collectionId, jobId, slug, newStatus, recordLike = {}) {
+async function updateJobItemStatus(collectionId, jobId, slug, newStatus, recordLike = {}, storageProvider = null) {
   const catalogDir = catalogDirFor(collectionId);
-  return withJobWriteLock(jobId, () => {
+  return withJobWriteLock(jobId, async () => {
     const job = readJob(catalogDir, jobId);
     if (!job) throw new Error("Lote não encontrado.");
     const item = job.courses.find((c) => c.slug === slug);
     if (!item) throw new Error("Item não encontrado no lote.");
 
-    if (newStatus === "aprovado" && !cardExists(catalogDir, slug)) {
+    if (newStatus === "aprovado" && !(await cardExists(catalogDir, slug, storageProvider))) {
       throw new Error("Não é possível aprovar: card ainda não foi gerado.");
     }
 

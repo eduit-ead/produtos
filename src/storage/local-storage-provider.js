@@ -93,6 +93,14 @@ class LocalStorageProvider extends StorageProvider {
     }
   }
 
+  async read(key) {
+    const filePath = this._keyToFilePath(key);
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`Arquivo não encontrado: ${key}`);
+    }
+    return fs.readFileSync(filePath);
+  }
+
   async healthCheck() {
     try {
       fs.mkdirSync(this.baseDir, { recursive: true });
