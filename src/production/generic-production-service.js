@@ -27,6 +27,7 @@ const { renderCourseCard, prepareBackgroundBuffer } = require("../render-card");
 const { getImageBuffer } = require("../image-cache");
 const { convertCardToWhatsAppJpeg } = require("../whatsapp-image");
 const courseService = require("../course-production-service");
+const { resolveItemVisual, resolveBackgroundBufferForItem } = require("./visual-resolver");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const LEGACY_COLLECTION_ID = "graduacao-cruzeiro";
@@ -116,6 +117,9 @@ async function loadCollectionAndRecords(collectionId) {
 }
 
 async function getRecord(collectionId, slug) {
+  if (isLegacyCollection(collectionId)) {
+    return courseService.getCourseDetail(slug);
+  }
   const { records } = await loadCollectionAndRecords(collectionId);
   return records.find((r) => r.slug === slug) || null;
 }
@@ -134,6 +138,7 @@ function setManifestEntry(manifest, slug, partial) {
     prompt: partial.prompt ?? existing.prompt,
     backgroundPath: partial.backgroundPath ?? existing.backgroundPath,
     cardPath: partial.cardPath ?? existing.cardPath,
+    whatsappPath: partial.whatsappPath ?? existing.whatsappPath,
     selectedBackground: partial.selectedBackground ?? existing.selectedBackground,
     model: partial.model ?? existing.model,
     quality: partial.quality ?? existing.quality,
@@ -148,6 +153,7 @@ function setManifestEntry(manifest, slug, partial) {
     renderedAt: partial.renderedAt ?? existing.renderedAt,
     approvedAt: partial.approvedAt ?? existing.approvedAt,
     rejectedAt: partial.rejectedAt ?? existing.rejectedAt,
+    approvedVisual: partial.approvedVisual ?? existing.approvedVisual,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -184,11 +190,40 @@ function recordSourceImageUrl(record) {
 // ============================================================
 
 async function listLegacyItems() {
-  return courseService.listCourses();
+  const courses = await courseService.listCourses();
+  return Promise.all(courses.map(async (course) => {
+    const record = { sourceImage: course.image_url || course.current_background_url || "" };
+    const visual = await resolveItemVisual(LEGACY_COLLECTION_ID, course.slug, record);
+    return {
+      ...course,
+      visual_status: visual.visualStatus,
+      current_background_url: visual.currentBackgroundUrl || course.current_background_url || null,
+      current_card_url: visual.currentCardUrl || course.current_card_url || null,
+      current_whatsapp_url: visual.currentWhatsAppUrl || course.current_whatsapp_url || null,
+      candidate_background_url: visual.candidateBackgroundUrl,
+      candidate_card_url: visual.candidateCardUrl,
+      visual_updated_at: visual.visualUpdatedAt,
+      visual_source: visual.visualSource,
+    };
+  }));
 }
 
 async function getLegacyItem(slug) {
-  return courseService.getCourseDetail(slug);
+  const course = await courseService.getCourseDetail(slug);
+  if (!course) return null;
+  const record = { sourceImage: course.image_url || course.current_background_url || "" };
+  const visual = await resolveItemVisual(LEGACY_COLLECTION_ID, slug, record);
+  return {
+    ...course,
+    visual_status: visual.visualStatus,
+    current_background_url: visual.currentBackgroundUrl || course.current_background_url || null,
+    current_card_url: visual.currentCardUrl || course.current_card_url || null,
+    current_whatsapp_url: visual.currentWhatsAppUrl || course.current_whatsapp_url || null,
+    candidate_background_url: visual.candidateBackgroundUrl,
+    candidate_card_url: visual.candidateCardUrl,
+    visual_updated_at: visual.visualUpdatedAt,
+    visual_source: visual.visualSource,
+  };
 }
 
 // ============================================================
@@ -201,22 +236,26 @@ async function listItems(collectionId) {
   }
 
   const { records, collection } = await loadCollectionAndRecords(collectionId);
-  const manifest = ensureManifest(collectionId);
-  const storage = storageFor(collectionId);
 
   return Promise.all(records.map(async (record) => {
-    const status = await resolveGenericStatus(getManifestEntry(manifest, record.slug), storage, record.slug);
+    const visual = await resolveItemVisual(collectionId, record.slug, record);
     return {
       collection_id: collectionId,
       record_id: record.id,
       slug: record.slug,
       title: record.title,
       fields: record.fields,
-      current_card_url: null,
-      current_background_url: recordSourceImageUrl(record),
-      ai_background_url: catalogFileUrl(collectionId, record.slug, `${record.slug}-fundo.png`),
-      ai_card_url: catalogFileUrl(collectionId, record.slug, `${record.slug}-card.png`),
-      status,
+      visual_status: visual.visualStatus,
+      current_background_url: visual.currentBackgroundUrl,
+      current_card_url: visual.currentCardUrl,
+      current_whatsapp_url: visual.currentWhatsAppUrl,
+      candidate_background_url: visual.candidateBackgroundUrl,
+      candidate_card_url: visual.candidateCardUrl,
+      ai_background_url: visual.candidateBackgroundUrl || catalogFileUrl(collectionId, record.slug, `${record.slug}-fundo.png`),
+      ai_card_url: visual.candidateCardUrl || catalogFileUrl(collectionId, record.slug, `${record.slug}-card.png`),
+      visual_updated_at: visual.visualUpdatedAt,
+      visual_source: visual.visualSource,
+      status: visual.visualStatus,
       source_status: record.sourceStatus,
       collection_name: collection.name,
     };
@@ -231,9 +270,8 @@ async function getItem(collectionId, slug) {
   const record = await getRecord(collectionId, slug);
   if (!record) return null;
   const manifest = ensureManifest(collectionId);
-  const storage = storageFor(collectionId);
   const entry = getManifestEntry(manifest, slug);
-  const status = await resolveGenericStatus(entry, storage, slug);
+  const visual = await resolveItemVisual(collectionId, slug, record);
 
   return {
     collection_id: collectionId,
@@ -242,11 +280,17 @@ async function getItem(collectionId, slug) {
     title: record.title,
     fields: record.fields,
     prompt: record.prompt || record.title,
-    current_card_url: null,
-    current_background_url: recordSourceImageUrl(record),
-    ai_background_url: catalogFileUrl(collectionId, slug, `${slug}-fundo.png`),
-    ai_card_url: catalogFileUrl(collectionId, slug, `${slug}-card.png`),
-    status,
+    visual_status: visual.visualStatus,
+    current_background_url: visual.currentBackgroundUrl,
+    current_card_url: visual.currentCardUrl,
+    current_whatsapp_url: visual.currentWhatsAppUrl,
+    candidate_background_url: visual.candidateBackgroundUrl,
+    candidate_card_url: visual.candidateCardUrl,
+    ai_background_url: visual.candidateBackgroundUrl || catalogFileUrl(collectionId, slug, `${slug}-fundo.png`),
+    ai_card_url: visual.candidateCardUrl || catalogFileUrl(collectionId, slug, `${slug}-card.png`),
+    visual_updated_at: visual.visualUpdatedAt,
+    visual_source: visual.visualSource,
+    status: visual.visualStatus,
     source_status: record.sourceStatus,
     manifest: entry,
   };
@@ -326,7 +370,7 @@ async function generateAIBackground(collectionId, slug, { dryRun = false, prompt
       curso: record.title,
       status: "gerado",
       prompt: usedPrompt,
-      backgroundPath: `${slug}/${files.fundo}`,
+      backgroundPath: `${slug}/fundo`,
       selectedBackground: "ai",
       model,
       quality,
@@ -380,7 +424,7 @@ async function uploadBackground(collectionId, slug, buffer, ext) {
     course_id: record.id,
     curso: record.title,
     status,
-    backgroundPath: `${slug}/${files.fundo}`,
+    backgroundPath: `${slug}/fundo`,
     selectedBackground: "upload",
     uploadedAt: new Date().toISOString(),
     error: null,
@@ -424,8 +468,11 @@ async function loadTemplate(templateId) {
 }
 
 async function resolveBackgroundBufferGeneric(collectionId, slug, manifestEntry, record) {
-  const storage = storageFor(collectionId);
+  try {
+    return await resolveBackgroundBufferForItem(collectionId, slug, record);
+  } catch {}
 
+  const storage = storageFor(collectionId);
   if (manifestEntry?.selectedBackground && manifestEntry?.backgroundPath) {
     try {
       return await storage.read(`${slug}/fundo`);
@@ -577,7 +624,7 @@ async function renderItem(collectionId, slug, { templateId = null } = {}) {
     course_id: record.id,
     curso: record.title,
     status: nextStatus,
-    cardPath: `${slug}/${files.card}`,
+    cardPath: `${slug}/card`,
     template_id: useTemplateId,
     renderedAt: new Date().toISOString(),
     error: null,
@@ -587,7 +634,7 @@ async function renderItem(collectionId, slug, { templateId = null } = {}) {
   return { cardPath: path.join(catalogDir, slug, files.card), size: cardBuffer.length };
 }
 
-async function approveItem(collectionId, slug) {
+async function approveItem(collectionId, slug, { source = "batch", runId = null, jobId = null, templateId = null } = {}) {
   if (isLegacyCollection(collectionId)) {
     return courseService.approveCourse(slug);
   }
@@ -595,20 +642,47 @@ async function approveItem(collectionId, slug) {
   const record = await getRecord(collectionId, validateSlug(slug));
   if (!record) throw new Error("Item não encontrado.");
 
+  const catalogDir = catalogDirFor(collectionId);
   const storage = storageFor(collectionId);
-  if (!(await storage.exists(`${slug}/card`))) {
+  const files = courseFiles(slug);
+
+  // Resolve as chaves do visual atual (aprovado ou candidato).
+  const visual = await resolveItemVisual(collectionId, slug, record);
+  if (!visual.backgroundKey || !visual.cardKey || !(await storage.exists(visual.cardKey))) {
     throw new Error("Não é possível aprovar sem card renderizado.");
+  }
+
+  // Gera WhatsApp se ainda não existir.
+  const whatsappKey = visual.whatsappKey || `${slug}/${files.whatsapp}`;
+  if (!(await storage.exists(whatsappKey))) {
+    const cardBuffer = await storage.read(visual.cardKey);
+    const whatsappBuffer = await convertCardToWhatsAppJpeg(cardBuffer);
+    await storage.save(whatsappKey, whatsappBuffer, { contentType: "image/jpeg" });
   }
 
   const manifest = ensureManifest(collectionId);
   const entry = getManifestEntry(manifest, slug) || {};
+  const approvedAt = new Date().toISOString();
   setManifestEntry(manifest, slug, {
     ...entry,
     course_id: record.id,
     curso: record.title,
     status: "aprovado",
-    approvedAt: new Date().toISOString(),
+    approvedAt,
     error: null,
+    approvedVisual: {
+      collectionId,
+      slug,
+      source,
+      runId,
+      jobId,
+      templateId: templateId || entry.template_id || null,
+      backgroundKey: visual.backgroundKey,
+      cardKey: visual.cardKey,
+      whatsappKey,
+      approvedAt,
+      updatedAt: approvedAt,
+    },
   });
   saveManifest(collectionId, manifest);
   return getManifestEntry(manifest, slug);
@@ -637,24 +711,29 @@ async function rejectItem(collectionId, slug) {
 }
 
 async function generateWhatsApp(collectionId, slug) {
+  const record = await getRecord(collectionId, slug);
+  const visual = record ? await resolveItemVisual(collectionId, slug, record) : null;
+  const cardKey = visual?.cardKey || `${slug}/${files.card}`;
+  const whatsappKey = visual?.whatsappKey || `${slug}/${files.whatsapp}`;
   const storage = storageFor(collectionId);
-  if (!(await storage.exists(`${slug}/card`))) {
+  if (!(await storage.exists(cardKey))) {
     throw new Error("Card ainda não foi renderizado.");
   }
 
-  const cardBuffer = await storage.read(`${slug}/card`);
+  const cardBuffer = await storage.read(cardKey);
   const whatsappBuffer = await convertCardToWhatsAppJpeg(cardBuffer);
-  await storage.save(`${slug}/whatsapp`, whatsappBuffer, { contentType: "image/jpeg" });
+  await storage.save(whatsappKey, whatsappBuffer, { contentType: "image/jpeg" });
 
   const manifest = ensureManifest(collectionId);
   const entry = getManifestEntry(manifest, slug) || {};
   setManifestEntry(manifest, slug, {
     ...entry,
     status: entry.status === "aprovado" ? "aprovado" : "pronto_revisao",
+    whatsappPath: `${slug}/whatsapp`,
     error: null,
   });
   saveManifest(collectionId, manifest);
-  return { size: whatsappBuffer.length, file: files.whatsapp };
+  return { size: whatsappBuffer.length, file: courseFiles(slug).whatsapp };
 }
 
 async function listMetadataForCollection(collectionId) {

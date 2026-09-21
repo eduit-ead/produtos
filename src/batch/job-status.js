@@ -10,6 +10,7 @@ const { readMetadata, writeMetadata, metadataPath } = require("./metadata");
 const { courseFiles } = require("./naming");
 const { createStorageProvider } = require("../storage");
 const { catalogDirFor, ensureManifest, saveManifest, getManifestEntry, setManifestEntry } = require("../production/generic-production-service");
+const { resolveItemVisual } = require("../production/visual-resolver");
 
 const locks = new Map();
 
@@ -95,7 +96,7 @@ function updateMetadataStatus(catalogDir, slug, status) {
   return metadata;
 }
 
-function updateManifestFromMetadata(collectionId, metadata) {
+async function updateManifestFromMetadata(collectionId, metadata, jobId = null) {
   const manifest = ensureManifest(collectionId);
   const entry = getManifestEntry(manifest, metadata.slug) || {};
   const next = {
@@ -114,6 +115,21 @@ function updateManifestFromMetadata(collectionId, metadata) {
   if (metadata.status === "aprovado") {
     next.approvedAt = metadata.timestamps.approved_at;
     next.rejectedAt = null;
+    const files = metadata.files || {};
+    const storageKeys = metadata.storage?.keys || {};
+    next.approvedVisual = {
+      collectionId,
+      slug: metadata.slug,
+      source: "batch",
+      jobId: jobId || null,
+      runId: null,
+      templateId: metadata.template_id || null,
+      backgroundKey: storageKeys.fundo || files.backgroundPath || `${metadata.slug}/${courseFiles(metadata.slug).fundo}`,
+      cardKey: storageKeys.card || files.cardPath || `${metadata.slug}/${courseFiles(metadata.slug).card}`,
+      whatsappKey: storageKeys.whatsapp || files.whatsappPath || `${metadata.slug}/${courseFiles(metadata.slug).whatsapp}`,
+      approvedAt: next.approvedAt,
+      updatedAt: metadata.updatedAt,
+    };
   } else if (metadata.status === "rejeitado") {
     next.rejectedAt = metadata.timestamps.rejected_at;
     next.approvedAt = null;
@@ -161,14 +177,14 @@ async function updateJobItemStatus(collectionId, jobId, slug, newStatus, recordL
     if (recordLike.course_id) metadata.course_id = recordLike.course_id;
     writeMetadata(catalogDir, slug, metadata);
 
-    const manifestEntry = updateManifestFromMetadata(collectionId, metadata);
+    const manifestEntry = await updateManifestFromMetadata(collectionId, metadata, jobId);
     return { job, metadata, manifestEntry };
   });
 }
 
 async function resetJobItemForRegeneration(collectionId, jobId, slug) {
   const catalogDir = catalogDirFor(collectionId);
-  return withJobWriteLock(jobId, () => {
+  return withJobWriteLock(jobId, async () => {
     const job = readJob(catalogDir, jobId);
     if (!job) throw new Error("Lote não encontrado.");
     const item = job.courses.find((c) => c.slug === slug);
@@ -183,7 +199,7 @@ async function resetJobItemForRegeneration(collectionId, jobId, slug) {
     writeJob(catalogDir, job);
 
     const metadata = updateMetadataStatus(catalogDir, slug, "pendente");
-    updateManifestFromMetadata(collectionId, metadata);
+    await updateManifestFromMetadata(collectionId, metadata);
     return { job };
   });
 }

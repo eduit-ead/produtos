@@ -351,6 +351,18 @@ function createRouter() {
     }
   });
 
+  async function archiveIfExists(storage, key, contentType) {
+    try {
+      if (!(await storage.exists(key))) return;
+      const buffer = await storage.read(key);
+      const now = Date.now();
+      const archiveKey = key.replace(/\/([^/]+)$/, `/versions/${now}-$1`);
+      await storage.save(archiveKey, buffer, { contentType });
+    } catch (err) {
+      console.warn("Falha ao arquivar versão anterior de", key, err.message);
+    }
+  }
+
   // ============================================================
   // Studio AI background generation
   // ============================================================
@@ -396,6 +408,82 @@ function createRouter() {
         ? 400
         : 500;
       res.status(status).json({ error: err.message || "Erro ao gerar fundo." });
+    }
+  });
+
+  router.post("/studio/approve-background", express.json({ limit: "2mb" }), async (req, res) => {
+    try {
+      const { runId, collectionId, itemId, templateId, values } = req.body || {};
+      if (!runId || !collectionId || !itemId) {
+        return res.status(400).json({ error: "runId, collectionId e itemId são obrigatórios." });
+      }
+      const slug = itemId;
+      const record = await genericProduction.getRecord(collectionId, slug);
+      if (!record) return res.status(404).json({ error: "Item não encontrado." });
+
+      const catalogDir = genericProduction.catalogDirFor(collectionId);
+      const storage = createStorageProvider({ baseDir: catalogDir });
+      const metaPath = path.join(catalogDir, "studio", runId, "metadata.json");
+      if (!fs.existsSync(metaPath)) return res.status(404).json({ error: "Fundo do estúdio não encontrado." });
+      const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+      const backgroundKey = meta.storage?.key;
+      if (!backgroundKey || !(await storage.exists(backgroundKey))) {
+        return res.status(404).json({ error: "Fundo do estúdio não disponível." });
+      }
+
+      const backgroundBuffer = await storage.read(backgroundKey);
+      const usedTemplateId = templateId || meta.templateId;
+      const usedValues = { ...(values || meta.values || {}) };
+      usedValues.imagemFundo = genericProduction.PRODUCTION_BACKGROUND_KEY;
+      const runtimeAssets = { [genericProduction.PRODUCTION_BACKGROUND_KEY]: backgroundBuffer };
+      const png = await renderSavedTemplate(usedTemplateId, usedValues, runtimeAssets);
+
+      const files = courseFiles(slug);
+      const backgroundKeyOut = `${slug}/${files.fundo}`;
+      const cardKeyOut = `${slug}/${files.card}`;
+      const whatsappKeyOut = `${slug}/${files.whatsapp}`;
+
+      // Preserva versões anteriores dos arquivos padrão, se existirem.
+      await archiveIfExists(storage, backgroundKeyOut, "image/png");
+      await archiveIfExists(storage, cardKeyOut, "image/png");
+      await archiveIfExists(storage, whatsappKeyOut, "image/jpeg");
+
+      await storage.save(backgroundKeyOut, backgroundBuffer, { contentType: "image/png" });
+      await storage.save(cardKeyOut, png, { contentType: "image/png" });
+      const whatsappBuffer = await convertCardToWhatsAppJpeg(png);
+      await storage.save(whatsappKeyOut, whatsappBuffer, { contentType: "image/jpeg" });
+
+      const manifest = genericProduction.ensureManifest(collectionId);
+      const entry = genericProduction.getManifestEntry(manifest, slug) || {};
+      const approvedAt = new Date().toISOString();
+      genericProduction.setManifestEntry(manifest, slug, {
+        ...entry,
+        course_id: record.id,
+        curso: record.title,
+        status: "aprovado",
+        approvedAt,
+        approvedVisual: {
+          collectionId,
+          slug,
+          source: "studio",
+          runId,
+          templateId: usedTemplateId,
+          backgroundKey: backgroundKeyOut,
+          cardKey: cardKeyOut,
+          whatsappKey: whatsappKeyOut,
+          approvedAt,
+          updatedAt: approvedAt,
+        },
+      });
+      genericProduction.saveManifest(collectionId, manifest);
+
+      res.json({ ok: true, approvedVisual: manifest.courses[slug].approvedVisual });
+    } catch (err) {
+      console.error(err);
+      const status = err.message?.includes("inválido") || err.message?.includes("obrigatório") || err.message?.includes("não encontrada") || err.message?.includes("não possui")
+        ? 400
+        : 500;
+      res.status(status).json({ error: err.message || "Erro ao aprovar fundo do estúdio." });
     }
   });
 

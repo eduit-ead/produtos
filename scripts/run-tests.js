@@ -25,6 +25,7 @@ const tests = [
   "test-official-template-equivalence.js",
   "test-batch-entrypoint.js",
   "test-studio-ai-background.js",
+  "test-studio-batch-visual-integration.js",
 ];
 
 let failed = false;

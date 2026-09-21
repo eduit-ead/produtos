@@ -44,6 +44,7 @@ const {
 const { getDataSource } = require("../data-sources");
 const { loadCollection } = require("../collections/manager");
 const { renderTemplate } = require("../template-editor/renderer");
+const { resolveItemVisual } = require("../production/visual-resolver");
 
 const MAX_ATTEMPTS = 3;
 
@@ -95,6 +96,23 @@ async function createMockBackgroundBuffer() {
 function catalogDirFor(job) {
   const collectionId = job.collectionId || LEGACY_COLLECTION_ID;
   return catalogDirForCollection(collectionId);
+}
+
+async function resolveOriginalBackgroundBuffer(job, item, record) {
+  const collectionId = job.collectionId || LEGACY_COLLECTION_ID;
+  try {
+    const visual = await resolveItemVisual(collectionId, record.slug, record);
+    if (visual.backgroundKey) {
+      const storage = createStorageProvider({ baseDir: catalogDirFor(job) });
+      if (await storage.exists(visual.backgroundKey)) {
+        return storage.read(visual.backgroundKey);
+      }
+    }
+  } catch {}
+
+  const originalUrl = record.sourceImage || record.image_url;
+  if (originalUrl) return getImageBuffer(originalUrl);
+  throw new Error("Item não possui imagem original.");
 }
 
 const TERMINAL_STATUSES = new Set([
@@ -153,8 +171,11 @@ function createLegacyProvider() {
     },
     async generateBackground(job, item, course, metadata) {
       if (job.background_source === "original") {
-        if (!course.image_url) throw new Error("Curso não possui imagem original.");
-        return getImageBuffer(course.image_url);
+        try {
+          return await resolveOriginalBackgroundBuffer(job, item, course);
+        } catch (err) {
+          throw new Error(err.message || "Curso não possui imagem original.");
+        }
       }
       if (job.dryRun) return createMockBackgroundBuffer();
       if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY não configurada.");
@@ -208,8 +229,11 @@ function createGenericProvider(collectionId) {
 
   async function generateBackground(job, item, record, metadata) {
     if (job.background_source === "original") {
-      if (!record.sourceImage) throw new Error("Item não possui imagem original.");
-      return getImageBuffer(record.sourceImage);
+      try {
+        return await resolveOriginalBackgroundBuffer(job, item, record);
+      } catch (err) {
+        throw new Error(err.message || "Item não possui imagem original.");
+      }
     }
     if (job.dryRun) return createMockBackgroundBuffer();
     if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY não configurada.");
@@ -730,7 +754,7 @@ class BatchExecutor {
     const provider = getProvider(job);
     const courseMap = await provider.loadMap();
 
-    return this._withJobLock(jobId, () => {
+    return this._withJobLock(jobId, async () => {
       const fresh = readJob(this.catalogDir, jobId);
       if (!fresh) throw new Error("Job não encontrado.");
       let changed = false;
@@ -748,8 +772,14 @@ class BatchExecutor {
         }
 
         if (job.background_source === "original") {
-          const sourceImage = course.image_url || course.sourceImage || "";
-          if (!sourceImage.trim()) {
+          try {
+            const visual = await resolveItemVisual(job.collectionId || LEGACY_COLLECTION_ID, item.slug, course);
+            if (!visual.backgroundKey && !(course.image_url || course.sourceImage || "").trim()) {
+              item.status = "ignorado";
+              item.error = "Ignorado — imagem de origem ausente";
+              changed = true;
+            }
+          } catch {
             item.status = "ignorado";
             item.error = "Ignorado — imagem de origem ausente";
             changed = true;

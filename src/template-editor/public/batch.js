@@ -38,16 +38,11 @@ const BATCH_STATUS_LABELS = {
 };
 
 function uiStatus(item) {
-  const s = item?.status;
-  if (s === "simulacao") return "simulacao";
-  if (["gerando_fundo", "fundo_gerado", "renderizando_card", "gerando_whatsapp"].includes(s)) return "produzindo";
-  if (s === "pronto_revisao") return "aguardando_revisao";
-  if (["aprovado", "rejeitado", "ignorado", "erro", "cancelado"].includes(s)) return s;
-  return "nao_produzido";
+  return item?.visual_status || "sem_imagem";
 }
 
 function hasSourceImage(item) {
-  const url = item?.current_background_url || item?.image_url || item?.sourceImage || "";
+  const url = item?.candidate_background_url || item?.current_background_url || item?.image_url || item?.sourceImage || "";
   return url.trim().length > 0;
 }
 
@@ -351,12 +346,12 @@ function applyFilters() {
   if (statusFilter !== "all") {
     filtered = filtered.filter((item) => {
       switch (statusFilter) {
-        case "nao_produzido":
-          return uiStatus(item) === "nao_produzido";
+        case "sem_imagem":
+          return uiStatus(item) === "sem_imagem";
         case "com_imagem":
           return hasSourceImage(item);
-        case "sem_imagem":
-          return !hasSourceImage(item);
+        case "original":
+          return uiStatus(item) === "original";
         case "aguardando_revisao":
           return uiStatus(item) === "aguardando_revisao";
         case "aprovado":
@@ -379,8 +374,6 @@ function applyFilters() {
         return getItemTitle(b).localeCompare(getItemTitle(a));
       case "status":
         return uiStatus(a).localeCompare(uiStatus(b));
-      case "nao_produzido_primeiro":
-        return (uiStatus(a) === "nao_produzido" ? -1 : 1) - (uiStatus(b) === "nao_produzido" ? -1 : 1);
       case "revisao_primeiro":
         return (uiStatus(a) === "aguardando_revisao" ? -1 : 1) - (uiStatus(b) === "aguardando_revisao" ? -1 : 1);
       case "recent":
@@ -426,20 +419,27 @@ function renderItems() {
     card.className = "item-card" + (state.selected.has(item.slug) ? " selected" : "");
     const sourceOk = hasSourceImage(item);
     const status = uiStatus(item);
+    const hasCandidate = item.candidate_background_url && status !== "aprovado";
+    const thumbUrl = item.current_card_url || item.current_background_url || null;
+    const updatedAt = item.visual_updated_at ? formatDate(item.visual_updated_at) : "nunca";
+    const sourceLabel = { studio: "estúdio", batch: "lote", upload: "upload", spreadsheet: "planilha", null: null }[item.visual_source] || null;
     card.innerHTML = `
       <div class="select-marker"></div>
       ${sourceOk ? `<span class="source-badge">imagem</span>` : `<span class="source-badge missing">sem imagem</span>`}
       <div class="thumb">
-        ${item.current_card_url
-          ? `<img src="${escapeHtml(item.current_card_url)}" alt="" loading="lazy">`
+        ${thumbUrl
+          ? `<img src="${escapeHtml(thumbUrl)}" alt="" loading="lazy">`
           : `<span class="placeholder">${initials(getItemTitle(item))}</span>`}
       </div>
       <div class="info">
         <h4>${escapeHtml(getItemTitle(item))}</h4>
         <div class="meta">${escapeHtml(item.modalidade || item.formacao || item.fields?.categoria || item.fields?.Categoria || item.source_status || "")}</div>
         <div class="meta">${escapeHtml(item.fields?.modalidade || "")} ${escapeHtml(item.fields?.formacao || "")} ${escapeHtml(item.fields?.duracao || "")}</div>
+        <div class="meta">atualizado: ${escapeHtml(updatedAt)}${sourceLabel ? ` · ${escapeHtml(sourceLabel)}` : ""}</div>
       </div>
       <span class="status-tag ${status}">${escapeHtml(BATCH_STATUS_LABELS[status] || status)}</span>
+      ${status === "aprovado" ? `<span class="source-badge">aprovada</span>` : ""}
+      ${hasCandidate ? `<span class="source-badge" style="background:rgba(245,158,11,0.9);color:#000;">nova imagem</span>` : ""}
     `;
     card.addEventListener("click", () => {
       if (state.selected.has(item.slug)) state.selected.delete(item.slug);
@@ -465,14 +465,18 @@ function renderItems() {
 function renderItemsInfo() {
   const box = byId("itemsInfo");
   const total = state.items.length;
-  const withImage = state.items.filter(hasSourceImage).length;
-  const withoutImage = total - withImage;
-  const withPrompt = state.items.filter(hasPrompt).length;
+  const approved = state.items.filter((i) => uiStatus(i) === "aprovado").length;
+  const review = state.items.filter((i) => uiStatus(i) === "aguardando_revisao").length;
+  const noImage = state.items.filter((i) => uiStatus(i) === "sem_imagem").length;
+  const rejected = state.items.filter((i) => uiStatus(i) === "rejeitado").length;
+  const errors = state.items.filter((i) => uiStatus(i) === "erro").length;
   box.innerHTML = `
     <strong>${total}</strong> itens ·
-    <strong>${withImage}</strong> com imagem de origem ·
-    <strong>${withoutImage}</strong> sem imagem ·
-    <strong>${withPrompt}</strong> com prompt
+    <strong>${approved}</strong> aprovados ·
+    <strong>${review}</strong> aguardando revisão ·
+    <strong>${rejected}</strong> rejeitados ·
+    <strong>${errors}</strong> erros ·
+    <strong>${noImage}</strong> sem imagem
   `;
 }
 
