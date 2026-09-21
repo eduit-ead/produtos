@@ -174,3 +174,27 @@ Preparar o MVP para deploy containerizado com volume persistente e expor, de for
 - Arquivos criados: `.dockerignore`, `docker-compose.example.yml`, `src/config/seed.js`, `src/template-editor/system-status.js`, `DEPLOY.md`.
 - Arquivos alterados: `Dockerfile`, `.env.example`, `src/template-editor/api.js`, `src/template-editor/public/index.html`, `src/template-editor/public/home.css`, `src/template-editor/public/home.js`, `src/template-editor/public/shared.js`, `src/template-editor/public/batch.js`, `src/template-editor/public/cursos.js`.
 - Nenhuma dependência nova adicionada.
+
+## 2026-09-21 — Importação de fundos piloto de IA para o fluxo oficial
+
+### Contexto
+Incorporar ao fluxo oficial três fundos gerados pelo piloto de IA (Cibersegurança, Gestão Pública, Nutrição), reutilizando os dados oficiais da planilha/coleção e sem fazer novas chamadas à OpenAI.
+
+### Decisão
+- Criar `scripts/import-ai-pilot.js` como operação reutilizável e idempotente.
+- Usar `APP_RUNTIME_DIR` via `src/config/runtime.js` e `StorageProvider` (`LocalStorageProvider`) para salvar fundo, card e WhatsApp.
+- Preservar hash sha256 do fundo piloto: importar buffer original sem re-encode, comparar com versão existente e não sobrescrever se houver hash diferente.
+- Renderizar card pelo renderer legado `src/render-card.js` através do adaptador oficial `src/production/generic-production-service.js` (`renderItem`), gerando WhatsApp via `convertCardToWhatsAppJpeg`.
+- Registrar background, card e WhatsApp em `metadata.json` por curso e criar um único lote oficial nomeado "Piloto oficial — fundos IA existentes" com itens em `pronto_revisao`.
+- Não aprovar automaticamente; não alterar `input/cursos.xlsx`, `output/final`, `output/whatsapp`, `output/ai-pilot`, `src/render-card.js` nem apagar lotes existentes.
+- Adicionar `scripts/test-import-ai-pilot.js` para validar via API que o lote aparece, itens estão prontos para revisão e as imagens são servidas corretamente.
+
+### Alternativas descartadas
+- Usar `BatchExecutor` para processar o lote: descartado porque o executor espera gerar fundos (OpenAI/original/mock) e não aceita importação de arquivos existentes; optou-se por construir o job já concluído a partir dos arquivos reais.
+- Sobrescrever versões existentes sem verificação de hash: descartado para preservar integridade; conflito de hash gera erro.
+- Copiar arquivos com caminhos absolutos do Windows: descartado; todos os caminhos são relativos via `path.join` e `ROOT`.
+
+### Impacto
+- Novos arquivos: `scripts/import-ai-pilot.js`, `scripts/test-import-ai-pilot.js`.
+- Arquivos gerados localmente (gitignored em `output/ai-catalog/`): fundos, cards, WhatsApp, metadata.json e job JSON.
+- Nenhuma alteração em arquivos fonte existentes; nenhuma dependência nova.
