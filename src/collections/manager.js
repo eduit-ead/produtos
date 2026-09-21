@@ -7,8 +7,9 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { validateCollection, sanitizeCollectionId, isSafeRelative, ROOT } = require("./schema");
+const { RUNTIME } = require("../config/runtime");
 
-const COLLECTIONS_DIR = path.join(ROOT, "data", "collections");
+const COLLECTIONS_DIR = RUNTIME.collectionsDir;
 
 function ensureCollectionsDir() {
   fs.mkdirSync(COLLECTIONS_DIR, { recursive: true });

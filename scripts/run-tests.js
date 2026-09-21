@@ -15,6 +15,9 @@ const tests = [
   "test-batch-lifecycle.js",
   "test-generic-collections.js",
   "test-stabilization.js",
+  "test-s3-storage.js",
+  "test-batch-zip.js",
+  "test-auth.js",
 ];
 
 let failed = false;

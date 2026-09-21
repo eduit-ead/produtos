@@ -29,6 +29,31 @@ const api = {
   },
 };
 
+let cachedSystemStatus = null;
+let systemStatusPromise = null;
+
+async function loadSystemStatus() {
+  if (cachedSystemStatus) return cachedSystemStatus;
+  if (systemStatusPromise) return systemStatusPromise;
+  systemStatusPromise = api.json("/api/health")
+    .then((status) => {
+      cachedSystemStatus = status;
+      return status;
+    })
+    .catch((err) => {
+      cachedSystemStatus = { ok: false, openaiConfigured: false, storageProvider: "local", storageHealthy: false, authActive: false, runtimeDirAvailable: false };
+      return cachedSystemStatus;
+    })
+    .finally(() => {
+      systemStatusPromise = null;
+    });
+  return systemStatusPromise;
+}
+
+function isOpenAIConfigured() {
+  return cachedSystemStatus?.openaiConfigured === true;
+}
+
 function byId(id) {
   return document.getElementById(id);
 }
@@ -89,6 +114,10 @@ function showError(message, id) {
 
 function handleApiError(err, id) {
   const text = err?.message || "Erro inesperado";
+  if (text.startsWith("401") || text.includes("Não autenticado")) {
+    window.location.href = "/login.html";
+    return;
+  }
   if (text.includes("404") || text.includes("Cannot")) {
     showError("Não foi possível carregar os dados. Reinicie o servidor e tente novamente.", id);
   } else {
@@ -244,8 +273,20 @@ function registerNav(active) {
       <a href="/criar.html" class="${active === "criar" ? "active" : ""}">Criar imagem</a>
       <a href="/batch.html" class="${active === "lote" ? "active" : ""}">Produção em lote</a>
       <a href="/biblioteca.html" class="${active === "biblioteca" ? "active" : ""}">Biblioteca</a>
+      <a href="#" id="logoutLink" class="nav-logout">Sair</a>
     </nav>
   `;
+
+  const logoutLink = header.querySelector("#logoutLink");
+  if (logoutLink) {
+    logoutLink.addEventListener("click", async (e) => {
+      e.preventDefault();
+      try {
+        await fetch("/api/auth/logout", { method: "POST" });
+      } catch {}
+      window.location.href = "/login.html";
+    });
+  }
 }
 
 const STATUS_LABELS = {

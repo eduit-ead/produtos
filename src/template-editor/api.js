@@ -14,7 +14,8 @@ const { validateTemplate, createEmptyTemplate } = require("./schema/template-sch
 const { renderTemplate } = require("./renderer");
 const courseService = require("../course-production-service");
 const genericProduction = require("../production/generic-production-service");
-const { LocalStorageProvider } = require("../storage/local-storage-provider");
+const { createStorageProvider } = require("../storage");
+const downloadRoutes = require("../batch/download-routes");
 const { BatchExecutor } = require("../batch/executor");
 const { listJobs, readJob, writeJob } = require("../batch/job");
 const {
@@ -26,6 +27,7 @@ const {
   createMetadata,
   sha256,
 } = require("../batch/metadata");
+const { getSystemStatus } = require("./system-status");
 const { courseFiles } = require("../batch/naming");
 const { convertCardToWhatsAppJpeg } = require("../whatsapp-image");
 const xlsxSync = require("../xlsx-sync");
@@ -355,9 +357,8 @@ function createRouter() {
   // ============================================================
 
   router.get("/health", async (req, res) => {
-    const storage = new LocalStorageProvider(getCatalogDir());
-    const storageHealth = await storage.healthCheck();
-    res.json({ ok: storageHealth.ok, storage: storageHealth, timestamp: new Date().toISOString() });
+    const status = await getSystemStatus();
+    res.json({ ...status, timestamp: new Date().toISOString() });
   });
 
   // ============================================================
@@ -804,7 +805,7 @@ function createRouter() {
       let metadata = readMetadata(catalogDir, course.slug);
       if (!metadata) metadata = createMetadata(course);
 
-      const storage = new LocalStorageProvider(catalogDir);
+      const storage = createStorageProvider({ baseDir: catalogDir });
       const cardKey = metadata.storage.keys.card;
       if (!(await storage.exists(cardKey))) {
         return res.status(400).json({ error: "Card ainda não foi renderizado." });
@@ -872,10 +873,18 @@ function createRouter() {
     serveCatalogFile(req.params.collectionId, req.params.slug, req.params.file, res);
   });
 
-  router.get("/files/:encodedKey", (req, res) => {
+  router.get("/files/:encodedKey", async (req, res) => {
     try {
       const key = Buffer.from(req.params.encodedKey, "base64url").toString("utf8");
-      const storage = new LocalStorageProvider(getCatalogDir());
+      const storage = createStorageProvider({ baseDir: getCatalogDir() });
+
+      if (process.env.STORAGE_PROVIDER === "s3") {
+        const publicUrl = await storage.getPublicUrl(key);
+        if (publicUrl.startsWith("http://") || publicUrl.startsWith("https://")) {
+          return res.redirect(publicUrl);
+        }
+      }
+
       const filePath = storage.resolveLocalPath(key);
       if (!fs.existsSync(filePath)) return res.status(404).json({ error: "Arquivo não encontrado." });
       const ext = path.extname(filePath).toLowerCase();
@@ -885,7 +894,7 @@ function createRouter() {
       res.sendFile(filePath);
     } catch (err) {
       console.error(err);
-      res.status(400).json({ error: "Chave inválida." });
+      res.status(400).json({ error: err.message || "Chave inválida." });
     }
   });
 
@@ -1023,7 +1032,7 @@ function createRouter() {
     const file = findJobFile(jobId);
     if (!file) throw new Error("Lote não encontrado.");
     const catalogDir = path.dirname(path.dirname(file));
-    const exec = new BatchExecutor({ catalogDir, storageProvider: new LocalStorageProvider(catalogDir) });
+    const exec = new BatchExecutor({ catalogDir, storageProvider: createStorageProvider({ baseDir: catalogDir }) });
     return exec[action](jobId);
   }
 
@@ -1134,13 +1143,15 @@ function createRouter() {
       const { job, collectionId } = await findJobAndCollection(req.params.jobId);
       await resetJobItemForRegeneration(collectionId, req.params.jobId, req.params.slug);
       const catalogDir = genericProduction.catalogDirFor(collectionId);
-      const exec = new BatchExecutor({ catalogDir, storageProvider: new LocalStorageProvider(catalogDir) });
+      const exec = new BatchExecutor({ catalogDir, storageProvider: createStorageProvider({ baseDir: catalogDir }) });
       const updatedJob = await exec.resume(req.params.jobId);
       res.json({ ok: true, job: updatedJob });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
   });
+
+  router.use("/batches", downloadRoutes);
 
   // ============================================================
   // XLSX sync (coleção padrão legada)

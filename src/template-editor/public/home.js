@@ -1,6 +1,51 @@
 async function init() {
   registerNav("inicio");
-  await loadDashboard();
+  await Promise.all([loadDashboard(), renderSystemStatusBlock()]);
+}
+
+async function renderSystemStatusBlock() {
+  const container = byId("systemStatus");
+  const grid = byId("systemStatusGrid");
+  const hint = byId("systemStatusHint");
+
+  try {
+    const status = await api.json("/api/health");
+    container.classList.remove("hidden");
+
+    const items = [
+      { label: "OpenAI", value: status.openaiConfigured ? "Configurada" : "Não configurada", ok: status.openaiConfigured, warn: !status.openaiConfigured },
+      { label: "Storage", value: status.storageProvider === "local" ? "Local" : status.storageProvider, ok: status.storageHealthy },
+      { label: "Autenticação", value: status.authActive ? "Ativa" : "Desativada", ok: status.authActive || !status.authActive, warn: false },
+      { label: "Diretório persistente", value: status.runtimeDirAvailable ? "OK" : "Indisponível", ok: status.runtimeDirAvailable, warn: !status.runtimeDirAvailable },
+    ];
+
+    grid.innerHTML = items.map((item) => {
+      const cls = item.ok ? "ok" : item.warn ? "warn" : "error";
+      return `
+        <div class="status-item">
+          <span class="dot ${cls}"></span>
+          <span class="label">${escapeHtml(item.label)}</span>
+          <span class="value">${escapeHtml(item.value)}</span>
+        </div>
+      `;
+    }).join("");
+
+    if (!status.openaiConfigured) {
+      hint.className = "status-hint warning";
+      hint.textContent = "A OpenAI não está configurada. Geração real de imagens está desabilitada; use previews/dry-run ou configure OPENAI_API_KEY.";
+    } else if (!status.runtimeDirAvailable) {
+      hint.className = "status-hint warning";
+      hint.textContent = "Diretório de dados persistente não está disponível. Verifique o volume de dados.";
+    } else {
+      hint.className = "status-hint info";
+      hint.textContent = "Sistema pronto para uso.";
+    }
+  } catch (err) {
+    container.classList.remove("hidden");
+    grid.innerHTML = `<div class="status-item"><span class="dot error"></span><span class="label">Status</span><span class="value">Indisponível</span></div>`;
+    hint.className = "status-hint warning";
+    hint.textContent = "Não foi possível carregar o status do sistema.";
+  }
 }
 
 async function loadDashboard() {

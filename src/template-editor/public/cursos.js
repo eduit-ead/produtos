@@ -233,6 +233,10 @@ async function dryRunGenerate() {
 
 async function realGenerate() {
   if (!state.currentCourse) return;
+  if (!isOpenAIConfigured()) {
+    setStatus("error", "OpenAI não configurada. Geração real desabilitada.");
+    return;
+  }
   const confirmed = window.confirm(
     `Gerar imagem real com IA para "${state.currentCourse.curso}"?\nIsso consumirá créditos da OpenAI.`
   );
@@ -311,7 +315,7 @@ async function downloadPng() {
   }
 }
 
-function init() {
+async function init() {
   byId("searchInput").addEventListener("input", (e) => {
     state.filters.query = e.target.value;
     renderCatalog();
@@ -338,7 +342,18 @@ function init() {
   byId("btnReject").addEventListener("click", reject);
   byId("btnDownload").addEventListener("click", downloadPng);
 
-  loadCatalog();
+  await loadCatalog();
+  applySystemStatus();
+}
+
+function applySystemStatus() {
+  const btn = byId("btnGenerate");
+  if (!btn) return;
+  if (!isOpenAIConfigured()) {
+    btn.disabled = true;
+    btn.title = "Configure OPENAI_API_KEY para habilitar geração real.";
+    setStatus("error", "OpenAI não configurada: geração real desabilitada.");
+  }
 }
 
 if (document.readyState === "loading") {

@@ -17,10 +17,21 @@ const state = {
 const LEGACY_ID = "graduacao-cruzeiro";
 const COST_PER_CALL = 0.03;
 
-function init() {
+async function init() {
   registerNav("lote");
   setupEvents();
-  loadInitial();
+  await loadInitial();
+  applySystemStatus();
+}
+
+function applySystemStatus() {
+  const btn = byId("btnConfigReal");
+  if (!btn) return;
+  if (!isOpenAIConfigured()) {
+    btn.disabled = true;
+    btn.title = "Configure OPENAI_API_KEY para habilitar geração real.";
+    setStatus("status", "warning", "OpenAI não configurada: geração real desabilitada. Use o modo de teste.");
+  }
 }
 
 async function loadInitial() {
@@ -87,6 +98,9 @@ function setupEvents() {
   });
   byId("btnApproveSelected").addEventListener("click", () => bulkAction("approve"));
   byId("btnRejectSelected").addEventListener("click", () => bulkAction("reject"));
+  byId("btnDownloadCards").addEventListener("click", () => downloadBatchZip({ approvedOnly: true, includeCards: true }, "cards-aprovados.zip"));
+  byId("btnDownloadWhatsApp").addEventListener("click", () => downloadBatchZip({ approvedOnly: true, includeWhatsApp: true }, "whatsapp-aprovados.zip"));
+  byId("btnDownloadPackage").addEventListener("click", () => downloadBatchZip({ approvedOnly: true, includeCards: true, includeWhatsApp: true, includeBackgrounds: true, includeMetadata: true }, "pacote-completo.zip"));
   byId("btnExportXlsx").addEventListener("click", exportSource);
   byId("btnSyncXlsx").addEventListener("click", syncSource);
 
@@ -274,6 +288,11 @@ function updateEstimate() {
 async function createBatch(dryRun) {
   if (state.selected.size === 0) return;
 
+  if (!dryRun && !isOpenAIConfigured()) {
+    setStatus("status", "warning", "OpenAI não configurada. Geração real desabilitada.");
+    return;
+  }
+
   if (!dryRun) {
     const ok = await confirmModal(
       `Você está prestes a gerar imagens reais para ${state.selected.size} item(s). Isso consumirá créditos da OpenAI. Deseja continuar?`,
@@ -379,8 +398,12 @@ function renderReview() {
   `;
 
   const running = job?.status === "executando";
+  const hasApproved = (job?.stats?.approved || 0) > 0;
   byId("btnApproveSelected").disabled = state.reviewSelected.size === 0;
   byId("btnRejectSelected").disabled = state.reviewSelected.size === 0;
+  byId("btnDownloadCards").disabled = !hasApproved || running;
+  byId("btnDownloadWhatsApp").disabled = !hasApproved || running;
+  byId("btnDownloadPackage").disabled = !hasApproved || running;
   byId("btnExportXlsx").textContent = exportButtonLabel();
   byId("btnSyncXlsx").textContent = syncButtonLabel();
   byId("btnSyncXlsx").disabled = !isLegacyXlsx() && sourceType() !== "xlsx";
@@ -532,6 +555,47 @@ async function downloadItem(slug, type) {
   try {
     await downloadUrl(url, filename);
     setStatus("status", "success", "Download iniciado.");
+  } catch (err) {
+    handleApiError(err, "status");
+  }
+}
+
+async function downloadBatchZip(options, defaultFilename) {
+  if (!state.jobId) return;
+  const url = `/api/batches/${encodeURIComponent(state.jobId)}/download`;
+  setStatus("status", "loading", "Preparando ZIP...");
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(options),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "Erro desconhecido");
+      let message = text;
+      try { message = JSON.parse(text).error || message; } catch {}
+      throw new Error(`${res.status}: ${message}`);
+    }
+
+    const blob = await res.blob();
+    const reportHeader = res.headers.get("X-Download-Report");
+    let report = { included: [], missing: [] };
+    if (reportHeader) {
+      try { report = JSON.parse(decodeURIComponent(reportHeader)); } catch {}
+    }
+
+    const disposition = res.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename="([^"]+)"/);
+    const filename = match?.[1] || defaultFilename;
+
+    downloadBlob(blob, filename);
+    const included = report.included?.length || 0;
+    const missing = report.missing?.length || 0;
+    setStatus(
+      "status",
+      missing > 0 ? "warning" : "success",
+      `Download iniciado: ${included} arquivo(s) incluído(s).${missing > 0 ? ` ${missing} ausente(s) (ver missing.txt).` : ""}`
+    );
   } catch (err) {
     handleApiError(err, "status");
   }

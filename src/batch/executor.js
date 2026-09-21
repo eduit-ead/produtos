@@ -28,6 +28,7 @@ const { courseFiles } = require("./naming");
 const { generateImage, DEFAULT_MODEL, DEFAULT_QUALITY, DEFAULT_SIZE } = require("../generate-ai-background");
 const { renderCourseCard, prepareBackgroundBuffer } = require("../render-card");
 const { convertCardToWhatsAppJpeg } = require("../whatsapp-image");
+const { createStorageProvider } = require("../storage");
 const { loadAllCourses } = require("../read-courses");
 const { getImageBuffer } = require("../image-cache");
 const {
@@ -514,12 +515,12 @@ class BatchExecutor {
         if (result.aborted) return { done: true, job: result.job };
       } else if (step === "card") {
         await this._doCardStep(job, item, course, metadata, provider);
-        const result = await this._persistItem(job, item, metadata);
-        if (result.aborted) return { done: true, job: result.job };
+        const cardResult = await this._persistItem(job, item, metadata);
+        if (cardResult.aborted) return { done: true, job: cardResult.job };
       } else if (step === "whatsapp") {
         await this._doWhatsappStep(job, item, metadata);
-        const result = await this._persistItem(job, item, metadata);
-        if (result.aborted) return { done: true, job: result.job };
+        const whatsappResult = await this._persistItem(job, item, metadata);
+        if (whatsappResult.aborted) return { done: true, job: whatsappResult.job };
       }
     } catch (err) {
       console.error(`Erro no processamento de ${item?.slug}:`, err.message);
@@ -570,7 +571,7 @@ class BatchExecutor {
         let job = this._refreshJob(jobId);
         if (!job) throw new Error("Job não encontrado.");
         this.catalogDir = catalogDirFor(job);
-        this.storage = new (require("../storage/local-storage-provider").LocalStorageProvider)(this.catalogDir);
+        this.storage = this.storageProvider || createStorageProvider({ baseDir: this.catalogDir });
         const provider = getProvider(job);
         const courseMap = await provider.loadMap();
 

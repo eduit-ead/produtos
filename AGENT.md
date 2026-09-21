@@ -146,3 +146,31 @@ Transformar o sistema de produção de artes de um fluxo fixo de cursos de gradu
 - Novas rotas: `/api/collections/*`, `/api/items*`, endpoints genéricos de batch/export/sync por coleção.
 - Telas: `collections.html` para listar/importar coleções; navegação atualizada em todas as páginas; `batch.html` com seletor de coleção/template.
 - Testes: `scripts/test-generic-collections.js` cobre graduação legada, CSV, JSON e XLSX.
+
+## 2026-09-20 — FASE 1 e FASE 5 (parcial): Docker, runtime e status do sistema
+
+### Contexto
+Preparar o MVP para deploy containerizado com volume persistente e expor, de forma segura, o estado do sistema no frontend.
+
+### Decisão
+- Dockerfile baseado em `node:20-slim` com libvips, usuário não-root `app`, `APP_RUNTIME_DIR=/app/data`, volume `/app/data`, `HOST=0.0.0.0` e `CMD npm run template:editor`.
+- `.dockerignore` exclui node_modules, .env, outputs finais/whatsapp, .git, zips, caches e tmp.
+- `docker-compose.example.yml` mapeia PORT, volume `app_data:/app/data` e variáveis de exemplo.
+- Criado `src/config/seed.js` para inicializar runtime e fazer fallback do diretório legado `data/collections`.
+- `src/collections/manager.js` mantido usando `RUNTIME.collectionsDir` (já compatível).
+- Criado `src/template-editor/system-status.js` com `getSystemStatus()`; rota `/api/health` em `api.js` agora retorna openaiConfigured, storageProvider, authActive e runtimeDirAvailable sem expor segredos.
+- Bloco "Status do sistema" adicionado em `index.html`, carregado por `home.js`; helper `loadSystemStatus()`/`isOpenAIConfigured()` adicionado a `shared.js`.
+- Botões de geração real desabilitados em `batch.js` e `cursos.js` quando `openaiConfigured === false`.
+- Criado `DEPLOY.md` com instruções de local, Docker, Easypanel, volume, OpenAI, storage, backup e atualização.
+- `.env.example` atualizado com PORT, HOST, APP_RUNTIME_DIR, APP_ACCESS_PASSWORD, APP_SESSION_SECRET, AUTH_DISABLED, OPENAI_API_KEY, STORAGE_PROVIDER e variáveis S3/Supabase reservadas.
+- `src/template-editor/server.js` não foi modificado; anotação de integração entregue para inserção manual de `seedRuntimeDefaults()` no início do servidor.
+
+### Alternativas descartadas
+- Alterar `server.js` automaticamente: descartado por requisito explícito de deixar anotação ao coordenador.
+- Criar um endpoint `/api/config` com flags: descartado; `/api/health` já atende e é o padrão esperado para health checks.
+- Implementar provedores S3/Supabase agora: descartado; interface `StorageProvider` existe e as variáveis ficam reservadas para FASE 5 completa.
+
+### Impacto
+- Arquivos criados: `.dockerignore`, `docker-compose.example.yml`, `src/config/seed.js`, `src/template-editor/system-status.js`, `DEPLOY.md`.
+- Arquivos alterados: `Dockerfile`, `.env.example`, `src/template-editor/api.js`, `src/template-editor/public/index.html`, `src/template-editor/public/home.css`, `src/template-editor/public/home.js`, `src/template-editor/public/shared.js`, `src/template-editor/public/batch.js`, `src/template-editor/public/cursos.js`.
+- Nenhuma dependência nova adicionada.

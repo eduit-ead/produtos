@@ -29,6 +29,10 @@ class StorageProvider {
   async healthCheck() {
     throw new Error("healthCheck() não implementado pelo provedor.");
   }
+
+  resolveLocalPath(key) {
+    throw new Error("resolveLocalPath() não implementado pelo provedor.");
+  }
 }
 
 module.exports = {

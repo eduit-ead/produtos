@@ -21,6 +21,8 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1136.0",
+    "archiver": "^5.3.2",
     "dotenv": "^18.0.1",
     "exceljs": "^4.4.0",
     "express": "^4.21.0",
@@ -28,5 +30,8 @@
     "openai": "^7.20.0",
     "sharp": "^0.35.4",
     "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "jszip": "^3.10.1"
   }
 }
