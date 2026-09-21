@@ -9,8 +9,9 @@ const path = require("path");
 const express = require("express");
 const { seedRuntimeDefaults } = require("../config/seed");
 const { validateAuthConfig } = require("../auth/config");
+const { authDisabled } = require("../auth/config");
 const authRoutes = require("../auth/routes");
-const { requireAuth } = require("../auth/middleware");
+const { requireAuth, isAuthenticated } = require("../auth/middleware");
 const { createRouter } = require("./api");
 
 // Garante diretórios de runtime e copia defaults quando em volume externo.
@@ -25,10 +26,39 @@ const HOST = process.env.HOST || "127.0.0.1";
 
 const app = express();
 
+function setNoStoreHeaders(res) {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
+}
+
+function isProtectedPage(pagePath) {
+  if (pagePath === "/") return true;
+  if (!pagePath.endsWith(".html")) return false;
+  return path.basename(pagePath) !== "login.html";
+}
+
+function protectPages(req, res, next) {
+  if (authDisabled) return next();
+  if (!isProtectedPage(req.path)) return next();
+
+  if (!isAuthenticated(req)) {
+    setNoStoreHeaders(res);
+    return res.redirect("/login.html");
+  }
+
+  setNoStoreHeaders(res);
+  next();
+}
+
 // Necessário para req.secure funcionar atrás de proxies/reverse-proxies.
 app.set("trust proxy", true);
 
-// Rotas públicas de autenticação.
+// Rotas públicas de autenticação (sem cache).
+app.use("/api/auth", (req, res, next) => {
+  setNoStoreHeaders(res);
+  next();
+});
 app.use("/api/auth", authRoutes);
 
 // Protege a API, exceto health e auth.
@@ -40,7 +70,18 @@ app.use("/api", (req, res, next) => {
 });
 
 app.use("/api", createRouter());
-app.use(express.static(PUBLIC_DIR));
+
+// Protege páginas HTML antes de servir estáticos.
+app.use(protectPages);
+app.use(
+  express.static(PUBLIC_DIR, {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith(".html") && path.basename(filePath) !== "login.html") {
+        setNoStoreHeaders(res);
+      }
+    },
+  })
+);
 
 app.get("/", (req, res) => {
   res.sendFile(path.join(PUBLIC_DIR, "index.html"));

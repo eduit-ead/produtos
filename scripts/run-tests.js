@@ -20,6 +20,7 @@ const tests = [
   "test-auth.js",
   "test-s3-end-to-end.js",
   "test-runtime-persist.js",
+  "test-page-auth.js",
 ];
 
 let failed = false;

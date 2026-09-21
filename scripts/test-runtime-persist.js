@@ -150,6 +150,7 @@ function stopServer(child) {
     const initialTemplates = await requestJson(server1.port, "GET", "/api/templates");
     assert.ok(Array.isArray(initialTemplates.body), "templates devem ser uma lista");
     assert.ok(initialTemplates.body.some((t) => t.id === "demo"), "demo deve vir do seed");
+    assert.ok(initialTemplates.body.some((t) => t.id === "cruzeiro-graduacao-v1"), "cruzeiro-graduacao-v1 deve vir do seed");
 
     const createdTemplate = await requestJson(
       server1.port,
@@ -175,6 +176,13 @@ function stopServer(child) {
     const assetId = uploadRes.body.assetId;
     uploadedAssetId = assetId;
     assert.ok(assetId, "assetId deve existir");
+
+    const initialCollections = await requestJson(server1.port, "GET", "/api/collections");
+    assert.ok(Array.isArray(initialCollections.body), "coleções devem ser uma lista");
+    assert.ok(
+      initialCollections.body.some((c) => c.id === "graduacao-cruzeiro"),
+      "graduacao-cruzeiro deve vir do seed"
+    );
 
     const collection = {
       id: collectionId,
@@ -231,9 +239,14 @@ function stopServer(child) {
   const server2 = await startServer(runtimeDir);
   try {
     const templatesAfter = await requestJson(server2.port, "GET", "/api/templates");
+    assert.ok(templatesAfter.body.some((t) => t.id === createdTemplateId), "template criado deve persistir");
     assert.ok(
-      templatesAfter.body.some((t) => t.id === createdTemplateId),
-      "template criado deve persistir"
+      templatesAfter.body.some((t) => t.id === "demo"),
+      "demo deve permanecer após reinicialização"
+    );
+    assert.ok(
+      templatesAfter.body.some((t) => t.id === "cruzeiro-graduacao-v1"),
+      "cruzeiro-graduacao-v1 deve permanecer após reinicialização"
     );
 
     const assetsAfter = await requestJson(server2.port, "GET", "/api/assets");
@@ -243,9 +256,10 @@ function stopServer(child) {
     );
 
     const collectionsAfter = await requestJson(server2.port, "GET", "/api/collections");
+    assert.ok(collectionsAfter.body.some((c) => c.id === collectionId), "coleção deve persistir");
     assert.ok(
-      collectionsAfter.body.some((c) => c.id === collectionId),
-      "coleção deve persistir"
+      collectionsAfter.body.some((c) => c.id === "graduacao-cruzeiro"),
+      "graduacao-cruzeiro deve permanecer após reinicialização"
     );
 
     const itemsAfter = await requestJson(server2.port, "GET", `/api/collections/${collectionId}/records`);

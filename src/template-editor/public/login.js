@@ -28,7 +28,7 @@ async function checkStatus() {
     const res = await fetch("/api/auth/status");
     const data = await res.json();
     if (data.enabled === false) {
-      window.location.href = "/";
+      window.location.replace("/");
     }
   } catch {
     // Se a rota não existir ainda, segue normalmente.
@@ -49,7 +49,7 @@ async function handleLogin(e) {
     });
 
     if (res.ok) {
-      window.location.href = "/";
+      window.location.replace("/");
       return;
     }
 

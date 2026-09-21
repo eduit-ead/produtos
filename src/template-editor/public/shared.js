@@ -115,7 +115,7 @@ function showError(message, id) {
 function handleApiError(err, id) {
   const text = err?.message || "Erro inesperado";
   if (text.startsWith("401") || text.includes("Não autenticado")) {
-    window.location.href = "/login.html";
+    window.location.replace("/login.html");
     return;
   }
   if (text.includes("404") || text.includes("Cannot")) {
@@ -284,7 +284,7 @@ function registerNav(active) {
       try {
         await fetch("/api/auth/logout", { method: "POST" });
       } catch {}
-      window.location.href = "/login.html";
+      window.location.replace("/login.html");
     });
   }
 }

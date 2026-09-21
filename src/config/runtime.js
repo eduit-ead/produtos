@@ -11,7 +11,9 @@ const path = require("path");
 const { ROOT } = require("../collections/schema");
 
 const APP_RUNTIME_DIR = process.env.APP_RUNTIME_DIR
-  ? path.resolve(process.env.APP_RUNTIME_DIR)
+  ? (path.isAbsolute(process.env.APP_RUNTIME_DIR)
+      ? path.resolve(process.env.APP_RUNTIME_DIR)
+      : path.resolve(ROOT, process.env.APP_RUNTIME_DIR))
   : ROOT;
 
 function runtimeSubdir(...parts) {
