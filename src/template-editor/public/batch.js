@@ -66,6 +66,7 @@ async function loadInitial() {
     }
 
     renderBaseStep();
+    goStep("base");
     if (params.get("autostart") === "1" && state.collectionId) {
       await selectCollection(state.collectionId);
     }

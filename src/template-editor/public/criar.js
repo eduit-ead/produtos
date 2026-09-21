@@ -30,10 +30,11 @@ async function loadAssets() {
 
 async function renderThumbnail(template) {
   try {
-    const blob = await api.blob("/api/render", {
+    const values = getDefaultValues(template);
+    const blob = await api.blob(`/api/render/${encodeURIComponent(template.id)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ template, values: {} }),
+      body: JSON.stringify(values),
     });
     return URL.createObjectURL(blob);
   } catch (err) {
@@ -101,6 +102,16 @@ async function selectTemplate(id) {
 
   byId("templateName").textContent = tpl.name || tpl.id;
   byId("templateMeta").textContent = `${tpl.canvas?.width || 0}×${tpl.canvas?.height || 0} px · ${(tpl.variables || []).length} campo(s)`;
+
+  const badge = byId("templateBadge");
+  const advanced = byId("advancedLink");
+  if (tpl.editable === false) {
+    badge.classList.remove("hidden");
+    advanced.classList.add("hidden");
+  } else {
+    badge.classList.add("hidden");
+    advanced.classList.remove("hidden");
+  }
 
   byId("stageSelect").classList.add("hidden");
   byId("stageEditor").classList.remove("hidden");
@@ -309,10 +320,10 @@ async function renderPreview() {
   }
 
   try {
-    const blob = await api.blob("/api/render", {
+    const blob = await api.blob(`/api/render/${encodeURIComponent(state.selectedTemplate.id)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ template: state.selectedTemplate, values: state.values }),
+      body: JSON.stringify(state.values),
       signal: controller.signal,
     });
 
@@ -355,10 +366,10 @@ async function downloadPng() {
   if (!validateRequired()) return;
   setStatus("status", "loading", "Gerando PNG...");
   try {
-    const blob = await api.blob("/api/render", {
+    const blob = await api.blob(`/api/render/${encodeURIComponent(state.selectedTemplate.id)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ template: state.selectedTemplate, values: state.values }),
+      body: JSON.stringify(state.values),
     });
     downloadBlob(blob, `${slugify(state.selectedTemplate.name || state.selectedTemplate.id)}.png`);
     setStatus("status", "success", "PNG baixado.");
@@ -371,10 +382,10 @@ async function downloadWhatsapp() {
   if (!validateRequired()) return;
   setStatus("status", "loading", "Gerando WhatsApp...");
   try {
-    const blob = await api.blob("/api/render-whatsapp", {
+    const blob = await api.blob(`/api/render-whatsapp/${encodeURIComponent(state.selectedTemplate.id)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ template: state.selectedTemplate, values: state.values }),
+      body: JSON.stringify(state.values),
     });
     downloadBlob(blob, `${slugify(state.selectedTemplate.name || state.selectedTemplate.id)}-whatsapp.jpg`);
     setStatus("status", "success", "WhatsApp baixado.");

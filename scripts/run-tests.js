@@ -22,6 +22,8 @@ const tests = [
   "test-runtime-persist.js",
   "test-page-auth.js",
   "test-server-entrypoint.js",
+  "test-official-template-equivalence.js",
+  "test-batch-entrypoint.js",
 ];
 
 let failed = false;

@@ -12,6 +12,7 @@ const sharp = require("sharp");
 
 const { validateTemplate, createEmptyTemplate } = require("./schema/template-schema");
 const { renderTemplate } = require("./renderer");
+const { renderSavedTemplate } = require("./renderer/render-saved-template");
 const { RUNTIME } = require("../config/runtime");
 const courseService = require("../course-production-service");
 const genericProduction = require("../production/generic-production-service");
@@ -269,18 +270,15 @@ function createRouter() {
 
   router.post("/render/:id", express.json({ limit: "1mb" }), async (req, res) => {
     const id = path.basename(req.params.id);
-    const filePath = path.join(TEMPLATES_DIR, `${id}.json`);
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ error: "Template não encontrado." });
-    }
     try {
-      const template = JSON.parse(fs.readFileSync(filePath, "utf8"));
-      const buffer = await renderTemplate(template, req.body || {});
+      const buffer = await renderSavedTemplate(id, req.body || {});
       res.setHeader("Content-Type", "image/png");
       res.send(buffer);
     } catch (err) {
       console.error(err);
-      const status = err.message && err.message.startsWith("Template inválido") ? 400 : 500;
+      const status = err.message?.includes("inválido") || err.message?.includes("obrigatória") || err.message?.includes("não encontrada")
+        ? 400
+        : 500;
       return res.status(status).json({ error: err.message || "Erro ao renderizar." });
     }
   });
@@ -316,6 +314,23 @@ function createRouter() {
     } catch (err) {
       console.error(err);
       return res.status(500).json({ error: err.message || "Erro ao renderizar WhatsApp." });
+    }
+  });
+
+  router.post("/render-whatsapp/:id", express.json({ limit: "1mb" }), async (req, res) => {
+    const id = path.basename(req.params.id);
+    try {
+      const png = await renderSavedTemplate(id, req.body || {});
+      const buffer = await convertCardToWhatsAppJpeg(png);
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "no-cache");
+      res.send(buffer);
+    } catch (err) {
+      console.error(err);
+      const status = err.message?.includes("inválido") || err.message?.includes("obrigatória") || err.message?.includes("não encontrada")
+        ? 400
+        : 500;
+      return res.status(status).json({ error: err.message || "Erro ao renderizar WhatsApp." });
     }
   });
 

@@ -1,7 +1,9 @@
 {
   "schemaVersion": 1,
   "id": "cruzeiro-graduacao-v1",
-  "name": "Cruzeiro Graduação v1 (legado)",
+  "name": "Graduação Cruzeiro do Sul — Oficial",
+  "rendererType": "legacy-course-card",
+  "editable": false,
   "canvas": {
     "width": 1080,
     "height": 1080,
@@ -12,31 +14,40 @@
       "key": "titulo",
       "label": "Título",
       "type": "string",
-      "defaultValue": "Curso",
+      "defaultValue": "Análise e Desenvolvimento de Sistemas",
+      "required": true
+    },
+    {
+      "key": "modalidade",
+      "label": "Modalidade",
+      "type": "string",
+      "defaultValue": "Graduação",
+      "required": true
+    },
+    {
+      "key": "formacao",
+      "label": "Formação",
+      "type": "string",
+      "defaultValue": "Bacharelado",
+      "required": true
+    },
+    {
+      "key": "duracao",
+      "label": "Duração",
+      "type": "string",
+      "defaultValue": "4 semestres",
+      "required": true
+    },
+    {
+      "key": "imagemFundo",
+      "label": "Imagem de fundo",
+      "type": "image",
+      "defaultValue": "demo-bg.jpg",
       "required": true
     }
   ],
   "assets": [],
-  "layers": [
-    {
-      "id": "bg",
-      "type": "background",
-      "name": "Fundo",
-      "x": 0,
-      "y": 0,
-      "width": 1080,
-      "height": 1080,
-      "rotation": 0,
-      "opacity": 1,
-      "visible": true,
-      "zIndex": 0,
-      "locked": true,
-      "properties": {
-        "color": "#0b1120",
-        "assetId": null
-      }
-    }
-  ],
+  "layers": [],
   "metadata": {
     "createdAt": "2026-09-20T00:00:00.000Z",
     "updatedAt": "2026-09-20T00:00:00.000Z",
