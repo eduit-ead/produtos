@@ -64,6 +64,7 @@ function nowIso() {
 function parseArgs(argv) {
   const imports = [];
   let name = JOB_NAME;
+  let skipGitCheck = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--map" && i + 1 < argv.length) {
@@ -75,9 +76,11 @@ function parseArgs(argv) {
     } else if (arg === "--name" && i + 1 < argv.length) {
       name = argv[i + 1];
       i++;
+    } else if (arg === "--skip-git-check") {
+      skipGitCheck = true;
     }
   }
-  return { imports: imports.length ? imports : DEFAULT_IMPORTS, name };
+  return { imports: imports.length ? imports : DEFAULT_IMPORTS, name, skipGitCheck };
 }
 
 function assertGitStatusClean() {
@@ -495,14 +498,18 @@ async function validateResults(imports, allCourses, storage, jobName) {
 }
 
 async function main() {
-  const { imports, name } = parseArgs(process.argv.slice(2));
+  const { imports, name, skipGitCheck } = parseArgs(process.argv.slice(2));
 
   console.log("=== Importação de fundos piloto para o fluxo oficial ===");
   console.log(`Diretório de catálogo: ${CATALOG_DIR}`);
   console.log(`Diretório do piloto: ${PILOT_DIR}`);
   console.log(`Itens: ${imports.map((i) => `${i.slug}=${i.file}`).join(", ")}`);
 
-  assertGitStatusClean();
+  if (!skipGitCheck) {
+    assertGitStatusClean();
+  } else {
+    console.log("Verificação de git status ignorada via --skip-git-check.");
+  }
   await assertPilotFilesExist(imports);
   const allCourses = await loadAllCourses();
   assertCoursesFound(allCourses, imports);

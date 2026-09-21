@@ -60,16 +60,16 @@ async function loadDashboard() {
 
     let approved = 0;
     let errors = 0;
-    let pending = 0;
+    let pendingReview = 0;
     for (const job of jobs) {
       const stats = job.stats || {};
       approved += stats.approved || 0;
       errors += stats.errors || 0;
-      pending += (stats.total || 0) - (stats.approved || 0) - (stats.rejected || 0) - (stats.errors || 0);
+      pendingReview += (job.courses || []).filter((c) => c.status === "pronto_revisao").length;
     }
     byId("statApproved").textContent = approved;
     byId("statErrors").textContent = errors;
-    byId("statPending").textContent = pending;
+    byId("statPending").textContent = pendingReview;
   } catch (err) {
     handleApiError(err);
   }
@@ -83,12 +83,13 @@ function renderRecentJobs(jobs) {
   }
   container.innerHTML = "";
   for (const job of jobs) {
+    const pending = (job.courses || []).filter((c) => c.status === "pronto_revisao").length;
     const div = document.createElement("div");
     div.className = "recent-item";
     div.innerHTML = `
       <div>
         <div>${escapeHtml(job.id)}</div>
-        <div class="meta">${formatStatus(job.status)} · ${job.courses?.length || 0} itens · ${formatDate(job.created_at)}</div>
+        <div class="meta">${formatStatus(job.status)} · ${job.courses?.length || 0} itens · ${pending} aguardando revisão · ${formatDate(job.created_at)}</div>
       </div>
       <a href="/batch.html?job=${encodeURIComponent(job.id)}">Ver</a>
     `;

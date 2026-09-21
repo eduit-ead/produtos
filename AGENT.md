@@ -198,3 +198,26 @@ Incorporar ao fluxo oficial três fundos gerados pelo piloto de IA (Ciberseguran
 - Novos arquivos: `scripts/import-ai-pilot.js`, `scripts/test-import-ai-pilot.js`.
 - Arquivos gerados localmente (gitignored em `output/ai-catalog/`): fundos, cards, WhatsApp, metadata.json e job JSON.
 - Nenhuma alteração em arquivos fonte existentes; nenhuma dependência nova.
+
+## 2026-09-21 — Correção da persistência e organização da revisão de lotes
+
+### Contexto
+Aprovação/rejeição de um item aberto a partir de um lote não refletia ao voltar para a tela do lote. A causa era o uso da rota individual `/api/courses/:slug/approve`, que sincronizava o status para todos os jobs contendo o mesmo curso de forma assíncrona e não atualizava o job específico de forma confiável.
+
+### Decisão
+- Remover o `syncJobItemStatus` global de `course-production-service.js`: aprovação/rejeição individual não deve mais atualizar automaticamente todos os lotes que contenham o mesmo curso.
+- Manter `syncMetadataStatus` para atualizar `metadata.json` em aprovações/rejeições individuais fora de lote.
+- Tela individual (`cursos.html`/`cursos.js`) passa a ler `job` da query string. Com `jobId`, usa os endpoints do lote (`/api/batches/:jobId/items/:slug/approve|reject`) e mostra botão "Voltar para revisão do lote". Sem `jobId`, mostra aviso claro de que a aprovação é individual.
+- Tela de lote (`batch.html`/`batch.js`) adiciona link "Revisar" por item, filtro de status, resumo com "Aguardando revisão/Aprovados/Rejeitados/Erros" e recarrega o job com `returnToReview=1` ao retornar da revisão individual.
+- Home (`index.html`/`home.js`) mostra "Aguardando revisão" no resumo e quantidade pendente por produção recente.
+- Endpoints de estado dos lotes (`/api/batches`, `/api/batches/:id`, `/api/batches/:id/items`) retornam `Cache-Control: no-store` para evitar cache do navegador.
+- Adicionar `scripts/test-batch-review-persistence.js` validando isolamento por lote, persistência em metadata/manifest, recálculo de estatísticas e cache desabilitado.
+
+### Alternativas descartadas
+- Manter `syncJobItemStatus` e apenas melhorar await: descartado porque viola o requisito de não atualizar todos os lotes automaticamente.
+- Resolver apenas no frontend com cache-busting: descartado; a causa real era o endpoint/rota errada e a sincronização global.
+
+### Impacto
+- Arquivos alterados: `src/course-production-service.js`, `src/template-editor/api.js`, `src/template-editor/public/{batch.*,cursos.*,home.js,index.html}`.
+- Arquivos novos: `scripts/test-batch-review-persistence.js`.
+- Importação do piloto foi reexecutada para restaurar fundos que haviam sido sobrescritos (motivo externo não identificado); estado final dos três cursos restabelecido com hashes idênticos ao piloto.

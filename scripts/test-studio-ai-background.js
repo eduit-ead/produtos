@@ -134,6 +134,49 @@ function startServer() {
   });
 }
 
+function startServerWithOpenAI() {
+  return new Promise((resolve, reject) => {
+    const env = {
+      ...process.env,
+      APP_RUNTIME_DIR: runtimeDir,
+      AI_CATALOG_DIR: path.join(runtimeDir, "output", "ai-catalog"),
+      PORT: "0",
+      HOST: "127.0.0.1",
+      AUTH_DISABLED: "true",
+      OPENAI_API_KEY: "sk-test-studio-openai-not-real",
+    };
+
+    const child = spawn(process.execPath, [path.resolve(__dirname, "..", "src", "template-editor", "server.js")], {
+      cwd: path.resolve(__dirname, ".."),
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let output = "";
+    function onData(data) {
+      output += data.toString("utf8");
+      const match = output.match(/http:\/\/127\.0\.0\.1:(\d+)/);
+      if (match && child) {
+        child.stdout.off("data", onData);
+        child.stderr.off("data", onData);
+        resolve({ child, port: parseInt(match[1], 10) });
+      }
+    }
+    child.stdout.on("data", onData);
+    child.stderr.on("data", onData);
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code !== 0 && code !== null) {
+        reject(new Error(`Servidor saiu com código ${code}. Output: ${output}`));
+      }
+    });
+    setTimeout(() => {
+      child.kill();
+      reject(new Error(`Timeout iniciando servidor. Output: ${output}`));
+    }, 15000);
+  });
+}
+
 function stopServer(child) {
   return new Promise((resolve) => {
     child.kill();
@@ -403,6 +446,27 @@ function arrayBufferToBase64(buffer) {
     assert.ok(genericGenerate.body.metadata.prompt.includes("Base genérica"), "template genérico usa basePrompt");
   } finally {
     await stopServer(server.child);
+  }
+
+  // 7. openaiConfigured=true reflete OPENAI_API_KEY configurada (sem chamada real)
+  const serverWithKey = await startServerWithOpenAI();
+  try {
+    const healthKey = await requestJson(serverWithKey.port, "GET", "/api/health");
+    assert.equal(healthKey.status, 200);
+    assert.strictEqual(healthKey.body.openaiConfigured, true, "health deve reportar OpenAI configurada quando chave existe");
+    assert.ok(!containsSecrets(healthKey.raw), "health não expõe chave");
+
+    const estimateKey = await requestJson(
+      serverWithKey.port,
+      "POST",
+      "/api/studio/generate-background/estimate",
+      JSON.stringify({ templateId: "cruzeiro-graduacao-v1" }),
+      { "Content-Type": "application/json" }
+    );
+    assert.equal(estimateKey.status, 200, "estimate disponível com chave");
+    assert.ok(estimateKey.body.cost && estimateKey.body.cost.totalCostUsd != null, "custo estimado retornado");
+  } finally {
+    await stopServer(serverWithKey.child);
   }
 
   // 6. nenhum arquivo real alterado

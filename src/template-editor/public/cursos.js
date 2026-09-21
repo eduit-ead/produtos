@@ -8,6 +8,8 @@ const state = {
   currentCourse: null,
   filters: { query: "", modalidade: "", formacao: "", status: "" },
   objectUrls: [],
+  jobId: null,
+  returnTo: null,
 };
 
 function byId(id) {
@@ -179,9 +181,25 @@ async function openCourse(slug) {
 function backToCatalog() {
   revokeObjectUrls();
   state.currentCourse = null;
+  state.jobId = null;
+  state.returnTo = null;
   byId("detailStage").classList.add("hidden");
   byId("catalogStage").classList.remove("hidden");
+  const batchNotice = byId("batchNotice");
+  if (batchNotice) {
+    batchNotice.classList.add("hidden");
+    batchNotice.innerHTML = "";
+  }
   loadCatalog();
+}
+
+function backToBatch() {
+  if (!state.jobId) {
+    backToCatalog();
+    return;
+  }
+  revokeObjectUrls();
+  window.location.href = `/batch.html?job=${encodeURIComponent(state.jobId)}&returnToReview=1&collection=${encodeURIComponent(state.currentCourse?.collection_id || "graduacao-cruzeiro")}`;
 }
 
 function renderDetail() {
@@ -196,6 +214,24 @@ function renderDetail() {
     <strong>Conteúdo:</strong> ${escapeHtml(c.conteudo_status || "—")}
   `;
   byId("promptInput").value = c.prompt_imagem;
+
+  const batchBtn = byId("btnBackToBatch");
+  const batchNotice = byId("batchNotice");
+  if (batchBtn) {
+    batchBtn.classList.toggle("hidden", !state.jobId);
+  }
+  if (batchNotice) {
+    batchNotice.classList.remove("hidden");
+    if (state.jobId) {
+      batchNotice.innerHTML = escapeHtml(
+        `Revisão vinculada ao lote ${state.jobId}. Aprovar/Rejeitar aqui atualiza apenas este lote.`
+      );
+    } else {
+      batchNotice.innerHTML = escapeHtml(
+        "Aprovação/Rejeição individual: não está vinculada a um lote específico."
+      );
+    }
+  }
 
   showImage("currentBgImg", c.current_background_url);
   showImage("currentCardImg", c.current_card_url);
@@ -275,7 +311,7 @@ async function approve() {
   const confirmed = window.confirm(`Aprovar card de "${state.currentCourse.curso}"?`);
   if (!confirmed) return;
   await withLoading("Aprovando", () =>
-    apiJson(`/api/courses/${state.currentCourse.slug}/approve`, { method: "POST" })
+    apiJson(resolveApprovalUrl("approve"), { method: "POST" })
   );
   await openCourse(state.currentCourse.slug);
 }
@@ -285,9 +321,16 @@ async function reject() {
   const confirmed = window.confirm(`Rejeitar card de "${state.currentCourse.curso}"?`);
   if (!confirmed) return;
   await withLoading("Rejeitando", () =>
-    apiJson(`/api/courses/${state.currentCourse.slug}/reject`, { method: "POST" })
+    apiJson(resolveApprovalUrl("reject"), { method: "POST" })
   );
   await openCourse(state.currentCourse.slug);
+}
+
+function resolveApprovalUrl(action) {
+  if (state.jobId && state.currentCourse) {
+    return `/api/batches/${encodeURIComponent(state.jobId)}/items/${encodeURIComponent(state.currentCourse.slug)}/${action}`;
+  }
+  return `/api/courses/${state.currentCourse.slug}/${action}`;
 }
 
 async function downloadPng() {
@@ -316,6 +359,11 @@ async function downloadPng() {
 }
 
 async function init() {
+  const params = new URLSearchParams(window.location.search);
+  const slugFromUrl = params.get("slug");
+  state.jobId = params.get("job") || null;
+  state.returnTo = params.get("return") || null;
+
   byId("searchInput").addEventListener("input", (e) => {
     state.filters.query = e.target.value;
     renderCatalog();
@@ -334,6 +382,7 @@ async function init() {
   });
 
   byId("btnBack").addEventListener("click", backToCatalog);
+  byId("btnBackToBatch")?.addEventListener("click", backToBatch);
   byId("btnDryRun").addEventListener("click", dryRunGenerate);
   byId("btnGenerate").addEventListener("click", realGenerate);
   byId("uploadInput").addEventListener("change", (e) => uploadBackground(e.target.files[0]));
@@ -343,6 +392,17 @@ async function init() {
   byId("btnDownload").addEventListener("click", downloadPng);
 
   await loadCatalog();
+
+  if (slugFromUrl) {
+    const course = state.courses.find((c) => c.slug === slugFromUrl);
+    if (course) {
+      await openCourse(course.slug);
+    } else {
+      setStatus("error", `Curso ${slugFromUrl} não encontrado no catálogo.`);
+    }
+  }
+
+  await loadSystemStatus();
   applySystemStatus();
 }
 

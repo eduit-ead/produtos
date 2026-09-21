@@ -256,3 +256,64 @@
   gap: 8px;
   flex-wrap: wrap;
 }
+
+.review-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.review-summary {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.review-summary .stat {
+  display: flex;
+  flex-direction: column;
+  min-width: 80px;
+}
+
+.review-summary .stat strong {
+  font-size: 20px;
+  color: #fff;
+}
+
+.review-summary .stat label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.review-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.review-filter select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.review-item-title {
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.review-item-title:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}

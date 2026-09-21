@@ -430,80 +430,6 @@ async function setCourseStatus(slug, newStatus) {
   return getManifestEntry(manifest, validSlug);
 }
 
-function recalcJobStats(job) {
-  const stats = {
-    total: job.courses.length,
-    completed: 0,
-    errors: 0,
-    approved: 0,
-    rejected: 0,
-    calls: 0,
-    cost_usd: 0,
-  };
-  for (const item of job.courses) {
-    if (["pronto_revisao", "aprovado", "rejeitado"].includes(item.status)) stats.completed++;
-    if (item.status === "erro") stats.errors++;
-    if (item.status === "aprovado") stats.approved++;
-    if (item.status === "rejeitado") stats.rejected++;
-    stats.calls += item.calls || 0;
-    stats.cost_usd += item.cost_usd || 0;
-  }
-  job.stats = stats;
-}
-
-const jobWriteLocks = new Map();
-
-function withJobWriteLock(jobId, fn) {
-  const current = jobWriteLocks.get(jobId) || Promise.resolve();
-  const next = current.then(
-    () => fn(),
-    () => fn()
-  );
-  jobWriteLocks.set(jobId, next);
-  next.finally(() => {
-    if (jobWriteLocks.get(jobId) === next) {
-      jobWriteLocks.delete(jobId);
-    }
-  });
-  return next;
-}
-
-async function syncJobItemStatus(slug, newStatus) {
-  const jobsDir = path.join(CATALOG_DIR, "jobs");
-  if (!fs.existsSync(jobsDir)) return;
-  const files = fs.readdirSync(jobsDir).filter((f) => f.endsWith(".json"));
-  for (const file of files) {
-    const filePath = path.join(jobsDir, file);
-    try {
-      const job = JSON.parse(fs.readFileSync(filePath, "utf8"));
-      if (!job.id || !Array.isArray(job.courses)) continue;
-      const needsUpdate = job.courses.some(
-        (item) => item.slug === slug && ["pronto_revisao", "gerando_whatsapp", "fundo_gerado", "renderizando_card"].includes(item.status)
-      );
-      if (!needsUpdate) continue;
-
-      await withJobWriteLock(job.id, () => {
-        const fresh = JSON.parse(fs.readFileSync(filePath, "utf8"));
-        let changed = false;
-        for (const item of fresh.courses) {
-          if (item.slug === slug && ["pronto_revisao", "gerando_whatsapp", "fundo_gerado", "renderizando_card"].includes(item.status)) {
-            item.status = newStatus;
-            changed = true;
-          }
-        }
-        if (changed) {
-          recalcJobStats(fresh);
-          const tmp = path.join(jobsDir, `.tmp-${crypto.randomBytes(8).toString("hex")}.json`);
-          fs.writeFileSync(tmp, JSON.stringify(fresh, null, 2), "utf8");
-          fs.renameSync(tmp, filePath);
-        }
-      });
-    } catch {
-      // ignora jobs corrompidos
-    }
-  }
-}
-
 function syncMetadataStatus(slug, newStatus) {
   const metadata = readMetadata(CATALOG_DIR, slug);
   if (metadata) {
@@ -519,14 +445,12 @@ function syncMetadataStatus(slug, newStatus) {
 
 async function approveCourse(slug) {
   const record = await setCourseStatus(slug, "aprovado");
-  syncJobItemStatus(slug, "aprovado");
   syncMetadataStatus(slug, "aprovado");
   return record;
 }
 
 async function rejectCourse(slug) {
   const record = await setCourseStatus(slug, "rejeitado");
-  syncJobItemStatus(slug, "rejeitado");
   syncMetadataStatus(slug, "rejeitado");
   return record;
 }

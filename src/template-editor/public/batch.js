@@ -12,6 +12,7 @@ const state = {
   job: null,
   pollTimer: null,
   reviewSelected: new Set(),
+  reviewFilter: "all",
 };
 
 const LEGACY_ID = "graduacao-cruzeiro";
@@ -21,6 +22,7 @@ async function init() {
   registerNav("lote");
   setupEvents();
   await loadInitial();
+  await loadSystemStatus();
   applySystemStatus();
 }
 
@@ -54,6 +56,10 @@ async function loadInitial() {
         state.collectionId = state.job.collectionId;
         state.collection = state.collections.find((c) => c.id === state.collectionId) || null;
         await loadItems();
+      }
+      if (params.get("returnToReview") === "1") {
+        // Recarrega o job para garantir estado fresco ao voltar da revisão individual.
+        await loadJob();
       }
       goStep("review");
       return;
@@ -109,6 +115,10 @@ function setupEvents() {
     el.addEventListener("change", updateEstimate);
   });
   byId("templateSelect").addEventListener("change", updateEstimate);
+  byId("reviewFilter")?.addEventListener("change", () => {
+    state.reviewFilter = byId("reviewFilter").value || "all";
+    renderReview();
+  });
 }
 
 function goStep(step) {
@@ -387,9 +397,11 @@ function getCatalogUrl(slug, file) {
 function renderReview() {
   const job = state.job;
   const stats = job?.stats || {};
+  const pendingReview = (job?.courses || []).filter((c) => c.status === "pronto_revisao").length;
+
   byId("reviewStats").innerHTML = `
     <div class="stat"><strong>${stats.total || 0}</strong> total</div>
-    <div class="stat"><strong>${stats.completed || 0}</strong> concluídos</div>
+    <div class="stat"><strong>${pendingReview}</strong> aguardando revisão</div>
     <div class="stat"><strong>${stats.approved || 0}</strong> aprovados</div>
     <div class="stat"><strong>${stats.rejected || 0}</strong> rejeitados</div>
     <div class="stat"><strong>${stats.errors || 0}</strong> erros</div>
@@ -397,6 +409,17 @@ function renderReview() {
     <div class="stat"><strong>${formatCurrency(stats.cost_usd)}</strong> custo</div>
     <div class="stat"><span class="badge ${statusClass(job?.status)}">${formatStatus(job?.status)}</span></div>
   `;
+
+  const reviewSummary = byId("reviewSummary");
+  if (reviewSummary) {
+    reviewSummary.innerHTML = `
+      <div class="stat"><strong>${stats.total || 0}</strong><label>Total</label></div>
+      <div class="stat"><strong>${pendingReview}</strong><label>Aguardando revisão</label></div>
+      <div class="stat"><strong>${stats.approved || 0}</strong><label>Aprovados</label></div>
+      <div class="stat"><strong>${stats.rejected || 0}</strong><label>Rejeitados</label></div>
+      <div class="stat"><strong>${stats.errors || 0}</strong><label>Erros</label></div>
+    `;
+  }
 
   const running = job?.status === "executando";
   const hasApproved = (job?.stats?.approved || 0) > 0;
@@ -409,12 +432,22 @@ function renderReview() {
   byId("btnSyncXlsx").textContent = syncButtonLabel();
   byId("btnSyncXlsx").disabled = !isLegacyXlsx() && sourceType() !== "xlsx";
 
+  const filterSelect = byId("reviewFilter");
+  if (filterSelect && filterSelect.value !== state.reviewFilter) {
+    filterSelect.value = state.reviewFilter;
+  }
+
   const container = byId("reviewItems");
   container.innerHTML = "";
 
-  const courses = job?.courses || [];
+  const courses = (job?.courses || []).filter((item) => {
+    if (state.reviewFilter === "all") return true;
+    if (state.reviewFilter === "pronto_revisao") return item.status === "pronto_revisao";
+    return item.status === state.reviewFilter;
+  });
+
   if (courses.length === 0) {
-    container.innerHTML = "<p class='hint'>Nenhum item no lote.</p>";
+    container.innerHTML = `<p class="hint">Nenhum item ${state.reviewFilter === "all" ? "no lote" : `com status "${formatStatus(state.reviewFilter)}"`}.</p>`;
     return;
   }
 
@@ -426,6 +459,9 @@ function renderReview() {
     const hasWhatsApp = item.hasWhatsApp || false;
     const hasError = item.status === "erro";
     const isReviewable = ["pronto_revisao", "gerando_whatsapp"].includes(item.status);
+    const reviewUrl = state.jobId
+      ? `/cursos.html?slug=${encodeURIComponent(item.slug)}&job=${encodeURIComponent(state.jobId)}&return=batch`
+      : `/cursos.html?slug=${encodeURIComponent(item.slug)}`;
 
     const div = document.createElement("div");
     div.className = "review-item";
@@ -437,13 +473,11 @@ function renderReview() {
     div.innerHTML = `
       <div class="review-item-header">
         <input type="checkbox" class="review-select" data-slug="${escapeHtml(item.slug)}" ${state.reviewSelected.has(item.slug) ? "checked" : ""}>
-        <h4>${escapeHtml(title)}</h4>
+        <a href="${escapeHtml(reviewUrl)}" class="review-item-title" data-slug="${escapeHtml(item.slug)}">${escapeHtml(title)}</a>
         <span class="badge ${statusClass(item.status)}">${formatStatus(item.status)}</span>
         ${item.error ? `<span class="hint">${escapeHtml(item.error)}</span>` : ""}
         <span class="spacer"></span>
         <div class="review-item-actions">
-          ${hasCard ? `<button class="btn-secondary download-png" data-slug="${escapeHtml(item.slug)}">PNG</button>` : ""}
-          ${hasWhatsApp ? `<button class="btn-secondary download-wa" data-slug="${escapeHtml(item.slug)}">WhatsApp</button>` : ""}
           ${isReviewable && hasCard
             ? `<button class="btn-success approve-item" data-slug="${escapeHtml(item.slug)}">Aprovar</button>
                <button class="btn-danger reject-item" data-slug="${escapeHtml(item.slug)}">Rejeitar</button>`
@@ -452,6 +486,8 @@ function renderReview() {
             ? `<button class="btn-success approve-item" data-slug="${escapeHtml(item.slug)}" disabled title="Card ainda não foi gerado">Aprovar</button>
                <button class="btn-danger reject-item" data-slug="${escapeHtml(item.slug)}">Rejeitar</button>`
             : ""}
+          ${hasCard ? `<button class="btn-secondary download-png" data-slug="${escapeHtml(item.slug)}">PNG</button>` : ""}
+          ${hasWhatsApp ? `<button class="btn-secondary download-wa" data-slug="${escapeHtml(item.slug)}">WhatsApp</button>` : ""}
           ${hasError || item.status === "rejeitado"
             ? `<button class="btn-secondary retry-item" data-slug="${escapeHtml(item.slug)}">Gerar novamente</button>`
             : ""}
@@ -500,6 +536,13 @@ function renderReview() {
       if (cb.checked) state.reviewSelected.add(cb.dataset.slug);
       else state.reviewSelected.delete(cb.dataset.slug);
       renderReview();
+    });
+  });
+
+  document.querySelectorAll(".review-item-title").forEach((link) => {
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      window.location.href = link.getAttribute("href");
     });
   });
 

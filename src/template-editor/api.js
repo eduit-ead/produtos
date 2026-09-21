@@ -1045,6 +1045,7 @@ function createRouter() {
   router.get("/batches", (req, res) => {
     try {
       const jobs = listAllJobs();
+      res.setHeader("Cache-Control", "no-store");
       res.json(jobs);
     } catch (err) {
       console.error(err);
@@ -1111,6 +1112,7 @@ function createRouter() {
       if (!file) return res.status(404).json({ error: "Lote não encontrado." });
       const job = JSON.parse(fs.readFileSync(file, "utf8"));
       const catalogDir = path.dirname(path.dirname(file));
+      res.setHeader("Cache-Control", "no-store");
       res.json(enrichJobWithAvailability(job, catalogDir));
     } catch (err) {
       console.error(err);
@@ -1125,6 +1127,7 @@ function createRouter() {
       const job = JSON.parse(fs.readFileSync(file, "utf8"));
       const catalogDir = path.dirname(path.dirname(file));
       const enriched = enrichJobWithAvailability(job, catalogDir);
+      res.setHeader("Cache-Control", "no-store");
       res.json(enriched.courses);
     } catch (err) {
       console.error(err);

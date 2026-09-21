@@ -34,10 +34,10 @@ function arrayBufferToBase64(buffer) {
   return btoa(binary);
 }
 
-async function loadSystemStatus() {
+async function loadStudioSystemStatus() {
   try {
     const status = await api.json("/api/health");
-    state.openAiConfigured = Boolean(status.openai?.configured);
+    state.openAiConfigured = status.openaiConfigured === true;
   } catch {
     state.openAiConfigured = false;
   }
@@ -809,9 +809,9 @@ function renderVersions() {
   }
 }
 
-function init() {
+async function init() {
   registerNav("criar");
-  loadSystemStatus();
+  await loadStudioSystemStatus();
   loadCollections();
   loadTemplates();
   byId("btnBack").addEventListener("click", showSelect);

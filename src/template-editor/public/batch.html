@@ -148,6 +148,19 @@
         </div>
       </div>
 
+      <div class="review-toolbar card" id="reviewToolbar">
+        <div class="review-summary" id="reviewSummary"></div>
+        <div class="review-filter">
+          <label for="reviewFilter">Filtrar itens:</label>
+          <select id="reviewFilter">
+            <option value="all">Todos</option>
+            <option value="pronto_revisao">Aguardando revisão</option>
+            <option value="aprovado">Aprovados</option>
+            <option value="rejeitado">Rejeitados</option>
+            <option value="erro">Erros</option>
+          </select>
+        </div>
+      </div>
       <div id="reviewItems" class="review-items"></div>
     </section>
 
