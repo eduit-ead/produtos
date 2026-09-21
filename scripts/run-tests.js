@@ -21,6 +21,7 @@ const tests = [
   "test-s3-end-to-end.js",
   "test-runtime-persist.js",
   "test-page-auth.js",
+  "test-server-entrypoint.js",
 ];
 
 let failed = false;

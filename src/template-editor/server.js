@@ -5,11 +5,13 @@
  *   npm run template:editor
  */
 
+// Carrega variáveis de ambiente ANTES de qualquer módulo que leia process.env.
+require("dotenv").config();
+
 const path = require("path");
 const express = require("express");
 const { seedRuntimeDefaults } = require("../config/seed");
-const { validateAuthConfig } = require("../auth/config");
-const { authDisabled } = require("../auth/config");
+const { validateAuthConfig, authDisabled } = require("../auth/config");
 const authRoutes = require("../auth/routes");
 const { requireAuth, isAuthenticated } = require("../auth/middleware");
 const { createRouter } = require("./api");
