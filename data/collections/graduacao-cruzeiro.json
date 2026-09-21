@@ -39,6 +39,17 @@
   },
   "templateBindings": [
     { "templateVariable": "titulo", "sourceField": "curso" },
-    { "templateVariable": "subtitulo", "sourceField": "descricao_curta" }
-  ]
+    { "templateVariable": "subtitulo", "sourceField": "descricao_curta" },
+    { "templateVariable": "modalidade", "sourceField": "modalidade" },
+    { "templateVariable": "formacao", "sourceField": "formacao" },
+    { "templateVariable": "duracao", "sourceField": "duracao" }
+  ],
+  "imageGenerationBindings": {
+    "descriptionField": "prompt_imagem",
+    "environmentField": "visual_ambiente",
+    "activityField": "visual_atividade",
+    "peopleField": "visual_personagem",
+    "compositionField": "visual_composicao",
+    "avoidField": "visual_evitar"
+  }
 }

@@ -105,6 +105,26 @@ function validateCollection(collection) {
     }
   }
 
+  const igBindings = collection.imageGenerationBindings;
+  if (igBindings && typeof igBindings === "object" && !Array.isArray(igBindings)) {
+    const validBindings = [
+      "descriptionField",
+      "environmentField",
+      "activityField",
+      "peopleField",
+      "compositionField",
+      "detailsField",
+      "avoidField",
+    ];
+    for (const [key, value] of Object.entries(igBindings)) {
+      if (!validBindings.includes(key)) {
+        errors.push(`imageGenerationBindings.${key} não é reconhecido.`);
+      } else if (value !== undefined && value !== null && (typeof value !== "string" || !isValidFieldName(value))) {
+        errors.push(`imageGenerationBindings.${key} deve ser um nome de campo válido.`);
+      }
+    }
+  }
+
   const out = collection.outputColumns;
   if (!out || typeof out !== "object") {
     errors.push("outputColumns é obrigatório.");

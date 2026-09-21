@@ -14,6 +14,7 @@ const { validateTemplate, createEmptyTemplate } = require("./schema/template-sch
 const { renderTemplate } = require("./renderer");
 const { renderSavedTemplate } = require("./renderer/render-saved-template");
 const { RUNTIME } = require("../config/runtime");
+const { generateStudioBackground, estimateImageCost } = require("./ai-background");
 const courseService = require("../course-production-service");
 const genericProduction = require("../production/generic-production-service");
 const { createStorageProvider } = require("../storage");
@@ -75,6 +76,18 @@ function ensureDirs() {
   fs.mkdirSync(ASSETS_DIR, { recursive: true });
   fs.mkdirSync(IMPORTS_DIR, { recursive: true });
   fs.mkdirSync(EXPORTS_DIR, { recursive: true });
+}
+
+function decodeRuntimeAssets(runtimeAssets = {}) {
+  const decoded = {};
+  for (const [key, value] of Object.entries(runtimeAssets)) {
+    if (typeof value === "string") {
+      decoded[key] = Buffer.from(value, "base64");
+    } else if (Buffer.isBuffer(value)) {
+      decoded[key] = value;
+    }
+  }
+  return decoded;
 }
 
 function sanitizeFilename(name) {
@@ -268,10 +281,12 @@ function createRouter() {
   // Render
   // ============================================================
 
-  router.post("/render/:id", express.json({ limit: "1mb" }), async (req, res) => {
+  router.post("/render/:id", express.json({ limit: "2mb" }), async (req, res) => {
     const id = path.basename(req.params.id);
     try {
-      const buffer = await renderSavedTemplate(id, req.body || {});
+      const body = req.body || {};
+      const runtimeAssets = decodeRuntimeAssets(body.runtimeAssets);
+      const buffer = await renderSavedTemplate(id, body.values || body, runtimeAssets);
       res.setHeader("Content-Type", "image/png");
       res.send(buffer);
     } catch (err) {
@@ -317,10 +332,12 @@ function createRouter() {
     }
   });
 
-  router.post("/render-whatsapp/:id", express.json({ limit: "1mb" }), async (req, res) => {
+  router.post("/render-whatsapp/:id", express.json({ limit: "2mb" }), async (req, res) => {
     const id = path.basename(req.params.id);
     try {
-      const png = await renderSavedTemplate(id, req.body || {});
+      const body = req.body || {};
+      const runtimeAssets = decodeRuntimeAssets(body.runtimeAssets);
+      const png = await renderSavedTemplate(id, body.values || body, runtimeAssets);
       const buffer = await convertCardToWhatsAppJpeg(png);
       res.setHeader("Content-Type", "image/jpeg");
       res.setHeader("Cache-Control", "no-cache");
@@ -331,6 +348,54 @@ function createRouter() {
         ? 400
         : 500;
       return res.status(status).json({ error: err.message || "Erro ao renderizar WhatsApp." });
+    }
+  });
+
+  // ============================================================
+  // Studio AI background generation
+  // ============================================================
+
+  router.post("/studio/generate-background/estimate", express.json({ limit: "1mb" }), async (req, res) => {
+    try {
+      const { templateId, model, quality, size } = req.body || {};
+      const filePath = path.join(TEMPLATES_DIR, `${path.basename(templateId || "")}.json`);
+      if (!templateId || !fs.existsSync(filePath)) {
+        return res.status(400).json({ error: "Template inválido." });
+      }
+      const template = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      const cfg = template.imageGeneration || {};
+      const finalModel = model || cfg.defaultModel || "gpt-image-2.5-flare";
+      const finalQuality = quality || cfg.defaultQuality || "medium";
+      const finalSize = size || cfg.defaultSize || "1024x1024";
+      const cost = estimateImageCost(finalModel, finalQuality, finalSize);
+      res.json({ ok: true, cost });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao estimar custo." });
+    }
+  });
+
+  router.post("/studio/generate-background", express.json({ limit: "1mb" }), async (req, res) => {
+    try {
+      const { templateId, values, visual, collectionId, itemId, dryRun, model, quality, size } = req.body || {};
+      const metadata = await generateStudioBackground({
+        templateId,
+        values: values || {},
+        visual: visual || {},
+        collectionId,
+        itemId,
+        dryRun: Boolean(dryRun || !process.env.OPENAI_API_KEY),
+        model,
+        quality,
+        size,
+      });
+      res.json({ ok: true, metadata });
+    } catch (err) {
+      console.error(err);
+      const status = err.message?.includes("inválido") || err.message?.includes("obrigatório") || err.message?.includes("não encontrada") || err.message?.includes("não possui")
+        ? 400
+        : 500;
+      res.status(status).json({ error: err.message || "Erro ao gerar fundo." });
     }
   });
 
@@ -460,6 +525,23 @@ function createRouter() {
       const source = getDataSource(collection);
       const records = await source.listRecords();
       res.json(records);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.get("/collections/:id/records/:slug", async (req, res) => {
+    try {
+      const collection = loadCollection(req.params.id);
+      const source = getDataSource(collection);
+      const records = await source.listRecords();
+      const primaryKey = collection.primaryKey || "slug";
+      const found = records.find((r) => String(r[primaryKey] || r.slug || r.id) === req.params.slug);
+      if (!found) {
+        return res.status(404).json({ error: "Registro não encontrado." });
+      }
+      res.json(found);
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: err.message });

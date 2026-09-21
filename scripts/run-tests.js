@@ -24,6 +24,7 @@ const tests = [
   "test-server-entrypoint.js",
   "test-official-template-equivalence.js",
   "test-batch-entrypoint.js",
+  "test-studio-ai-background.js",
 ];
 
 let failed = false;

@@ -324,6 +324,36 @@ function validateTemplate(template, { routeId } = {}) {
     errors.push("assets deve ser um array.");
   }
 
+  if (template.imageGeneration !== undefined && template.imageGeneration !== null) {
+    const ig = template.imageGeneration;
+    if (typeof ig !== "object" || Array.isArray(ig)) {
+      errors.push("imageGeneration deve ser um objeto.");
+    } else {
+      if (typeof ig.enabled !== "boolean") {
+        errors.push("imageGeneration.enabled deve ser booleano.");
+      }
+      if (ig.basePrompt !== undefined && (typeof ig.basePrompt !== "string" || ig.basePrompt.length > MAX_STRING_LENGTH)) {
+        errors.push("imageGeneration.basePrompt deve ser uma string válida.");
+      }
+      if (ig.negativePrompt !== undefined && (typeof ig.negativePrompt !== "string" || ig.negativePrompt.length > MAX_STRING_LENGTH)) {
+        errors.push("imageGeneration.negativePrompt deve ser uma string válida.");
+      }
+      if (ig.promptField !== undefined && (typeof ig.promptField !== "string" || !VARIABLE_KEY_REGEX.test(ig.promptField))) {
+        errors.push("imageGeneration.promptField deve seguir o padrão de identificador.");
+      }
+      const validModels = ["gpt-image-2.5-flare", "dall-e-3", "dall-e-2"];
+      if (ig.defaultModel !== undefined && !validModels.includes(ig.defaultModel)) {
+        errors.push(`imageGeneration.defaultModel inválido: ${ig.defaultModel}.`);
+      }
+      if (ig.defaultQuality !== undefined && !["low", "medium", "high"].includes(ig.defaultQuality)) {
+        errors.push("imageGeneration.defaultQuality deve ser low, medium ou high.");
+      }
+      if (ig.defaultSize !== undefined && !["1024x1024", "1024x1536", "1536x1024", "1792x1024", "1024x1792"].includes(ig.defaultSize)) {
+        errors.push("imageGeneration.defaultSize inválido.");
+      }
+    }
+  }
+
   return errors;
 }
 

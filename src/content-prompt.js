@@ -7,21 +7,7 @@
 
 const { OUTPUT_FIELDS, VALIDATION } = require("./content-schema");
 
-function generateBatchInstructions(batchNumber, courses) {
-  const courseList = courses
-    .map((c) => `- **${c.course_id}**: ${c.Curso}`)
-    .join("\n");
-
-  return `# Instruções de preenchimento do lote ${String(batchNumber).padStart(
-    3,
-    "0"
-  )}
-
-## Cursos deste lote
-
-${courseList}
-
-## Público-alvo das futuras imagens
+const IMAGE_GENERATION_RULES_TEXT = `## Público-alvo das futuras imagens
 
 - Público brasileiro prioritário entre 20 e 35 anos.
 - Maioria feminina, aproximadamente 60% dos personagens principais no conjunto completo dos cursos, sem aplicação rígida em cada imagem.
@@ -75,6 +61,27 @@ Em cenas com duas ou mais pessoas, priorizar combinações naturais de diferente
 - A região inferior esquerda do card deve continuar livre para logo, nome do curso e informações acadêmicas.
 - Descreva características visuais concretas quando necessário, mas não presuma identidade étnica a partir da aparência.
 - A representação deve refletir o Brasil real: diverso, sem exotização nem uniformização.
+`;
+
+function getImageGenerationRules() {
+  return IMAGE_GENERATION_RULES_TEXT;
+}
+
+function generateBatchInstructions(batchNumber, courses) {
+  const courseList = courses
+    .map((c) => `- **${c.course_id}**: ${c.Curso}`)
+    .join("\n");
+
+  return `# Instruções de preenchimento do lote ${String(batchNumber).padStart(
+    3,
+    "0"
+  )}
+
+## Cursos deste lote
+
+${courseList}
+
+${IMAGE_GENERATION_RULES_TEXT}
 
 ## Campos de origem fornecidos no JSON
 
@@ -259,4 +266,6 @@ O arquivo deve conter um array JSON com objetos no seguinte formato:
 
 module.exports = {
   generateBatchInstructions,
+  getImageGenerationRules,
+  IMAGE_GENERATION_RULES_TEXT,
 };

@@ -4,6 +4,15 @@
   "name": "Graduação Cruzeiro do Sul — Oficial",
   "rendererType": "legacy-course-card",
   "editable": false,
+  "imageGeneration": {
+    "enabled": true,
+    "promptField": "prompt_imagem",
+    "basePrompt": "Fotografia publicitária realista para divulgação de curso superior no Brasil. Público brasileiro adulto, ambiente contemporâneo, real e acessível. Composição quadrada apropriada ao template Cruzeiro. Preservar organização visual para aplicação posterior de logo, título e informações do curso. Não gerar textos, letras, logotipos, marcas-d'água ou elementos gráficos. Evitar luxo, precariedade, sexualização, infantilização, estereótipos, anatomia incorreta e objetos deformados.",
+    "negativePrompt": "texto, letras, palavras, logotipos, marcas, marca-d'água, diplomas legíveis, interfaces flutuantes, gradiente, nome do curso, preço, identidade visual, card completo, anatomia incorreta, mãos deformadas, objetos deformados, ambiente luxuoso, ambiente precário, estereótipos",
+    "defaultModel": "gpt-image-2.5-flare",
+    "defaultQuality": "medium",
+    "defaultSize": "1024x1024"
+  },
   "canvas": {
     "width": 1080,
     "height": 1080,
@@ -14,14 +23,14 @@
       "key": "titulo",
       "label": "Título",
       "type": "string",
-      "defaultValue": "Análise e Desenvolvimento de Sistemas",
+      "defaultValue": "Administração",
       "required": true
     },
     {
       "key": "modalidade",
       "label": "Modalidade",
       "type": "string",
-      "defaultValue": "Graduação",
+      "defaultValue": "EAD",
       "required": true
     },
     {
@@ -35,7 +44,7 @@
       "key": "duracao",
       "label": "Duração",
       "type": "string",
-      "defaultValue": "4 semestres",
+      "defaultValue": "8 semestres",
       "required": true
     },
     {

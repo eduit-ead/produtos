@@ -1,8 +1,16 @@
 const state = {
   templates: [],
   assets: [],
+  collections: [],
   selectedTemplate: null,
   values: {},
+  visual: {},
+  generatedVersions: [],
+  activeBackgroundKey: null,
+  backgroundBuffers: {},
+  collectionsRecords: {},
+  collectionSearchQuery: "",
+  openAiConfigured: false,
   previewUrl: null,
   previewAbort: null,
   debounceTimer: null,
@@ -19,6 +27,22 @@ function normalizeColor(value) {
   return null;
 }
 
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+async function loadSystemStatus() {
+  try {
+    const status = await api.json("/api/health");
+    state.openAiConfigured = Boolean(status.openai?.configured);
+  } catch {
+    state.openAiConfigured = false;
+  }
+}
+
 async function loadTemplates() {
   state.templates = await api.json("/api/templates");
   renderTemplateCards();
@@ -26,6 +50,14 @@ async function loadTemplates() {
 
 async function loadAssets() {
   state.assets = await api.json("/api/assets");
+}
+
+async function loadCollections() {
+  try {
+    state.collections = await api.json("/api/collections");
+  } catch {
+    state.collections = [];
+  }
 }
 
 async function renderThumbnail(template) {
@@ -99,6 +131,11 @@ async function selectTemplate(id) {
   const tpl = await api.json(`/api/templates/${id}`);
   state.selectedTemplate = tpl;
   state.values = getDefaultValues(tpl);
+  state.visual = {};
+  state.generatedVersions = [];
+  state.activeBackgroundKey = null;
+  state.backgroundBuffers = {};
+  state.collectionSearchQuery = "";
 
   byId("templateName").textContent = tpl.name || tpl.id;
   byId("templateMeta").textContent = `${tpl.canvas?.width || 0}×${tpl.canvas?.height || 0} px · ${(tpl.variables || []).length} campo(s)`;
@@ -119,6 +156,8 @@ async function selectTemplate(id) {
   buildForm();
   await loadAssets();
   updateAssetSelectors();
+  setupBackgroundSection();
+  setupBaseFill();
   renderPreview();
 }
 
@@ -294,12 +333,33 @@ function updateAssetSelectors() {
         .join("");
     select.value = current;
   });
+
+  const bgSelect = byId("bgAssetSelect");
+  if (bgSelect) {
+    bgSelect.innerHTML =
+      "<option value=''>— escolher asset —</option>" +
+      state.assets
+        .map((a) => `<option value="${escapeHtml(a.assetId)}">${escapeHtml(a.assetId)} · ${formatBytes(a.size)}</option>`)
+        .join("");
+  }
 }
 
 function scheduleRender() {
   setStatus("status", "loading", "Atualizando preview...");
   if (state.debounceTimer) clearTimeout(state.debounceTimer);
   state.debounceTimer = setTimeout(() => renderPreview(), DEBOUNCE_MS);
+}
+
+function getRenderPayload() {
+  const payload = { values: state.values };
+  const runtimeAssets = {};
+  if (state.activeBackgroundKey && state.backgroundBuffers[state.activeBackgroundKey]) {
+    runtimeAssets[state.activeBackgroundKey] = state.backgroundBuffers[state.activeBackgroundKey];
+  }
+  if (Object.keys(runtimeAssets).length > 0) {
+    payload.runtimeAssets = runtimeAssets;
+  }
+  return payload;
 }
 
 async function renderPreview() {
@@ -320,10 +380,11 @@ async function renderPreview() {
   }
 
   try {
+    const payload = getRenderPayload();
     const blob = await api.blob(`/api/render/${encodeURIComponent(state.selectedTemplate.id)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(state.values),
+      body: JSON.stringify(payload),
       signal: controller.signal,
     });
 
@@ -353,6 +414,10 @@ function validateRequired() {
 function showSelect() {
   state.selectedTemplate = null;
   state.values = {};
+  state.visual = {};
+  state.generatedVersions = [];
+  state.activeBackgroundKey = null;
+  state.backgroundBuffers = {};
   if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
   state.previewUrl = null;
   byId("previewImg").src = "";
@@ -360,16 +425,19 @@ function showSelect() {
   byId("stageSelect").classList.remove("hidden");
   byId("stageEditor").classList.add("hidden");
   byId("variablesForm").innerHTML = "";
+  byId("backgroundSection")?.classList.add("hidden");
+  byId("baseFillSection")?.classList.add("hidden");
 }
 
 async function downloadPng() {
   if (!validateRequired()) return;
   setStatus("status", "loading", "Gerando PNG...");
   try {
+    const payload = getRenderPayload();
     const blob = await api.blob(`/api/render/${encodeURIComponent(state.selectedTemplate.id)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(state.values),
+      body: JSON.stringify(payload),
     });
     downloadBlob(blob, `${slugify(state.selectedTemplate.name || state.selectedTemplate.id)}.png`);
     setStatus("status", "success", "PNG baixado.");
@@ -382,10 +450,11 @@ async function downloadWhatsapp() {
   if (!validateRequired()) return;
   setStatus("status", "loading", "Gerando WhatsApp...");
   try {
+    const payload = getRenderPayload();
     const blob = await api.blob(`/api/render-whatsapp/${encodeURIComponent(state.selectedTemplate.id)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(state.values),
+      body: JSON.stringify(payload),
     });
     downloadBlob(blob, `${slugify(state.selectedTemplate.name || state.selectedTemplate.id)}-whatsapp.jpg`);
     setStatus("status", "success", "WhatsApp baixado.");
@@ -394,15 +463,366 @@ async function downloadWhatsapp() {
   }
 }
 
+// ============================================================
+// Base fill
+// ============================================================
+
+function setupBaseFill() {
+  const section = byId("baseFillSection");
+  const select = byId("baseFillCollection");
+  const search = byId("baseFillSearch");
+  const results = byId("baseFillResults");
+
+  section.classList.add("hidden");
+  select.innerHTML = "<option value=''>— escolher base —</option>";
+  search.value = "";
+  results.innerHTML = "";
+
+  if (!state.collections.length) return;
+
+  section.classList.remove("hidden");
+  for (const col of state.collections) {
+    const opt = document.createElement("option");
+    opt.value = col.id;
+    opt.textContent = col.name || col.id;
+    select.appendChild(opt);
+  }
+
+  let debounce;
+  select.addEventListener("change", () => {
+    state.collectionsRecords = {};
+    search.value = "";
+    results.innerHTML = "";
+  });
+  search.addEventListener("input", () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(() => searchBaseFill(select.value, search.value.trim()), 300);
+  });
+}
+
+async function searchBaseFill(collectionId, query) {
+  const results = byId("baseFillResults");
+  results.innerHTML = "";
+  if (!collectionId || !query) return;
+
+  try {
+    if (!state.collectionsRecords[collectionId]) {
+      const records = await api.json(`/api/collections/${encodeURIComponent(collectionId)}/records`);
+      state.collectionsRecords[collectionId] = records;
+    }
+    const records = state.collectionsRecords[collectionId];
+    const col = state.collections.find((c) => c.id === collectionId);
+    const displayField = col?.displayField || "name";
+    const searchFields = col?.searchFields || [displayField];
+    const q = query.toLowerCase();
+    const matched = records
+      .filter((r) => searchFields.some((f) => String(r[f] || "").toLowerCase().includes(q)))
+      .slice(0, 10);
+
+    for (const r of matched) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "search-result-item";
+      btn.textContent = String(r[displayField] || r[col?.primaryKey || "slug"] || "Sem nome");
+      btn.addEventListener("click", () => applyBaseFill(collectionId, r));
+      results.appendChild(btn);
+    }
+  } catch (err) {
+    handleApiError(err, "status");
+  }
+}
+
+function applyBaseFill(collectionId, record) {
+  const collection = state.collections.find((c) => c.id === collectionId);
+  if (!collection || !state.selectedTemplate) return;
+
+  for (const mapping of collection.templateBindings || []) {
+    const source = record[mapping.sourceField];
+    if (source !== undefined && source !== null) {
+      state.values[mapping.templateVariable] = String(source);
+    }
+  }
+
+  const igBindings = collection.imageGenerationBindings || {};
+  const cfg = state.selectedTemplate.imageGeneration || {};
+  const promptField = cfg.promptField || "prompt_imagem";
+
+  if (igBindings.descriptionField && record[igBindings.descriptionField] !== undefined) {
+    state.visual.description = String(record[igBindings.descriptionField]);
+    state.values[promptField] = state.visual.description;
+  }
+  if (igBindings.environmentField && record[igBindings.environmentField] !== undefined) {
+    state.visual.environment = String(record[igBindings.environmentField]);
+  }
+  if (igBindings.activityField && record[igBindings.activityField] !== undefined) {
+    state.visual.activity = String(record[igBindings.activityField]);
+  }
+  if (igBindings.peopleField && record[igBindings.peopleField] !== undefined) {
+    state.visual.people = String(record[igBindings.peopleField]);
+  }
+  if (igBindings.compositionField && record[igBindings.compositionField] !== undefined) {
+    state.visual.composition = String(record[igBindings.compositionField]);
+  }
+  if (igBindings.avoidField && record[igBindings.avoidField] !== undefined) {
+    state.visual.avoid = String(record[igBindings.avoidField]);
+  }
+  if (igBindings.detailsField && record[igBindings.detailsField] !== undefined) {
+    state.visual.details = String(record[igBindings.detailsField]);
+  }
+
+  buildForm();
+  updateAssetSelectors();
+  updateBackgroundInputs();
+  scheduleRender();
+  byId("baseFillSearch").value = "";
+  byId("baseFillResults").innerHTML = "";
+  setStatus("status", "success", "Campos preenchidos pela base.");
+}
+
+// ============================================================
+// Background generation
+// ============================================================
+
+function setupBackgroundSection() {
+  const section = byId("backgroundSection");
+  const cfg = state.selectedTemplate?.imageGeneration;
+
+  if (!cfg || !cfg.enabled) {
+    section.classList.add("hidden");
+    return;
+  }
+
+  section.classList.remove("hidden");
+
+  byId("bgTabs").querySelectorAll(".tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      setBgMode(tab.dataset.mode);
+    });
+  });
+
+  byId("bgDescription").addEventListener("input", () => {
+    state.visual.description = byId("bgDescription").value;
+    const cfg = state.selectedTemplate.imageGeneration;
+    if (cfg.promptField) state.values[cfg.promptField] = state.visual.description;
+    updateFinalPrompt();
+    updateEstimate();
+  });
+  ["bgEnvironment", "bgActivity", "bgPeople", "bgComposition", "bgDetails", "bgAvoid"].forEach((id) => {
+    byId(id).addEventListener("input", () => {
+      const key = id.replace("bg", "").replace(/^./, (c) => c.toLowerCase());
+      state.visual[key] = byId(id).value;
+      updateFinalPrompt();
+    });
+  });
+  byId("bgQuality").addEventListener("change", updateEstimate);
+  byId("bgSize").addEventListener("change", updateEstimate);
+
+  byId("btnGenerateBg").addEventListener("click", () => generateBackground(false));
+  byId("btnDryRunBg").addEventListener("click", () => generateBackground(true));
+
+  byId("bgUploadInput").addEventListener("change", async () => {
+    const file = byId("bgUploadInput").files[0];
+    if (!file) return;
+    setStatus("status", "loading", "Enviando imagem de fundo...");
+    try {
+      const data = new FormData();
+      data.append("file", file);
+      const uploaded = await api.json("/api/upload", { method: "POST", body: data });
+      await loadAssets();
+      updateAssetSelectors();
+      state.values.imagemFundo = uploaded.assetId;
+      setBgMode("asset");
+      byId("bgAssetSelect").value = uploaded.assetId;
+      scheduleRender();
+      setStatus("status", "ready", "Pronto");
+    } catch (err) {
+      handleApiError(err, "status");
+    } finally {
+      byId("bgUploadInput").value = "";
+    }
+  });
+
+  byId("bgAssetSelect").addEventListener("change", () => {
+    state.values.imagemFundo = byId("bgAssetSelect").value;
+    scheduleRender();
+  });
+
+  setBgMode("ai");
+  updateBackgroundInputs();
+  updateEstimate();
+  updateFinalPrompt();
+
+  const btnGenerate = byId("btnGenerateBg");
+  if (!state.openAiConfigured) {
+    btnGenerate.disabled = true;
+    btnGenerate.title = "OPENAI_API_KEY não configurada. Use o teste sem créditos.";
+  } else {
+    btnGenerate.disabled = false;
+    btnGenerate.title = "";
+  }
+}
+
+function setBgMode(mode) {
+  byId("bgTabs").querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.mode === mode));
+  ["bgPanelAi", "bgPanelAsset", "bgPanelUpload"].forEach((id, idx) => {
+    byId(id).classList.toggle("active", ["ai", "asset", "upload"][idx] === mode);
+  });
+}
+
+function updateBackgroundInputs() {
+  const v = state.visual;
+  byId("bgDescription").value = v.description || "";
+  byId("bgEnvironment").value = v.environment || "";
+  byId("bgActivity").value = v.activity || "";
+  byId("bgPeople").value = v.people || "";
+  byId("bgComposition").value = v.composition || "";
+  byId("bgDetails").value = v.details || "";
+  byId("bgAvoid").value = v.avoid || "";
+}
+
+async function updateFinalPrompt() {
+  const cfg = state.selectedTemplate?.imageGeneration;
+  if (!cfg) return;
+  const promptBox = byId("bgFinalPrompt");
+  const lines = [];
+  if (cfg.basePrompt) lines.push(cfg.basePrompt);
+  if (state.visual.description) lines.push(state.visual.description);
+  [state.visual.environment, state.visual.activity, state.visual.people, state.visual.composition, state.visual.details].forEach((val) => {
+    if (val) lines.push(val);
+  });
+  if (cfg.negativePrompt) lines.push(`(elementos a evitar: ${cfg.negativePrompt}${state.visual.avoid ? "; " + state.visual.avoid : ""})`);
+  promptBox.textContent = lines.join("\n\n");
+}
+
+async function updateEstimate() {
+  const cfg = state.selectedTemplate?.imageGeneration;
+  const box = byId("bgEstimate");
+  if (!cfg) {
+    box.textContent = "";
+    return;
+  }
+  try {
+    const res = await api.json("/api/studio/generate-background/estimate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        templateId: state.selectedTemplate.id,
+        quality: byId("bgQuality").value,
+        size: byId("bgSize").value,
+      }),
+    });
+    if (res.cost && res.cost.totalCostUsd != null) {
+      box.textContent = `Custo estimado: US$ ${res.cost.totalCostUsd.toFixed(4)} · ${byId("bgSize").value}`;
+    } else {
+      box.textContent = "Custo estimado indisponível para este modelo.";
+    }
+  } catch (err) {
+    box.textContent = "Não foi possível estimar o custo.";
+  }
+}
+
+let generatingBackground = false;
+
+async function generateBackground(dryRun) {
+  const cfg = state.selectedTemplate?.imageGeneration;
+  if (!cfg) return;
+  if (generatingBackground) return;
+  if (!dryRun && !state.openAiConfigured) return;
+
+  generatingBackground = true;
+  setStatus("bgGenerationStatus", "loading", dryRun ? "Gerando fundo de teste..." : "Gerando fundo com IA...");
+  byId("btnGenerateBg").disabled = true;
+  byId("btnDryRunBg").disabled = true;
+
+  try {
+    const collectionId = byId("baseFillCollection").value || null;
+    const itemRecord = collectionId ? state.collectionsRecords[collectionId]?.find((r) => {
+      const col = state.collections.find((c) => c.id === collectionId);
+      const pk = col?.primaryKey || "slug";
+      return String(r[pk]) === String(state.values[col?.templateBindings?.find((m) => m.templateVariable === "titulo")?.sourceField]);
+    }) : null;
+    const itemId = itemRecord ? String(itemRecord[state.collections.find((c) => c.id === collectionId)?.primaryKey || "slug"]) : null;
+
+    const res = await api.json("/api/studio/generate-background", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        templateId: state.selectedTemplate.id,
+        values: state.values,
+        visual: state.visual,
+        collectionId,
+        itemId,
+        dryRun,
+        quality: byId("bgQuality").value,
+        size: byId("bgSize").value,
+      }),
+    });
+
+    const key = res.metadata?.storage?.key || res.metadata?.runId;
+    const url = res.metadata?.urls?.fundo;
+    if (!url) throw new Error("Resposta não trouxe URL do fundo.");
+
+    const fetchRes = await fetch(url);
+    if (!fetchRes.ok) throw new Error("Falha ao carregar fundo gerado.");
+    const buffer = await fetchRes.arrayBuffer();
+    const base64 = arrayBufferToBase64(buffer);
+
+    state.backgroundBuffers[key] = base64;
+    const version = { key, runId: res.metadata.runId, generatedAt: res.metadata.generatedAt, dryRun, cost: res.metadata.cost };
+    const existing = state.generatedVersions.find((v) => v.key === key);
+    if (!existing) {
+      state.generatedVersions.push(version);
+    }
+    state.activeBackgroundKey = key;
+    state.values.imagemFundo = key;
+
+    renderVersions();
+    setBgMode("ai");
+    scheduleRender();
+    setStatus("bgGenerationStatus", "success", `Fundo ${dryRun ? "de teste" : "gerado"} salvo. ${res.metadata.cost?.totalCostUsd != null ? `Custo: US$ ${res.metadata.cost.totalCostUsd.toFixed(4)}` : ""}`);
+  } catch (err) {
+    handleApiError(err, "bgGenerationStatus");
+  } finally {
+    generatingBackground = false;
+    byId("btnDryRunBg").disabled = false;
+    if (state.openAiConfigured) byId("btnGenerateBg").disabled = false;
+  }
+}
+
+function renderVersions() {
+  const container = byId("bgVersions");
+  container.innerHTML = "";
+  if (!state.generatedVersions.length) return;
+
+  for (const v of state.generatedVersions) {
+    const chip = document.createElement("div");
+    chip.className = `version-chip${v.key === state.activeBackgroundKey ? " active" : ""}`;
+    const label = v.dryRun ? "teste" : "v." + v.runId.slice(-4);
+    chip.innerHTML = `<button type="button" data-key="${escapeHtml(v.key)}">${escapeHtml(label)} · ${new Date(v.generatedAt).toLocaleTimeString()}</button>`;
+    chip.querySelector("button").addEventListener("click", () => {
+      state.activeBackgroundKey = v.key;
+      state.values.imagemFundo = v.key;
+      renderVersions();
+      scheduleRender();
+    });
+    container.appendChild(chip);
+  }
+}
+
 function init() {
   registerNav("criar");
+  loadSystemStatus();
+  loadCollections();
   loadTemplates();
   byId("btnBack").addEventListener("click", showSelect);
   byId("btnReset").addEventListener("click", () => {
     state.values = getDefaultValues(state.selectedTemplate);
+    state.visual = {};
     buildForm();
     updateAssetSelectors();
-    renderPreview();
+    updateBackgroundInputs();
+    updateFinalPrompt();
+    scheduleRender();
   });
   byId("btnDownload").addEventListener("click", downloadPng);
   byId("btnDownloadWhatsapp").addEventListener("click", downloadWhatsapp);

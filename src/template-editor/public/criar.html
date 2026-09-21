@@ -30,7 +30,103 @@
           </div>
           <p id="templateMeta" class="hint"></p>
 
+          <div id="baseFillSection" class="card-subsection hidden">
+            <h3>Preencher pela base</h3>
+            <div class="field-row">
+              <select id="baseFillCollection" class="input">
+                <option value="">— escolher base —</option>
+              </select>
+              <input type="text" id="baseFillSearch" class="input" placeholder="Buscar item..." autocomplete="off">
+              <div id="baseFillResults" class="search-results"></div>
+            </div>
+            <p class="hint">Selecione uma base e um item para preencher os campos automaticamente.</p>
+          </div>
+
           <form id="variablesForm"></form>
+
+          <div id="backgroundSection" class="card-subsection hidden">
+            <h3>Imagem de fundo</h3>
+            <div class="tabs" id="bgTabs">
+              <button type="button" data-mode="ai" class="tab active">Gerar com IA</button>
+              <button type="button" data-mode="asset" class="tab">Escolher da biblioteca</button>
+              <button type="button" data-mode="upload" class="tab">Enviar imagem</button>
+            </div>
+
+            <div id="bgPanelAi" class="tab-panel active">
+              <div class="field">
+                <label for="bgDescription">Descrição da cena</label>
+                <textarea id="bgDescription" class="input" rows="3" placeholder="Ex: estudante em ambiente de escritório analisando relatórios"></textarea>
+              </div>
+              <div class="field-row cols-2">
+                <div class="field">
+                  <label for="bgEnvironment">Ambiente</label>
+                  <input type="text" id="bgEnvironment" class="input" placeholder="Ex: escritório moderno">
+                </div>
+                <div class="field">
+                  <label for="bgActivity">Atividade principal</label>
+                  <input type="text" id="bgActivity" class="input" placeholder="Ex: analisando gráficos">
+                </div>
+              </div>
+              <div class="field-row cols-2">
+                <div class="field">
+                  <label for="bgPeople">Pessoas / personagens</label>
+                  <input type="text" id="bgPeople" class="input" placeholder="Ex: uma pessoa jovem">
+                </div>
+                <div class="field">
+                  <label for="bgComposition">Composição</label>
+                  <input type="text" id="bgComposition" class="input" placeholder="Ex: assunto à direita">
+                </div>
+              </div>
+              <div class="field-row cols-2">
+                <div class="field">
+                  <label for="bgDetails">Detalhes adicionais</label>
+                  <input type="text" id="bgDetails" class="input" placeholder="Ex: iluminação natural">
+                </div>
+                <div class="field">
+                  <label for="bgAvoid">Elementos a evitar</label>
+                  <input type="text" id="bgAvoid" class="input" placeholder="Ex: texto, logotipos">
+                </div>
+              </div>
+              <details class="details-small">
+                <summary>Ver prompt final</summary>
+                <pre id="bgFinalPrompt" class="prompt-box"></pre>
+              </details>
+              <div class="field-row">
+                <select id="bgQuality" class="input">
+                  <option value="low">Qualidade baixa (mais rápido)</option>
+                  <option value="medium" selected>Qualidade média</option>
+                  <option value="high">Qualidade alta</option>
+                </select>
+                <select id="bgSize" class="input">
+                  <option value="1024x1024" selected>1024×1024</option>
+                  <option value="1024x1536">1024×1536</option>
+                  <option value="1536x1024">1536×1024</option>
+                </select>
+              </div>
+              <div id="bgEstimate" class="hint"></div>
+              <div class="field-row">
+                <button type="button" id="btnGenerateBg" class="btn-primary" disabled>Gerar fundo com IA</button>
+                <button type="button" id="btnDryRunBg" class="btn-ghost">Testar sem gastar créditos</button>
+              </div>
+              <div id="bgGenerationStatus" class="hint"></div>
+            </div>
+
+            <div id="bgPanelAsset" class="tab-panel">
+              <div class="field">
+                <label for="bgAssetSelect">Asset da biblioteca</label>
+                <select id="bgAssetSelect" class="input"></select>
+              </div>
+            </div>
+
+            <div id="bgPanelUpload" class="tab-panel">
+              <div class="field">
+                <label for="bgUploadInput">Enviar imagem (PNG/JPG, até 5 MB)</label>
+                <input type="file" id="bgUploadInput" accept="image/png,image/jpeg,image/svg+xml">
+              </div>
+            </div>
+
+            <div id="bgVersions" class="versions-list"></div>
+          </div>
 
           <div class="form-actions">
             <button type="button" id="btnDownload" class="btn-primary" disabled>Baixar PNG</button>
