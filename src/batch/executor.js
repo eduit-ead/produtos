@@ -97,6 +97,27 @@ function catalogDirFor(job) {
   return catalogDirForCollection(collectionId);
 }
 
+const TERMINAL_STATUSES = new Set([
+  "pronto_revisao",
+  "aprovado",
+  "rejeitado",
+  "erro",
+  "cancelado",
+  "simulacao",
+  "ignorado",
+]);
+
+const PRODUCING_STATUSES = new Set([
+  "gerando_fundo",
+  "fundo_gerado",
+  "renderizando_card",
+  "gerando_whatsapp",
+]);
+
+function isTerminalStatus(status) {
+  return TERMINAL_STATUSES.has(status);
+}
+
 function stepNameFromStatus(status) {
   switch (status) {
     case "pendente":
@@ -283,18 +304,27 @@ class BatchExecutor {
   _updateStats(job) {
     const stats = {
       total: job.courses.length,
-      completed: 0,
-      errors: 0,
+      pending: 0,
+      producing: 0,
+      ready: 0,
       approved: 0,
       rejected: 0,
+      ignored: 0,
+      simulation: 0,
+      errors: 0,
+      completed: 0,
       calls: 0,
       cost_usd: 0,
     };
     for (const item of job.courses) {
-      if (item.status === "pronto_revisao" || item.status === "aprovado") stats.completed++;
-      if (item.status === "erro") stats.errors++;
-      if (item.status === "aprovado") stats.approved++;
-      if (item.status === "rejeitado") stats.rejected++;
+      if (item.status === "pendente") stats.pending++;
+      else if (PRODUCING_STATUSES.has(item.status)) stats.producing++;
+      else if (item.status === "pronto_revisao") { stats.ready++; stats.completed++; }
+      else if (item.status === "aprovado") { stats.approved++; stats.completed++; }
+      else if (item.status === "rejeitado") { stats.rejected++; stats.completed++; }
+      else if (item.status === "ignorado") { stats.ignored++; stats.completed++; }
+      else if (item.status === "simulacao") { stats.simulation++; stats.completed++; }
+      else if (item.status === "erro") stats.errors++;
       stats.calls += item.calls || 0;
       stats.cost_usd += item.cost_usd || 0;
     }
@@ -304,12 +334,10 @@ class BatchExecutor {
   _finalizeJob(job) {
     this._updateStats(job);
     if (job.status === "cancelado" || job.status === "bloqueado") return;
-    const hasPending = job.courses.some((c) =>
-      ["pendente", "gerando_fundo", "fundo_gerado", "renderizando_card", "gerando_whatsapp"].includes(c.status)
-    );
+    const hasPending = job.courses.some((c) => !isTerminalStatus(c.status));
     if (job.status === "pausado") {
       // mantém pausado
-    } else if (job.stats.errors > 0) {
+    } else if (job.stats.errors > 0 && !hasPending) {
       job.status = "concluido_com_erros";
       job.completed_at = nowIso();
     } else if (!hasPending) {
@@ -391,6 +419,8 @@ class BatchExecutor {
     metadata.timestamps.generated_at = nowIso();
     metadata.status = "fundo_gerado";
     metadata.background_origin = job.background_source || "ia";
+    metadata.dryRun = job.dryRun === true;
+    item.dryRun = job.dryRun === true;
     item.status = "fundo_gerado";
     item.error = null;
     await updateMetadataUrls(metadata, this.storage);
@@ -425,8 +455,15 @@ class BatchExecutor {
     await this.storage.save(metadata.storage.keys.whatsapp, whatsappBuffer, { contentType: "image/jpeg" });
     metadata.hashes.whatsapp = sha256(whatsappBuffer);
     metadata.timestamps.whatsapp_at = nowIso();
-    metadata.status = "pronto_revisao";
-    item.status = "pronto_revisao";
+    if (job.dryRun) {
+      metadata.status = "simulacao";
+      item.status = "simulacao";
+      metadata.dryRun = true;
+      item.dryRun = true;
+    } else {
+      metadata.status = "pronto_revisao";
+      item.status = "pronto_revisao";
+    }
     item.error = null;
     await updateMetadataUrls(metadata, this.storage);
   }
@@ -437,9 +474,7 @@ class BatchExecutor {
       if (!fresh) throw new Error("Job não encontrado.");
 
       if (["pausado", "cancelado", "bloqueado"].includes(fresh.status)) {
-        if (
-          !["pronto_revisao", "aprovado", "rejeitado", "erro", "cancelado"].includes(item.status)
-        ) {
+        if (!isTerminalStatus(item.status)) {
           item.status = fresh.status === "pausado" ? item.status : "cancelado";
           metadata.status = item.status;
         }
@@ -470,9 +505,7 @@ class BatchExecutor {
       return { done: true, job };
     }
 
-    const item = job.courses.find((c) =>
-      !["pronto_revisao", "aprovado", "rejeitado", "cancelado", "erro"].includes(c.status)
-    );
+    const item = job.courses.find((c) => !isTerminalStatus(c.status));
     if (!item) {
       return this._withJobLock(jobId, () => {
         const fresh = readJob(this.catalogDir, jobId);
@@ -595,12 +628,14 @@ class BatchExecutor {
   }
 
   async start(jobId) {
+    await this.validateJob(jobId);
     const job = await this._setJobStatus(jobId, "executando");
     this._run(jobId).catch((err) => console.error(err));
     return job;
   }
 
   async resume(jobId) {
+    await this.validateJob(jobId);
     const job = await this._setJobStatus(jobId, "executando");
     this._run(jobId).catch((err) => console.error(err));
     return job;
@@ -624,7 +659,7 @@ class BatchExecutor {
       if (!job) throw new Error("Job não encontrado.");
       job.status = "cancelado";
       for (const item of job.courses) {
-        if (!["pronto_revisao", "aprovado", "rejeitado", "erro"].includes(item.status)) {
+        if (!isTerminalStatus(item.status)) {
           item.status = "cancelado";
           const metadata = readMetadata(this.catalogDir, item.slug);
           if (metadata) {
@@ -685,6 +720,71 @@ class BatchExecutor {
     });
     this._run(jobId).catch((err) => console.error(err));
     return job;
+  }
+
+  async validateJob(jobId) {
+    const job = this._refreshJob(jobId);
+    if (!job) throw new Error("Job não encontrado.");
+    this.catalogDir = catalogDirFor(job);
+    this.storage = this.storage || createStorageProvider({ baseDir: this.catalogDir });
+    const provider = getProvider(job);
+    const courseMap = await provider.loadMap();
+
+    return this._withJobLock(jobId, () => {
+      const fresh = readJob(this.catalogDir, jobId);
+      if (!fresh) throw new Error("Job não encontrado.");
+      let changed = false;
+      let openAIBlocked = false;
+
+      for (const item of fresh.courses) {
+        if (isTerminalStatus(item.status)) continue;
+
+        const course = courseMap[item.slug];
+        if (!course) {
+          item.status = "erro";
+          item.error = "Item não encontrado na fonte de dados.";
+          changed = true;
+          continue;
+        }
+
+        if (job.background_source === "original") {
+          const sourceImage = course.image_url || course.sourceImage || "";
+          if (!sourceImage.trim()) {
+            item.status = "ignorado";
+            item.error = "Ignorado — imagem de origem ausente";
+            changed = true;
+          }
+        } else if (job.background_source === "ia") {
+          const prompt = (course.prompt_imagem || course.prompt || "").trim();
+          if (!prompt && !job.dryRun) {
+            item.status = "ignorado";
+            item.error = "Ignorado — prompt ausente";
+            changed = true;
+          } else if (!job.dryRun && !process.env.OPENAI_API_KEY) {
+            item.status = "erro";
+            item.error = "OPENAI_API_KEY não configurada.";
+            changed = true;
+            openAIBlocked = true;
+          }
+        } else if (job.background_source === "upload") {
+          item.status = "ignorado";
+          item.error = "Ignorado — upload não suportado em lote";
+          changed = true;
+        }
+      }
+
+      if (openAIBlocked && fresh.status !== "bloqueado") {
+        fresh.status = "bloqueado";
+        fresh.error = "OPENAI_API_KEY não configurada.";
+        changed = true;
+      }
+
+      if (changed) {
+        this._updateStats(fresh);
+        writeJob(this.catalogDir, fresh);
+      }
+      return fresh;
+    });
   }
 
   static createJob(courses, options = {}) {

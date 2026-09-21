@@ -17,17 +17,23 @@ function recalcJobStats(job) {
   const stats = {
     total: job.courses.length,
     completed: 0,
-    errors: 0,
+    ready: 0,
     approved: 0,
     rejected: 0,
+    ignored: 0,
+    simulation: 0,
+    errors: 0,
     calls: 0,
     cost_usd: 0,
   };
   for (const item of job.courses) {
-    if (["pronto_revisao", "aprovado", "rejeitado"].includes(item.status)) stats.completed++;
+    if (["pronto_revisao", "aprovado", "rejeitado", "simulacao", "ignorado"].includes(item.status)) stats.completed++;
+    if (item.status === "pronto_revisao") stats.ready++;
     if (item.status === "erro") stats.errors++;
     if (item.status === "aprovado") stats.approved++;
     if (item.status === "rejeitado") stats.rejected++;
+    if (item.status === "ignorado") stats.ignored++;
+    if (item.status === "simulacao") stats.simulation++;
     stats.calls += item.calls || 0;
     stats.cost_usd += item.cost_usd || 0;
   }
@@ -36,7 +42,7 @@ function recalcJobStats(job) {
   if (job.status === "executando") return;
   const terminalCount = stats.completed + stats.errors;
   const allDone = stats.total > 0 && terminalCount === stats.total;
-  if (allDone && !["cancelado", "pausado"].includes(job.status)) {
+  if (allDone && !["cancelado", "pausado", "bloqueado"].includes(job.status)) {
     job.status = stats.errors > 0 ? "concluido_com_erros" : "concluido";
   }
 }
@@ -125,8 +131,24 @@ async function updateJobItemStatus(collectionId, jobId, slug, newStatus, recordL
     const item = job.courses.find((c) => c.slug === slug);
     if (!item) throw new Error("Item não encontrado no lote.");
 
-    if (newStatus === "aprovado" && !(await cardExists(catalogDir, slug, storageProvider))) {
-      throw new Error("Não é possível aprovar: card ainda não foi gerado.");
+    if (job.dryRun === true || item.status === "simulacao" || item.dryRun === true) {
+      throw new Error("Não é possível aprovar ou rejeitar uma simulação/dry-run.");
+    }
+
+    if (newStatus === "aprovado") {
+      const meta = readMetadata(catalogDir, slug);
+      if (!meta) {
+        throw new Error("Não é possível aprovar: metadata não encontrada.");
+      }
+      if (meta.dryRun === true || meta.status === "simulacao") {
+        throw new Error("Não é possível aprovar: item é uma simulação.");
+      }
+      if (item.status === "ignorado") {
+        throw new Error("Não é possível aprovar: item foi ignorado.");
+      }
+      if (!(await cardExists(catalogDir, slug, storageProvider))) {
+        throw new Error("Não é possível aprovar: card ainda não foi gerado.");
+      }
     }
 
     item.status = newStatus;

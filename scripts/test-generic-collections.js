@@ -105,7 +105,8 @@ async function runBatchForCollection(port, collectionId) {
   const items = assertJson(await request(port, "GET", `/api/batches/${job.id}/items`));
   assert.equal(items.length, courses.length);
   for (const item of items) {
-    assert.equal(item.status, "pronto_revisao", `item ${item.slug} não ficou pronto`);
+    assert.equal(item.status, "simulacao", `item ${item.slug} não ficou simulação`);
+    assert.equal(item.dryRun, true, `item ${item.slug} deve estar marcado como dryRun`);
     const base = path.join(TEMP_DIR, collectionId, item.slug);
     assert.ok(fs.existsSync(path.join(base, `${item.slug}-fundo.png`)), `fundo de ${item.slug} ausente`);
     assert.ok(fs.existsSync(path.join(base, `${item.slug}-card.png`)), `card de ${item.slug} ausente`);

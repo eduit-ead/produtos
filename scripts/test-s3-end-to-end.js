@@ -126,7 +126,8 @@ function waitForJob(exec, jobId, timeoutMs = 10000) {
   const importDir = path.join(runtimeDir, "data", "imports", collectionId);
   fs.mkdirSync(importDir, { recursive: true });
   const csvPath = path.join(importDir, "produtos.csv");
-  fs.writeFileSync(csvPath, "SKU,Nome,Categoria\nSKU-001,Produto A,Categoria A", "utf8");
+  const imageUrl = "https://i.ibb.co/Z6b3dBtT/Jornalismo.png";
+  fs.writeFileSync(csvPath, `SKU,Nome,Categoria,image_url\nSKU-001,Produto A,Categoria A,${imageUrl}`, "utf8");
 
   const collection = {
     id: collectionId,
@@ -163,8 +164,8 @@ function waitForJob(exec, jobId, timeoutMs = 10000) {
   const job = BatchExecutor.createJob(courses, {
     collectionId,
     template_id: "demo",
-    background_source: "ia",
-    dryRun: true,
+    background_source: "original",
+    dryRun: false,
   });
   fs.mkdirSync(path.join(catalogDir, "jobs"), { recursive: true });
   writeJob(catalogDir, job);

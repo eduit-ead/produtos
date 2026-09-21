@@ -8,15 +8,53 @@ const state = {
   selected: new Set(),
   filters: {},
   query: "",
+  itemsStatusFilter: "all",
+  itemsSort: "recent",
   jobId: null,
   job: null,
   pollTimer: null,
   reviewSelected: new Set(),
-  reviewFilter: "all",
+  history: [],
 };
 
 const LEGACY_ID = "graduacao-cruzeiro";
 const COST_PER_CALL = 0.03;
+const BATCH_STATUS_LABELS = {
+  simulacao: "Simulação",
+  nao_produzido: "Não produzido",
+  produzindo: "Produzindo",
+  aguardando_revisao: "Aguardando revisão",
+  pronto_revisao: "Aguardando revisão",
+  aprovado: "Aprovado",
+  rejeitado: "Rejeitado",
+  ignorado: "Ignorado",
+  erro: "Erro",
+  cancelado: "Cancelado",
+  pendente: "Pendente",
+  gerando_fundo: "Produzindo",
+  fundo_gerado: "Produzindo",
+  renderizando_card: "Produzindo",
+  gerando_whatsapp: "Produzindo",
+};
+
+function uiStatus(item) {
+  const s = item?.status;
+  if (s === "simulacao") return "simulacao";
+  if (["gerando_fundo", "fundo_gerado", "renderizando_card", "gerando_whatsapp"].includes(s)) return "produzindo";
+  if (s === "pronto_revisao") return "aguardando_revisao";
+  if (["aprovado", "rejeitado", "ignorado", "erro", "cancelado"].includes(s)) return s;
+  return "nao_produzido";
+}
+
+function hasSourceImage(item) {
+  const url = item?.current_background_url || item?.image_url || item?.sourceImage || "";
+  return url.trim().length > 0;
+}
+
+function hasPrompt(item) {
+  const p = item?.prompt || item?.prompt_imagem || "";
+  return p.trim().length > 0;
+}
 
 async function init() {
   registerNav("lote");
@@ -29,10 +67,14 @@ async function init() {
 function applySystemStatus() {
   const btn = byId("btnConfigReal");
   if (!btn) return;
-  if (!isOpenAIConfigured()) {
+  const bgSource = document.querySelector('input[name="bgSource"]:checked')?.value || "ia";
+  if (bgSource === "ia" && !isOpenAIConfigured()) {
     btn.disabled = true;
     btn.title = "Configure OPENAI_API_KEY para habilitar geração real.";
-    setStatus("status", "warning", "OpenAI não configurada: geração real desabilitada. Use o modo de teste.");
+    setStatus("status", "warning", "OpenAI não configurada: geração real desabilitada. Use o modo de simulação.");
+  } else {
+    btn.disabled = false;
+    btn.title = "";
   }
 }
 
@@ -46,36 +88,20 @@ async function loadInitial() {
     state.templates = templates;
 
     const params = new URLSearchParams(window.location.search);
-    const requestedCollection = params.get("collection");
     const requestedJob = params.get("job");
 
     if (requestedJob) {
       state.jobId = requestedJob;
       await loadJob();
-      if (state.job?.collectionId) {
-        state.collectionId = state.job.collectionId;
-        state.collection = state.collections.find((c) => c.id === state.collectionId) || null;
-        await loadItems();
-      }
-      if (params.get("returnToReview") === "1") {
-        // Recarrega o job para garantir estado fresco ao voltar da revisão individual.
-        await loadJob();
-      }
+      state.collectionId = state.job?.collectionId;
+      state.collection = state.collections.find((c) => c.id === state.collectionId) || null;
+      await loadItems();
       goStep("review");
       return;
     }
 
-    if (requestedCollection && state.collections.some((c) => c.id === requestedCollection)) {
-      state.collectionId = requestedCollection;
-    } else {
-      state.collectionId = state.collections.find((c) => c.id === LEGACY_ID)?.id || state.collections[0]?.id || null;
-    }
-
-    renderBaseStep();
+    renderBaseMode();
     goStep("base");
-    if (params.get("autostart") === "1" && state.collectionId) {
-      await selectCollection(state.collectionId);
-    }
   } catch (err) {
     handleApiError(err, "status");
   }
@@ -86,12 +112,26 @@ function setupEvents() {
     for (const item of state.filtered) state.selected.add(item.slug);
     renderItems();
   });
+  byId("btnSelectEligible").addEventListener("click", () => {
+    for (const item of state.filtered) {
+      if (isEligibleForConfig(item)) state.selected.add(item.slug);
+    }
+    renderItems();
+  });
   byId("btnClearSelection").addEventListener("click", () => {
     state.selected.clear();
     renderItems();
   });
   byId("searchInput").addEventListener("input", () => {
     state.query = byId("searchInput").value.trim().toLowerCase();
+    renderItems();
+  });
+  byId("itemsStatusFilter").addEventListener("change", () => {
+    state.itemsStatusFilter = byId("itemsStatusFilter").value || "all";
+    renderItems();
+  });
+  byId("itemsSort").addEventListener("change", () => {
+    state.itemsSort = byId("itemsSort").value || "recent";
     renderItems();
   });
   byId("btnItemsBack").addEventListener("click", () => goStep("base"));
@@ -112,12 +152,15 @@ function setupEvents() {
   byId("btnSyncXlsx").addEventListener("click", syncSource);
 
   document.querySelectorAll('input[name="dryRun"], input[name="bgSource"], #batchSize, #maxCalls, #maxCostUsd').forEach((el) => {
-    el.addEventListener("change", updateEstimate);
+    el.addEventListener("change", () => {
+      updateEstimate();
+      updateConfigButtonLabels();
+      applySystemStatus();
+    });
   });
-  byId("templateSelect").addEventListener("change", updateEstimate);
-  byId("reviewFilter")?.addEventListener("change", () => {
-    state.reviewFilter = byId("reviewFilter").value || "all";
-    renderReview();
+  byId("templateSelect").addEventListener("change", () => {
+    updateEstimate();
+    updateConfigButtonLabels();
   });
 }
 
@@ -131,6 +174,7 @@ function goStep(step) {
   });
   window.scrollTo({ top: 0, behavior: "smooth" });
 
+  if (step === "base") renderBaseMode();
   if (step === "items") renderItems();
   if (step === "config") renderConfig();
   if (step === "review") renderReview();
@@ -141,12 +185,36 @@ function stepOrder(name) {
 }
 
 function getItemTitle(item) {
-  return item.title || item.curso || item.slug;
+  return item.title || item.curso || item.name || item.slug;
 }
 
 // ============================================================
-// Step: Base
+// Step: Base (new production / history)
 // ============================================================
+
+function renderBaseMode() {
+  const modeContainer = byId("baseModeSelect");
+  const historyPanel = byId("historyPanel");
+  const newPanel = byId("newProductionPanel");
+
+  modeContainer.querySelectorAll(".mode-card").forEach((card) => {
+    card.addEventListener("click", () => {
+      const mode = card.dataset.mode;
+      if (mode === "new") {
+        historyPanel.classList.add("hidden");
+        newPanel.classList.remove("hidden");
+        renderBaseStep();
+      } else {
+        newPanel.classList.add("hidden");
+        historyPanel.classList.remove("hidden");
+        loadHistory();
+      }
+    });
+  });
+
+  newPanel.classList.add("hidden");
+  historyPanel.classList.add("hidden");
+}
 
 function renderBaseStep() {
   const container = byId("baseCards");
@@ -177,14 +245,81 @@ function renderBaseStep() {
   }
 }
 
+async function loadHistory() {
+  const list = byId("historyList");
+  list.innerHTML = "<p class='hint'>Carregando lotes...</p>";
+  try {
+    state.history = await api.json("/api/batches");
+    renderHistory();
+  } catch (err) {
+    handleApiError(err, "status");
+  }
+}
+
+function renderHistory() {
+  const list = byId("historyList");
+  list.innerHTML = "";
+  if (!state.history.length) {
+    list.innerHTML = "<p class='hint'>Nenhum lote encontrado.</p>";
+    return;
+  }
+
+  for (const job of state.history) {
+    const item = document.createElement("div");
+    item.className = "history-item";
+    const stats = job.stats || {};
+    item.innerHTML = `
+      <div class="meta">
+        <strong>${escapeHtml(job.id)}</strong>
+        <div class="hint">${escapeHtml(job.collectionId || "padrão")} · ${formatDate(job.updated_at)}</div>
+        <div class="hint">
+          ${stats.ready || 0} aguardando · ${stats.approved || 0} aprovados · ${stats.rejected || 0} rejeitados · ${stats.ignored || 0} ignorados · ${stats.simulation || 0} simulações · ${stats.errors || 0} erros
+        </div>
+      </div>
+      <span class="badge ${job.type === "simulação" ? "simulacao" : "producao"}">${escapeHtml(job.type)}</span>
+      <span class="badge ${statusClass(job.status)}">${escapeHtml(formatStatus(job.status))}</span>
+      <button type="button" class="btn-secondary btn-small history-open" data-id="${escapeHtml(job.id)}">Revisar</button>
+      <button type="button" class="btn-ghost btn-small history-archive" data-id="${escapeHtml(job.id)}" data-archived="${job.archived}">${job.archived ? "Reativar" : "Arquivar"}</button>
+    `;
+    list.appendChild(item);
+  }
+
+  list.querySelectorAll(".history-open").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      window.location.href = `/batch.html?job=${encodeURIComponent(btn.dataset.id)}`;
+    });
+  });
+  list.querySelectorAll(".history-archive").forEach((btn) => {
+    btn.addEventListener("click", () => archiveJob(btn.dataset.id, btn.dataset.archived !== "true"));
+  });
+}
+
+async function archiveJob(jobId, archived) {
+  try {
+    await api.json(`/api/batches/${encodeURIComponent(jobId)}/archive`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ archived }),
+    });
+    await loadHistory();
+  } catch (err) {
+    handleApiError(err, "status");
+  }
+}
+
 async function selectCollection(id) {
   state.collectionId = id;
   state.collection = state.collections.find((c) => c.id === id);
   state.selected.clear();
   state.filters = {};
   state.query = "";
+  state.itemsStatusFilter = "all";
+  state.itemsSort = "recent";
   setStatus("status", "loading", "Carregando itens...");
   await loadItems();
+  byId("searchInput").value = "";
+  byId("itemsStatusFilter").value = "all";
+  byId("itemsSort").value = "recent";
   goStep("items");
   setStatus("status", "ready", `${state.items.length} itens carregados.`);
 }
@@ -199,7 +334,7 @@ async function loadItems() {
 
 function applyFilters() {
   const q = state.query;
-  state.filtered = state.items.filter((item) => {
+  let filtered = state.items.filter((item) => {
     const title = getItemTitle(item).toLowerCase();
     const slug = item.slug.toLowerCase();
     if (q && !title.includes(q) && !slug.includes(q)) return false;
@@ -211,6 +346,57 @@ function applyFilters() {
     }
     return true;
   });
+
+  const statusFilter = state.itemsStatusFilter;
+  if (statusFilter !== "all") {
+    filtered = filtered.filter((item) => {
+      switch (statusFilter) {
+        case "nao_produzido":
+          return uiStatus(item) === "nao_produzido";
+        case "com_imagem":
+          return hasSourceImage(item);
+        case "sem_imagem":
+          return !hasSourceImage(item);
+        case "aguardando_revisao":
+          return uiStatus(item) === "aguardando_revisao";
+        case "aprovado":
+          return uiStatus(item) === "aprovado";
+        case "rejeitado":
+          return uiStatus(item) === "rejeitado";
+        case "erro":
+          return uiStatus(item) === "erro";
+        default:
+          return true;
+      }
+    });
+  }
+
+  filtered.sort((a, b) => {
+    switch (state.itemsSort) {
+      case "az":
+        return getItemTitle(a).localeCompare(getItemTitle(b));
+      case "za":
+        return getItemTitle(b).localeCompare(getItemTitle(a));
+      case "status":
+        return uiStatus(a).localeCompare(uiStatus(b));
+      case "nao_produzido_primeiro":
+        return (uiStatus(a) === "nao_produzido" ? -1 : 1) - (uiStatus(b) === "nao_produzido" ? -1 : 1);
+      case "revisao_primeiro":
+        return (uiStatus(a) === "aguardando_revisao" ? -1 : 1) - (uiStatus(b) === "aguardando_revisao" ? -1 : 1);
+      case "recent":
+      default:
+        return 0;
+    }
+  });
+
+  state.filtered = filtered;
+}
+
+function isEligibleForConfig(item) {
+  const bgSource = document.querySelector('input[name="bgSource"]:checked')?.value || "ia";
+  if (bgSource === "original") return hasSourceImage(item);
+  if (bgSource === "ia") return hasPrompt(item);
+  return true;
 }
 
 function renderItems() {
@@ -222,6 +408,7 @@ function renderItems() {
   for (const def of filterDefs) {
     const values = new Set(state.items.map((i) => i.fields?.[def.field] || i[def.field]).filter(Boolean));
     const select = document.createElement("select");
+    select.className = "input";
     select.innerHTML = `<option value="">${escapeHtml(def.label)}</option>` +
       [...values].sort().map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("");
     select.value = state.filters[def.field] || "";
@@ -237,8 +424,11 @@ function renderItems() {
   for (const item of state.filtered) {
     const card = document.createElement("div");
     card.className = "item-card" + (state.selected.has(item.slug) ? " selected" : "");
+    const sourceOk = hasSourceImage(item);
+    const status = uiStatus(item);
     card.innerHTML = `
       <div class="select-marker"></div>
+      ${sourceOk ? `<span class="source-badge">imagem</span>` : `<span class="source-badge missing">sem imagem</span>`}
       <div class="thumb">
         ${item.current_card_url
           ? `<img src="${escapeHtml(item.current_card_url)}" alt="" loading="lazy">`
@@ -246,8 +436,10 @@ function renderItems() {
       </div>
       <div class="info">
         <h4>${escapeHtml(getItemTitle(item))}</h4>
-        <div class="meta">${escapeHtml(item.modalidade || item.formacao || item.source_status || "")}</div>
+        <div class="meta">${escapeHtml(item.modalidade || item.formacao || item.fields?.categoria || item.fields?.Categoria || item.source_status || "")}</div>
+        <div class="meta">${escapeHtml(item.fields?.modalidade || "")} ${escapeHtml(item.fields?.formacao || "")} ${escapeHtml(item.fields?.duracao || "")}</div>
       </div>
+      <span class="status-tag ${status}">${escapeHtml(BATCH_STATUS_LABELS[status] || status)}</span>
     `;
     card.addEventListener("click", () => {
       if (state.selected.has(item.slug)) state.selected.delete(item.slug);
@@ -257,13 +449,31 @@ function renderItems() {
     grid.appendChild(card);
   }
 
+  renderItemsInfo();
+
   const bar = byId("selectionBar");
   const count = state.selected.size;
+  const eligible = state.filtered.filter(isEligibleForConfig).length;
+  const ignored = state.filtered.length - eligible;
   byId("selectionText").textContent = count === 0
-    ? "Nenhum item selecionado"
-    : `${count} item${count === 1 ? "" : "s"} selecionado${count === 1 ? "" : "s"}`;
-  bar.classList.toggle("hidden", count === 0);
+    ? `${eligible} elegíveis · ${ignored} serão ignorados`
+    : `${count} selecionado${count === 1 ? "" : "s"} · ${eligible} elegíveis · ${ignored} ignorados`;
+  bar.classList.remove("hidden");
   byId("btnItemsNext").disabled = count === 0;
+}
+
+function renderItemsInfo() {
+  const box = byId("itemsInfo");
+  const total = state.items.length;
+  const withImage = state.items.filter(hasSourceImage).length;
+  const withoutImage = total - withImage;
+  const withPrompt = state.items.filter(hasPrompt).length;
+  box.innerHTML = `
+    <strong>${total}</strong> itens ·
+    <strong>${withImage}</strong> com imagem de origem ·
+    <strong>${withoutImage}</strong> sem imagem ·
+    <strong>${withPrompt}</strong> com prompt
+  `;
 }
 
 // ============================================================
@@ -278,33 +488,98 @@ function renderConfig() {
     select.value = defaultTemplate;
   }
   updateEstimate();
+  updateConfigButtonLabels();
+  renderPreValidation();
+  applySystemStatus();
+}
+
+function updateConfigButtonLabels() {
+  const bgSource = document.querySelector('input[name="bgSource"]:checked')?.value || "ia";
+  const dryRun = document.querySelector('input[name="dryRun"]:checked')?.value === "true";
+  const testBtn = byId("btnConfigTest");
+  const realBtn = byId("btnConfigReal");
+
+  if (bgSource === "original") {
+    testBtn.classList.add("hidden");
+    realBtn.textContent = dryRun ? "Executar simulação" : "Produzir cards com imagens existentes";
+  } else {
+    testBtn.classList.remove("hidden");
+    testBtn.textContent = "Executar simulação";
+    realBtn.textContent = dryRun ? "Executar simulação" : "Gerar fundos e produzir cards";
+  }
+}
+
+function renderPreValidation() {
+  const box = byId("preValidationBox");
+  const content = byId("preValidationContent");
+  const selectedItems = state.items.filter((i) => state.selected.has(i.slug));
+  const bgSource = document.querySelector('input[name="bgSource"]:checked')?.value || "ia";
+
+  const total = selectedItems.length;
+  const withImage = selectedItems.filter(hasSourceImage).length;
+  const withoutImage = total - withImage;
+  const withPrompt = selectedItems.filter(hasPrompt).length;
+  const withoutPrompt = total - withPrompt;
+  const alreadyApproved = selectedItems.filter((i) => uiStatus(i) === "aprovado").length;
+
+  let eligible = 0;
+  let reason = "";
+  if (bgSource === "original") {
+    eligible = withImage;
+    reason = `${withoutImage} sem imagem de origem`;
+  } else {
+    eligible = withPrompt;
+    reason = `${withoutPrompt} sem prompt`;
+  }
+
+  const dryRun = document.querySelector('input[name="dryRun"]:checked')?.value === "true";
+  const calls = dryRun ? 0 : (bgSource === "original" ? 0 : eligible);
+  const cost = dryRun || bgSource === "original" ? 0 : calls * COST_PER_CALL;
+
+  content.innerHTML = `
+    <ul>
+      <li><strong>${total}</strong> selecionados</li>
+      <li><strong>${eligible}</strong> elegíveis · ${reason}</li>
+      ${bgSource === "original" ? "" : `<li><strong>${withImage}</strong> possuem imagem de origem (não usada no modo IA)</li>`}
+      ${alreadyApproved > 0 ? `<li><strong>${alreadyApproved}</strong> já aprovados</li>` : ""}
+      <li><strong>${calls}</strong> chamadas à OpenAI</li>
+      <li>custo estimado: <strong>${formatCurrency(cost)}</strong></li>
+    </ul>
+  `;
+  box.classList.toggle("hidden", total === 0);
 }
 
 function updateEstimate() {
   const count = state.selected.size;
   const dryRun = document.querySelector('input[name="dryRun"]:checked')?.value === "true";
+  const bgSource = document.querySelector('input[name="bgSource"]:checked')?.value || "ia";
   const maxCalls = byId("maxCalls").value.trim();
-  const calls = dryRun
-    ? 0
-    : maxCalls
-    ? Math.min(parseInt(maxCalls, 10) || 0, count)
-    : count;
-  const cost = dryRun ? 0 : calls * COST_PER_CALL;
-  byId("estimateSummary").textContent = `${count} item${count === 1 ? "" : "s"} · até ${calls} chamada${calls === 1 ? "" : "s"} · ${formatCurrency(cost)}`;
+  let calls = 0;
+  if (!dryRun && bgSource === "ia") {
+    calls = maxCalls ? Math.min(parseInt(maxCalls, 10) || 0, count) : count;
+  }
+  const cost = calls * COST_PER_CALL;
+  const label = dryRun ? "simulação" : bgSource === "original" ? "imagens existentes" : "chamadas à OpenAI";
+  byId("estimateSummary").textContent = `${count} item${count === 1 ? "" : "s"} · ${calls} ${label} · ${formatCurrency(cost)}`;
   byId("estimateHint").textContent = dryRun
-    ? "Modo de teste: nenhuma chamada real à OpenAI."
-    : "Geração real: as chamadas só começam após confirmação.";
+    ? "Modo de teste: nenhuma chamada real é feita."
+    : bgSource === "original"
+      ? "As imagens da base serão reutilizadas sem chamadas à OpenAI."
+      : "Geração real: as chamadas só começam após confirmação.";
+  renderPreValidation();
 }
 
 async function createBatch(dryRun) {
   if (state.selected.size === 0) return;
 
-  if (!dryRun && !isOpenAIConfigured()) {
+  const bgSource = document.querySelector('input[name="bgSource"]:checked')?.value || "ia";
+
+  if (!dryRun && bgSource === "ia" && !isOpenAIConfigured()) {
     setStatus("status", "warning", "OpenAI não configurada. Geração real desabilitada.");
     return;
   }
 
-  if (!dryRun) {
+  if (!dryRun && bgSource === "ia") {
     const ok = await confirmModal(
       `Você está prestes a gerar imagens reais para ${state.selected.size} item(s). Isso consumirá créditos da OpenAI. Deseja continuar?`,
       { confirmText: "Confirmar geração", danger: true }
@@ -313,7 +588,6 @@ async function createBatch(dryRun) {
   }
 
   const templateId = byId("templateSelect").value;
-  const backgroundSource = document.querySelector('input[name="bgSource"]:checked')?.value || "ia";
   const batchSize = parseInt(byId("batchSize").value, 10) || 1;
   const maxCalls = byId("maxCalls").value.trim();
   const maxCostUsd = byId("maxCostUsd").value.trim();
@@ -325,7 +599,7 @@ async function createBatch(dryRun) {
     .filter((i) => state.selected.has(i.slug))
     .map((i) => ({ course_id: i.course_id || i.record_id || i.slug, slug: i.slug }));
 
-  setStatus("status", "loading", dryRun ? "Criando lote de teste..." : "Criando lote de produção...");
+  setStatus("status", "loading", dryRun ? "Criando simulação..." : "Criando lote de produção...");
 
   try {
     const create = await api.json("/api/batches", {
@@ -335,7 +609,7 @@ async function createBatch(dryRun) {
         collection_id: state.collectionId,
         courses,
         template_id: templateId,
-        background_source: backgroundSource,
+        background_source: bgSource,
         batch_size: batchSize,
         max_calls: maxCalls ? parseInt(maxCalls, 10) : null,
         max_cost_usd: maxCostUsd ? parseFloat(maxCostUsd) : null,
@@ -397,34 +671,25 @@ function getCatalogUrl(slug, file) {
 function renderReview() {
   const job = state.job;
   const stats = job?.stats || {};
-  const pendingReview = (job?.courses || []).filter((c) => c.status === "pronto_revisao").length;
 
   byId("reviewStats").innerHTML = `
     <div class="stat"><strong>${stats.total || 0}</strong> total</div>
-    <div class="stat"><strong>${pendingReview}</strong> aguardando revisão</div>
+    <div class="stat"><strong>${stats.ready || 0}</strong> aguardando revisão</div>
     <div class="stat"><strong>${stats.approved || 0}</strong> aprovados</div>
     <div class="stat"><strong>${stats.rejected || 0}</strong> rejeitados</div>
+    <div class="stat"><strong>${stats.ignored || 0}</strong> ignorados</div>
+    <div class="stat"><strong>${stats.simulation || 0}</strong> simulações</div>
     <div class="stat"><strong>${stats.errors || 0}</strong> erros</div>
     <div class="stat"><strong>${stats.calls || 0}</strong> chamadas</div>
     <div class="stat"><strong>${formatCurrency(stats.cost_usd)}</strong> custo</div>
     <div class="stat"><span class="badge ${statusClass(job?.status)}">${formatStatus(job?.status)}</span></div>
   `;
 
-  const reviewSummary = byId("reviewSummary");
-  if (reviewSummary) {
-    reviewSummary.innerHTML = `
-      <div class="stat"><strong>${stats.total || 0}</strong><label>Total</label></div>
-      <div class="stat"><strong>${pendingReview}</strong><label>Aguardando revisão</label></div>
-      <div class="stat"><strong>${stats.approved || 0}</strong><label>Aprovados</label></div>
-      <div class="stat"><strong>${stats.rejected || 0}</strong><label>Rejeitados</label></div>
-      <div class="stat"><strong>${stats.errors || 0}</strong><label>Erros</label></div>
-    `;
-  }
-
   const running = job?.status === "executando";
   const hasApproved = (job?.stats?.approved || 0) > 0;
-  byId("btnApproveSelected").disabled = state.reviewSelected.size === 0;
-  byId("btnRejectSelected").disabled = state.reviewSelected.size === 0;
+  const hasReady = (job?.stats?.ready || 0) > 0;
+  byId("btnApproveSelected").disabled = state.reviewSelected.size === 0 || running;
+  byId("btnRejectSelected").disabled = state.reviewSelected.size === 0 || running;
   byId("btnDownloadCards").disabled = !hasApproved || running;
   byId("btnDownloadWhatsApp").disabled = !hasApproved || running;
   byId("btnDownloadPackage").disabled = !hasApproved || running;
@@ -432,103 +697,50 @@ function renderReview() {
   byId("btnSyncXlsx").textContent = syncButtonLabel();
   byId("btnSyncXlsx").disabled = !isLegacyXlsx() && sourceType() !== "xlsx";
 
-  const filterSelect = byId("reviewFilter");
-  if (filterSelect && filterSelect.value !== state.reviewFilter) {
-    filterSelect.value = state.reviewFilter;
-  }
+  const sections = {
+    ready: byId("reviewReady"),
+    approved: byId("reviewApproved"),
+    rejected: byId("reviewRejected"),
+    errors: byId("reviewErrors"),
+    simulation: byId("reviewSimulation"),
+  };
+  Object.values(sections).forEach((el) => el.innerHTML = "");
 
-  const container = byId("reviewItems");
-  container.innerHTML = "";
+  const courses = job?.courses || [];
+  const isSimulation = (item) =>
+    item.status === "simulacao" || item.dryRun === true || (job?.dryRun === true && item.status === "pronto_revisao");
 
-  const courses = (job?.courses || []).filter((item) => {
-    if (state.reviewFilter === "all") return true;
-    if (state.reviewFilter === "pronto_revisao") return item.status === "pronto_revisao";
-    return item.status === state.reviewFilter;
-  });
-
-  if (courses.length === 0) {
-    container.innerHTML = `<p class="hint">Nenhum item ${state.reviewFilter === "all" ? "no lote" : `com status "${formatStatus(state.reviewFilter)}"`}.</p>`;
-    return;
-  }
-
+  const bySection = {
+    ready: [],
+    approved: [],
+    rejected: [],
+    errors: [],
+    simulation: [],
+  };
   for (const item of courses) {
-    const record = state.items.find((i) => i.slug === item.slug);
-    const title = record ? getItemTitle(record) : item.slug;
-    const hasBackground = item.hasBackground || false;
-    const hasCard = item.hasCard || false;
-    const hasWhatsApp = item.hasWhatsApp || false;
-    const hasError = item.status === "erro";
-    const isReviewable = ["pronto_revisao", "gerando_whatsapp"].includes(item.status);
-    const reviewUrl = state.jobId
-      ? `/cursos.html?slug=${encodeURIComponent(item.slug)}&job=${encodeURIComponent(state.jobId)}&return=batch`
-      : `/cursos.html?slug=${encodeURIComponent(item.slug)}`;
+    if (isSimulation(item)) {
+      bySection.simulation.push(item);
+    } else if (item.status === "pronto_revisao") {
+      bySection.ready.push(item);
+    } else if (item.status === "aprovado") {
+      bySection.approved.push(item);
+    } else if (item.status === "rejeitado") {
+      bySection.rejected.push(item);
+    } else if (item.status === "erro") {
+      bySection.errors.push(item);
+    }
+  }
 
-    const div = document.createElement("div");
-    div.className = "review-item";
-    const placeholderText = (type) => {
-      if (hasError) return `${type} não gerado`;
-      if (item.status === "pendente") return "Aguardando processamento";
-      return "Card não gerado";
-    };
-    div.innerHTML = `
-      <div class="review-item-header">
-        <input type="checkbox" class="review-select" data-slug="${escapeHtml(item.slug)}" ${state.reviewSelected.has(item.slug) ? "checked" : ""}>
-        <a href="${escapeHtml(reviewUrl)}" class="review-item-title" data-slug="${escapeHtml(item.slug)}">${escapeHtml(title)}</a>
-        <span class="badge ${statusClass(item.status)}">${formatStatus(item.status)}</span>
-        ${item.error ? `<span class="hint">${escapeHtml(item.error)}</span>` : ""}
-        <span class="spacer"></span>
-        <div class="review-item-actions">
-          ${isReviewable && hasCard
-            ? `<button class="btn-success approve-item" data-slug="${escapeHtml(item.slug)}">Aprovar</button>
-               <button class="btn-danger reject-item" data-slug="${escapeHtml(item.slug)}">Rejeitar</button>`
-            : ""}
-          ${isReviewable && !hasCard
-            ? `<button class="btn-success approve-item" data-slug="${escapeHtml(item.slug)}" disabled title="Card ainda não foi gerado">Aprovar</button>
-               <button class="btn-danger reject-item" data-slug="${escapeHtml(item.slug)}">Rejeitar</button>`
-            : ""}
-          ${hasCard ? `<button class="btn-secondary download-png" data-slug="${escapeHtml(item.slug)}">PNG</button>` : ""}
-          ${hasWhatsApp ? `<button class="btn-secondary download-wa" data-slug="${escapeHtml(item.slug)}">WhatsApp</button>` : ""}
-          ${hasError || item.status === "rejeitado"
-            ? `<button class="btn-secondary retry-item" data-slug="${escapeHtml(item.slug)}">Gerar novamente</button>`
-            : ""}
-        </div>
-      </div>
-      <div class="review-comparison">
-        <div class="review-column">
-          <h5>Card atual</h5>
-          <div class="thumb">
-            ${record?.current_card_url
-              ? `<img src="${escapeHtml(record.current_card_url)}" alt="Card atual">`
-              : `<div class="missing">Sem card atual</div>`}
-          </div>
-        </div>
-        <div class="review-column">
-          <h5>Fundo novo</h5>
-          <div class="thumb">
-            ${hasBackground
-              ? `<img src="${getCatalogUrl(item.slug, `${item.slug}-fundo.png`)}" alt="Novo fundo">`
-              : `<div class="missing">${placeholderText("Fundo")}</div>`}
-          </div>
-        </div>
-        <div class="review-column">
-          <h5>Card novo</h5>
-          <div class="thumb">
-            ${hasCard
-              ? `<img src="${getCatalogUrl(item.slug, `${item.slug}-card.png`)}" alt="Novo card">`
-              : `<div class="missing">${placeholderText("Card")}</div>`}
-          </div>
-        </div>
-        <div class="review-column">
-          <h5>WhatsApp</h5>
-          <div class="thumb">
-            ${hasWhatsApp
-              ? `<img src="${getCatalogUrl(item.slug, `${item.slug}-whatsapp.jpg`)}" alt="WhatsApp">`
-              : `<div class="missing">${placeholderText("WhatsApp")}</div>`}
-          </div>
-        </div>
-      </div>
-    `;
-    container.appendChild(div);
+  for (const [key, list] of Object.entries(bySection)) {
+    const container = sections[key];
+    if (!container) continue;
+    if (list.length === 0) {
+      container.innerHTML = "<p class='hint'>Nenhum item nesta seção.</p>";
+    } else {
+      for (const item of list) {
+        container.appendChild(buildReviewItem(item));
+      }
+    }
   }
 
   document.querySelectorAll(".review-select").forEach((cb) => {
@@ -553,18 +765,116 @@ function renderReview() {
   document.querySelectorAll(".download-wa").forEach((btn) => btn.addEventListener("click", () => downloadItem(btn.dataset.slug, "whatsapp")));
 
   if (running) {
-    setStatus("status", "loading", `Produção em andamento · ${stats.completed}/${stats.total}`);
+    setStatus("status", "loading", `Produção em andamento · ${stats.completed || 0}/${stats.total || 0}`);
   } else {
     setStatus("status", "ready", "Produção concluída.");
   }
 }
 
+function buildReviewItem(item) {
+  const record = state.items.find((i) => i.slug === item.slug);
+  const title = record ? getItemTitle(record) : item.slug;
+  const hasBackground = item.hasBackground || false;
+  const hasCard = item.hasCard || false;
+  const hasWhatsApp = item.hasWhatsApp || false;
+  const hasError = item.status === "erro";
+  const isSimulation =
+    item.status === "simulacao" || item.dryRun === true || (state.job?.dryRun === true && item.status === "pronto_revisao");
+  const isReviewable = item.status === "pronto_revisao" && !isSimulation;
+  const reviewUrl = state.jobId
+    ? `/cursos.html?slug=${encodeURIComponent(item.slug)}&job=${encodeURIComponent(state.jobId)}&return=batch`
+    : `/cursos.html?slug=${encodeURIComponent(item.slug)}`;
+
+  const div = document.createElement("div");
+  div.className = "review-item";
+  const placeholderText = (type) => {
+    if (hasError) return `${type} não gerado`;
+    if (item.status === "pendente") return "Aguardando processamento";
+    return "Card não gerado";
+  };
+
+  let actions = "";
+  if (isReviewable && hasCard) {
+    actions = `
+      <button class="btn-success approve-item" data-slug="${escapeHtml(item.slug)}">Aprovar</button>
+      <button class="btn-danger reject-item" data-slug="${escapeHtml(item.slug)}">Rejeitar</button>
+    `;
+  } else if (isReviewable && !hasCard) {
+    actions = `
+      <button class="btn-success" disabled title="Card ainda não foi gerado">Aprovar</button>
+      <button class="btn-danger reject-item" data-slug="${escapeHtml(item.slug)}">Rejeitar</button>
+    `;
+  }
+  if (hasCard) {
+    actions += `<button class="btn-secondary download-png" data-slug="${escapeHtml(item.slug)}">PNG</button>`;
+  }
+  if (hasWhatsApp) {
+    actions += `<button class="btn-secondary download-wa" data-slug="${escapeHtml(item.slug)}">WhatsApp</button>`;
+  }
+  if (hasError || item.status === "rejeitado") {
+    actions += `<button class="btn-secondary retry-item" data-slug="${escapeHtml(item.slug)}">Gerar novamente</button>`;
+  }
+  if (isSimulation) {
+    actions = `<span class="hint">Simulação: não pode ser aprovada.</span>`;
+  }
+
+  const checkbox = !isSimulation && item.status !== "ignorado"
+    ? `<input type="checkbox" class="review-select" data-slug="${escapeHtml(item.slug)}" ${state.reviewSelected.has(item.slug) ? "checked" : ""}>`
+    : "";
+
+  div.innerHTML = `
+    <div class="review-item-header">
+      ${checkbox}
+      <a href="${escapeHtml(reviewUrl)}" class="review-item-title" data-slug="${escapeHtml(item.slug)}">${escapeHtml(title)}</a>
+      <span class="status-pill ${uiStatus(item)}">${escapeHtml(BATCH_STATUS_LABELS[item.status] || item.status)}</span>
+      ${item.error ? `<span class="hint">${escapeHtml(item.error)}</span>` : ""}
+      ${item.dryRun ? `<span class="hint">dry-run</span>` : ""}
+      <span class="spacer"></span>
+      <div class="review-item-actions">${actions}</div>
+    </div>
+    <div class="review-comparison">
+      <div class="review-column">
+        <h5>Card atual</h5>
+        <div class="thumb">
+          ${record?.current_card_url
+            ? `<img src="${escapeHtml(record.current_card_url)}" alt="Card atual">`
+            : `<div class="missing">Sem card atual</div>`}
+        </div>
+      </div>
+      <div class="review-column">
+        <h5>Fundo novo</h5>
+        <div class="thumb">
+          ${hasBackground
+            ? `<img src="${getCatalogUrl(item.slug, `${item.slug}-fundo.png`)}" alt="Novo fundo">`
+            : `<div class="missing">${placeholderText("Fundo")}</div>`}
+        </div>
+      </div>
+      <div class="review-column">
+        <h5>Card novo</h5>
+        <div class="thumb">
+          ${hasCard
+            ? `<img src="${getCatalogUrl(item.slug, `${item.slug}-card.png`)}" alt="Novo card">`
+            : `<div class="missing">${placeholderText("Card")}</div>`}
+        </div>
+      </div>
+      <div class="review-column">
+        <h5>WhatsApp</h5>
+        <div class="thumb">
+          ${hasWhatsApp
+            ? `<img src="${getCatalogUrl(item.slug, `${item.slug}-whatsapp.jpg`)}" alt="WhatsApp">`
+            : `<div class="missing">${placeholderText("WhatsApp")}</div>`}
+        </div>
+      </div>
+    </div>
+  `;
+  return div;
+}
+
 async function itemAction(slug, action) {
   if (!state.jobId) return;
-  const url = `/api/batches/${encodeURIComponent(state.jobId)}/items/${encodeURIComponent(slug)}/${action}`;
   setStatus("status", "loading", "Atualizando item...");
   try {
-    await api.json(url, { method: "POST" });
+    await api.json(`/api/batches/${encodeURIComponent(state.jobId)}/items/${encodeURIComponent(slug)}/${action}`, { method: "POST" });
     setStatus("status", "success", "Item atualizado.");
     await refreshReview();
   } catch (err) {
@@ -594,10 +904,9 @@ async function bulkAction(action) {
 async function downloadItem(slug, type) {
   const file = type === "whatsapp" ? `${slug}-whatsapp.jpg` : `${slug}-card.png`;
   const url = getCatalogUrl(slug, file);
-  const filename = file;
   setStatus("status", "loading", "Preparando download...");
   try {
-    await downloadUrl(url, filename);
+    await downloadUrl(url, file);
     setStatus("status", "success", "Download iniciado.");
   } catch (err) {
     handleApiError(err, "status");

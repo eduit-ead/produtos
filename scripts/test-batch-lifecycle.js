@@ -85,17 +85,22 @@ async function pollJob(port, jobId, targetStatuses, timeoutMs = 5000) {
     let finished = await pollJob(port, job.id, ["concluido", "concluido_com_erros"]);
     assert.equal(finished.status, "concluido");
 
-    // 3. Itens pronto_revisao e arquivos existem
+    // 3. Itens de simulação e arquivos existem
     const items = assertJson(await request(port, "GET", `/api/batches/${job.id}/items`));
     assert.equal(items.length, courses.length);
     for (const item of items) {
-      assert.equal(item.status, "pronto_revisao", `item ${item.slug} não ficou pronto_revisao`);
+      assert.equal(item.status, "simulacao", `item ${item.slug} não ficou simulacao`);
+      assert.equal(item.dryRun, true, `item ${item.slug} deve estar marcado como dryRun`);
       const base = path.join(TEMP_DIR, item.slug);
       assert.ok(fs.existsSync(path.join(base, `${item.slug}-fundo.png`)));
       assert.ok(fs.existsSync(path.join(base, `${item.slug}-card.png`)));
       assert.ok(fs.existsSync(path.join(base, `${item.slug}-whatsapp.jpg`)));
       assert.ok(fs.existsSync(path.join(base, "metadata.json")));
     }
+
+    // 3b. Aprovação de simulação deve retornar 409
+    const approveSim = await request(port, "POST", `/api/batches/${job.id}/items/${courses[0].slug}/approve`);
+    assert.equal(approveSim.status, 409, "aprovação de simulação deve retornar 409");
 
     // 4. Testar pause e resume com job de 2 cursos
     const create2 = await request(
@@ -147,7 +152,7 @@ async function pollJob(port, jobId, targetStatuses, timeoutMs = 5000) {
     assert.ok(["cancelado", "concluido"].includes(cancelled.status));
     if (cancelled.status === "cancelado") {
       for (const item of cancelled.courses) {
-        assert.ok(["cancelado", "pronto_revisao", "aprovado", "rejeitado", "erro"].includes(item.status));
+        assert.ok(["cancelado", "pronto_revisao", "aprovado", "rejeitado", "erro", "simulacao", "ignorado"].includes(item.status));
       }
     }
 

@@ -28,26 +28,66 @@
 
     <section id="step-base" class="step-panel">
       <div class="card">
-        <h3>Escolha uma base de conteúdo</h3>
-        <p class="hint">A base define quais dados serão usados para gerar as imagens.</p>
-        <div id="baseCards" class="grid grid-3"></div>
-        <div id="baseEmpty" class="hidden"></div>
+        <h3>Produção em lote</h3>
+        <p class="hint">Escolha se deseja iniciar uma nova produção ou revisar lotes anteriores.</p>
+        <div id="baseModeSelect" class="base-mode-grid">
+          <div class="card card-hover mode-card" data-mode="new">
+            <h4>Nova produção</h4>
+            <p class="hint">Selecionar uma base e configurar uma nova geração.</p>
+          </div>
+          <div class="card card-hover mode-card" data-mode="history">
+            <h4>Revisões e histórico</h4>
+            <p class="hint">Ver lotes anteriores, revisões, aprovações e simulações.</p>
+          </div>
+        </div>
+        <div id="historyPanel" class="hidden">
+          <div class="history-toolbar">
+            <h4>Lotes</h4>
+            <div class="hint">Ordenados pela atualização mais recente.</div>
+          </div>
+          <div id="historyList" class="history-list"></div>
+        </div>
+        <div id="newProductionPanel" class="hidden">
+          <h4>Escolha uma base de conteúdo</h4>
+          <div id="baseCards" class="grid grid-3"></div>
+          <div id="baseEmpty" class="hidden"></div>
+        </div>
       </div>
     </section>
 
     <section id="step-items" class="step-panel">
       <div class="items-toolbar card">
         <input type="text" id="searchInput" placeholder="Buscar por nome...">
+        <select id="itemsStatusFilter" class="input">
+          <option value="all">Todos</option>
+          <option value="nao_produzido">Nunca produzidos</option>
+          <option value="com_imagem">Com imagem de origem</option>
+          <option value="sem_imagem">Sem imagem de origem</option>
+          <option value="aguardando_revisao">Aguardando revisão</option>
+          <option value="aprovado">Aprovados</option>
+          <option value="rejeitado">Rejeitados</option>
+          <option value="erro">Com erro</option>
+        </select>
+        <select id="itemsSort" class="input">
+          <option value="recent">Atualizados recentemente</option>
+          <option value="az">Nome A–Z</option>
+          <option value="za">Nome Z–A</option>
+          <option value="status">Status</option>
+          <option value="nao_produzido_primeiro">Nunca produzidos primeiro</option>
+          <option value="revisao_primeiro">Aguardando revisão primeiro</option>
+        </select>
         <span class="spacer"></span>
+        <button type="button" id="btnSelectEligible" class="btn-secondary">Selecionar elegíveis</button>
         <button type="button" id="btnSelectFiltered" class="btn-secondary">Selecionar filtrados</button>
         <button type="button" id="btnClearSelection" class="btn-ghost">Limpar</button>
       </div>
 
+      <div id="itemsInfo" class="items-info card"></div>
       <div id="itemsFilters" class="items-filters"></div>
       <div id="itemsGrid" class="items-grid"></div>
 
       <div id="selectionBar" class="selection-bar hidden">
-        <span id="selectionText">0 item selecionado</span>
+        <span id="selectionText">0 selecionados</span>
         <span class="spacer"></span>
         <button type="button" id="btnItemsBack" class="btn-secondary">Voltar</button>
         <button type="button" id="btnItemsNext" class="btn-primary" disabled>Continuar</button>
@@ -119,6 +159,11 @@
             </div>
           </details>
 
+          <div id="preValidationBox" class="pre-validation-box card">
+            <h4>Pré-validação</h4>
+            <div id="preValidationContent"></div>
+          </div>
+
           <div class="estimate-box">
             <div id="estimateSummary">0 itens · 0 chamadas · US$ 0.00</div>
             <div id="estimateHint" class="hint">Estimativa baseada no modo selecionado.</div>
@@ -126,8 +171,8 @@
 
           <div class="step-actions">
             <button type="button" id="btnConfigBack" class="btn-secondary">Voltar</button>
-            <button type="button" id="btnConfigTest" class="btn-secondary">Testar sem gastar créditos</button>
-            <button type="button" id="btnConfigReal" class="btn-primary">Gerar imagens com IA</button>
+            <button type="button" id="btnConfigTest" class="btn-secondary">Executar simulação</button>
+            <button type="button" id="btnConfigReal" class="btn-primary">Produzir com imagens existentes</button>
           </div>
         </div>
       </div>
@@ -148,20 +193,29 @@
         </div>
       </div>
 
-      <div class="review-toolbar card" id="reviewToolbar">
-        <div class="review-summary" id="reviewSummary"></div>
-        <div class="review-filter">
-          <label for="reviewFilter">Filtrar itens:</label>
-          <select id="reviewFilter">
-            <option value="all">Todos</option>
-            <option value="pronto_revisao">Aguardando revisão</option>
-            <option value="aprovado">Aprovados</option>
-            <option value="rejeitado">Rejeitados</option>
-            <option value="erro">Erros</option>
-          </select>
+      <div class="review-sections">
+        <div class="review-section card" id="reviewSectionReady">
+          <h4>Aguardando revisão</h4>
+          <div class="review-items" id="reviewReady"></div>
+        </div>
+        <div class="review-section card" id="reviewSectionApproved">
+          <h4>Aprovados</h4>
+          <div class="review-items" id="reviewApproved"></div>
+        </div>
+        <div class="review-section card" id="reviewSectionRejected">
+          <h4>Rejeitados</h4>
+          <div class="review-items" id="reviewRejected"></div>
+        </div>
+        <div class="review-section card" id="reviewSectionErrors">
+          <h4>Erros</h4>
+          <div class="review-items" id="reviewErrors"></div>
+        </div>
+        <div class="review-section card" id="reviewSectionSimulation">
+          <h4>Simulações</h4>
+          <p class="hint">Itens gerados em dry-run não podem ser aprovados nem sincronizados.</p>
+          <div class="review-items" id="reviewSimulation"></div>
         </div>
       </div>
-      <div id="reviewItems" class="review-items"></div>
     </section>
 
     <div id="status" class="status ready">Pronto</div>

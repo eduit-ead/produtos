@@ -298,6 +298,8 @@ const STATUS_LABELS = {
   pronto_revisao: "Pronto para revisão",
   aprovado: "Aprovado",
   rejeitado: "Rejeitado",
+  ignorado: "Ignorado",
+  simulacao: "Simulação",
   erro: "Erro",
   cancelado: "Cancelado",
   concluido: "Concluído",

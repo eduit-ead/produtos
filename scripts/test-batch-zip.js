@@ -124,7 +124,13 @@ function makeOutputColumns() {
     const importDir = path.join(IMPORTS_DIR, COLLECTION_ID);
     fs.mkdirSync(importDir, { recursive: true });
     const csvPath = path.join(importDir, "produtos.csv");
-    fs.writeFileSync(csvPath, "SKU,Nome,Categoria\nSKU-001,Produto A,Categoria A\nSKU-002,Produto B,Categoria B", "utf8");
+    const imageUrl1 = "https://i.ibb.co/Z6b3dBtT/Jornalismo.png";
+    const imageUrl2 = "https://i.ibb.co/svKGPvYR/Digital-Influence.png";
+    fs.writeFileSync(
+      csvPath,
+      `SKU,Nome,Categoria,image_url\nSKU-001,Produto A,Categoria A,${imageUrl1}\nSKU-002,Produto B,Categoria B,${imageUrl2}`,
+      "utf8"
+    );
 
     const collection = {
       id: COLLECTION_ID,
@@ -147,11 +153,12 @@ function makeOutputColumns() {
     };
     saveCollection(collection);
 
-    // 2. Listar itens e criar lote dry-run
+    // 2. Listar itens e criar lote de produção real com imagens existentes
     console.log("Listing items...");
     const itemsRes = await requestJson(port, "GET", `/api/items?collection=${COLLECTION_ID}`);
     assert.ok(Array.isArray(itemsRes.body) && itemsRes.body.length === 2, "deve haver 2 itens");
     const [first, second] = itemsRes.body;
+    assert.ok(first.current_background_url, "item deve ter imagem de origem");
     const courses = itemsRes.body.map((i) => ({ course_id: i.record_id || i.slug, slug: i.slug }));
     console.log("Creating batch...");
 
@@ -163,8 +170,8 @@ function makeOutputColumns() {
         collection_id: COLLECTION_ID,
         courses,
         template_id: "demo",
-        background_source: "ia",
-        dryRun: true,
+        background_source: "original",
+        dryRun: false,
       }),
       { "Content-Type": "application/json" }
     );
@@ -177,6 +184,7 @@ function makeOutputColumns() {
     assertOk(startRes, "iniciar lote");
     console.log("Polling batch...");
     const finished = await pollJob(port, job.id, ["concluido"]);
+    assert.equal(finished.stats.ready, 2, "ambos os itens devem estar aguardando revisão");
     assert.equal(finished.stats.completed, 2, "ambos os itens devem concluir");
     console.log("Batch finished");
 

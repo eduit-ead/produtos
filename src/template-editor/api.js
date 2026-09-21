@@ -1042,14 +1042,59 @@ function createRouter() {
     return null;
   }
 
+  function summarizeJob(job) {
+    const stats = job.stats || {};
+    return {
+      id: job.id,
+      collectionId: job.collectionId,
+      status: job.status,
+      dryRun: job.dryRun === true,
+      type: job.dryRun === true ? "simulação" : "produção",
+      background_source: job.background_source,
+      template_id: job.template_id,
+      created_at: job.created_at,
+      started_at: job.started_at,
+      completed_at: job.completed_at,
+      updated_at: job.updatedAt || job.completed_at || job.started_at || job.created_at,
+      archived: job.archived === true,
+      stats: {
+        total: stats.total || 0,
+        ready: stats.ready || 0,
+        approved: stats.approved || 0,
+        rejected: stats.rejected || 0,
+        ignored: stats.ignored || 0,
+        simulation: stats.simulation || 0,
+        errors: stats.errors || 0,
+      },
+    };
+  }
+
   router.get("/batches", (req, res) => {
     try {
-      const jobs = listAllJobs();
+      let jobs = listAllJobs().map(summarizeJob);
+      jobs.sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
       res.setHeader("Cache-Control", "no-store");
       res.json(jobs);
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: err.message || "Erro ao listar lotes." });
+    }
+  });
+
+  router.post("/batches/:id/archive", async (req, res) => {
+    try {
+      const file = findJobFile(req.params.id);
+      if (!file) return res.status(404).json({ error: "Lote não encontrado." });
+      const catalogDir = path.dirname(path.dirname(file));
+      const job = JSON.parse(fs.readFileSync(file, "utf8"));
+      const archived = req.body?.archived !== false;
+      job.archived = archived;
+      job.updatedAt = new Date().toISOString();
+      writeJob(catalogDir, job);
+      res.json({ ok: true, job: summarizeJob(job) });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao arquivar lote." });
     }
   });
 
@@ -1217,9 +1262,17 @@ function createRouter() {
     return { job, collectionId, file };
   }
 
+  function isConflictApprovalError(err) {
+    const msg = err?.message || "";
+    return /simulação|ignorado|card ainda não foi gerado|metadata não encontrada/i.test(msg);
+  }
+
   router.post("/batches/:jobId/items/:slug/approve", async (req, res) => {
     try {
-      const { collectionId } = await findJobAndCollection(req.params.jobId);
+      const { job, collectionId } = await findJobAndCollection(req.params.jobId);
+      if (job.dryRun === true) {
+        return res.status(409).json({ error: "Não é possível aprovar itens de uma simulação/dry-run." });
+      }
       const record = await genericProduction.getRecord(collectionId, req.params.slug);
       const result = await updateJobItemStatus(collectionId, req.params.jobId, req.params.slug, "aprovado", {
         course_id: record?.id,
@@ -1227,7 +1280,7 @@ function createRouter() {
       });
       res.json({ ok: true, job: result.job, manifest: result.manifestEntry });
     } catch (err) {
-      res.status(400).json({ error: err.message });
+      res.status(isConflictApprovalError(err) ? 409 : 400).json({ error: err.message });
     }
   });
 

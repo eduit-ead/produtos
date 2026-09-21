@@ -145,9 +145,9 @@ function makeOutputColumns() {
     const bom = "\ufeff";
     fs.writeFileSync(
       csvSemicolonPath,
-      `${bom}SKU;Nome;Categoria;Descrição\n` +
-        `ABC-123;"Produto ""Premium""";Eletrônicos;"Produto de alta\nqualidade"\n` +
-        `DEF-456;Cafeteira;Cozinha;"Cafeteira  premium"\n`,
+      `${bom}SKU;Nome;Categoria;Descrição;image_url\n` +
+        `ABC-123;"Produto ""Premium""";Eletrônicos;"Produto de alta\nqualidade";https://i.ibb.co/Z6b3dBtT/Jornalismo.png\n` +
+        `DEF-456;Cafeteira;Cozinha;"Cafeteira  premium";https://i.ibb.co/svKGPvYR/Digital-Influence.png\n`,
       "utf8"
     );
     createdImportDirs.push(csvSemicolonDir);
@@ -161,7 +161,7 @@ function makeOutputColumns() {
         { "Content-Type": "application/json" }
       )
     );
-    assert.deepEqual(preview.headers, ["SKU", "Nome", "Categoria", "Descrição"]);
+    assert.deepEqual(preview.headers, ["SKU", "Nome", "Categoria", "Descrição", "image_url"]);
     assert.equal(preview.total, 2, "total de registros CSV");
     assert.equal(preview.rows[0]["Nome"], 'Produto "Premium"', "preserva aspas");
 
@@ -198,7 +198,7 @@ function makeOutputColumns() {
       primaryKey: "SKU",
       displayField: "Nome",
       searchFields: ["Nome", "Categoria"],
-      fieldMappings: { title: "Nome", slug: "SKU", prompt: "Descrição" },
+      fieldMappings: { title: "Nome", slug: "SKU", prompt: "Descrição", sourceImage: "image_url" },
       filters: [{ field: "Categoria", label: "Categoria" }],
       templateIds: ["demo"],
       defaultTemplateId: "demo",
@@ -220,7 +220,7 @@ function makeOutputColumns() {
       port,
       "POST",
       "/api/batches",
-      JSON.stringify({ collection_id: csvCollection.id, courses, template_id: "demo", background_source: "ia", dryRun: true, batch_size: 1 }),
+      JSON.stringify({ collection_id: csvCollection.id, courses, template_id: "demo", background_source: "original", dryRun: false, batch_size: 1 }),
       { "Content-Type": "application/json" }
     );
     assert.equal(create.status, 201, `criar lote falhou: ${create.body}`);
@@ -228,6 +228,7 @@ function makeOutputColumns() {
 
     await request(port, "POST", `/api/batches/${job.id}/start`);
     const finished = await pollJob(port, job.id, ["concluido"]);
+    assert.equal(finished.stats.ready, 2, "ambos itens aguardando revisão");
     assert.equal(finished.stats.completed, 2, "ambos itens concluídos");
 
     const first = finished.courses[0];
@@ -316,7 +317,7 @@ function makeOutputColumns() {
     assert.equal(createNoCard.status, 201, `criar lote no-card falhou: ${createNoCard.body}`);
     const noCardJob = assertJson(createNoCard).job;
     const approveNoCard = await request(port, "POST", `/api/batches/${noCardJob.id}/items/${first.slug}/approve`);
-    assert.equal(approveNoCard.status, 400, "aprovação sem card deve retornar 400");
+    assert.equal(approveNoCard.status, 409, "aprovação de simulação/sem card deve retornar 409");
 
     // Reprocessamento de item rejeitado
     const regenerate = await request(port, "POST", `/api/batches/${job.id}/items/${second.slug}/regenerate`);
@@ -348,8 +349,8 @@ function makeOutputColumns() {
     const stabXlsxPath = path.join(stabXlsxDir, "stab.xlsx");
     const stabWorkbook = new ExcelJS.Workbook();
     const stabSheet = stabWorkbook.addWorksheet("Dados");
-    stabSheet.addRow(["id", "nome"]);
-    stabSheet.addRow(["x-001", "Item X"]);
+    stabSheet.addRow(["id", "nome", "image_url"]);
+    stabSheet.addRow(["x-001", "Item X", "https://i.ibb.co/Z6b3dBtT/Jornalismo.png"]);
     await stabWorkbook.xlsx.writeFile(stabXlsxPath);
     createdImportDirs.push(stabXlsxDir);
 
@@ -361,7 +362,7 @@ function makeOutputColumns() {
       primaryKey: "id",
       displayField: "nome",
       searchFields: ["nome"],
-      fieldMappings: { title: "nome", slug: "id" },
+      fieldMappings: { title: "nome", slug: "id", sourceImage: "image_url" },
       filters: [],
       templateIds: ["demo"],
       defaultTemplateId: "demo",
@@ -381,8 +382,8 @@ function makeOutputColumns() {
         collection_id: xlsxCollection.id,
         courses: xItems.map((i) => ({ course_id: i.record_id || i.slug, slug: i.slug })),
         template_id: "demo",
-        background_source: "ia",
-        dryRun: true,
+        background_source: "original",
+        dryRun: false,
       }),
       { "Content-Type": "application/json" }
     );
@@ -391,7 +392,8 @@ function makeOutputColumns() {
     await request(port, "POST", `/api/batches/${xJobId}/start`);
     const xFinished = await pollJob(port, xJobId, ["concluido"]);
     const xFirst = xFinished.courses[0];
-    await request(port, "POST", `/api/batches/${xJobId}/items/${xFirst.slug}/approve`);
+    const xApprove = await request(port, "POST", `/api/batches/${xJobId}/items/${xFirst.slug}/approve`);
+    assert.equal(xApprove.status, 200, `aprovação xlsx falhou: ${xApprove.body}`);
 
     const syncPreview = assertJson(
       await request(
