@@ -93,10 +93,13 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .app-header .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
-  font-weight: 700;
-  font-size: 16px;
-  color: var(--text);
+  line-height: 0;
+}
+
+.app-header .brand img {
+  height: 32px;
+  width: auto;
+  display: block;
 }
 
 .app-header nav {

@@ -7,8 +7,6 @@
  */
 
 const sharp = require("sharp");
-const fs = require("fs");
-const path = require("path");
 const { loadAssetBuffer, fitText, escapeXml } = require("./utils");
 
 const WIDTH = 1080;
@@ -37,18 +35,22 @@ const BLOCK_H = 70;
 const BLOCK_Y = 985;
 const BLOCK_XS = [63, 308, 572, 822];
 
-// CTA inferior: o interior do botão laranja (direita) é recoberto por um overlay
-// pré-computado (data/assets/dna-work-cta-fill-rendered.png), que reconstrói a
-// área interna do CTA com a cor original do botão, apagando as frases legadas.
-// O logotipo DNA Work, o contorno arredondado do botão e o mascote são preservados.
-const CTA_FILL_PATH = path.join(__dirname, "..", "..", "..", "data", "assets", "dna-work-cta-fill-rendered.png");
-const CTA_FILL_LEFT = 500;
-const CTA_FILL_TOP = 1156;
+// Cápsula laranja do CTA no canvas 1080×1350 (fundo oficial já redimensionado).
+// O arquivo-fonte traz duas frases gravadas nesse botão. Elas são removidas
+// no próprio interior da cápsula, à esquerda do mascote, e uma única linha
+// é desenhada no centro vertical do botão.
+const CTA_PILL_TOP = 1156;
+const CTA_PILL_BOTTOM = 1252;
+const CTA_ORANGE = [255, 122, 9];
+const CTA_CLEAR_X0 = 524;
+const CTA_CLEAR_X1 = 838;
+const CTA_CLEAR_Y0 = 1164;
+const CTA_CLEAR_Y1 = 1246;
 
-const CTA_TEXT_X = 530;
-const CTA_TEXT_Y = 1184;
-const CTA_TEXT_W = 340;
-const CTA_TEXT_H = 40;
+const CTA_TEXT_X = 491;
+const CTA_TEXT_W = 360;
+const CTA_TEXT_Y = CTA_PILL_TOP;
+const CTA_TEXT_H = CTA_PILL_BOTTOM - CTA_PILL_TOP + 1;
 
 function cleanText(value) {
   if (value === undefined || value === null) return "";
@@ -173,6 +175,61 @@ async function renderTextBox(text, width, height, options = {}) {
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
+function isLegacyCtaGlyph(r, g, b) {
+  return r > 220 && g > 145 && b > 40;
+}
+
+async function eraseLegacyCtaCopy(backgroundBuffer) {
+  const { data, info } = await sharp(backgroundBuffer)
+    .resize(WIDTH, HEIGHT, { fit: "fill" })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const w = info.width;
+  const h = info.height;
+  const channels = info.channels;
+  const mask = new Uint8Array(w * h);
+
+  for (let y = CTA_CLEAR_Y0; y <= CTA_CLEAR_Y1; y++) {
+    for (let x = CTA_CLEAR_X0; x <= CTA_CLEAR_X1; x++) {
+      const i = (y * w + x) * channels;
+      if (isLegacyCtaGlyph(data[i], data[i + 1], data[i + 2])) {
+        mask[y * w + x] = 1;
+      }
+    }
+  }
+
+  const dilated = new Uint8Array(mask);
+  for (let y = CTA_CLEAR_Y0; y <= CTA_CLEAR_Y1; y++) {
+    for (let x = CTA_CLEAR_X0; x <= CTA_CLEAR_X1; x++) {
+      if (!mask[y * w + x]) continue;
+      for (let dy = -3; dy <= 3; dy++) {
+        for (let dx = -3; dx <= 3; dx++) {
+          if (dx * dx + dy * dy > 10) continue;
+          const yy = y + dy;
+          const xx = x + dx;
+          if (yy < CTA_CLEAR_Y0 || yy > CTA_CLEAR_Y1 || xx < CTA_CLEAR_X0 || xx > CTA_CLEAR_X1) continue;
+          dilated[yy * w + xx] = 1;
+        }
+      }
+    }
+  }
+
+  const [or, og, ob] = CTA_ORANGE;
+  for (let y = CTA_CLEAR_Y0; y <= CTA_CLEAR_Y1; y++) {
+    for (let x = CTA_CLEAR_X0; x <= CTA_CLEAR_X1; x++) {
+      if (!dilated[y * w + x]) continue;
+      const i = (y * w + x) * channels;
+      data[i] = or;
+      data[i + 1] = og;
+      data[i + 2] = ob;
+    }
+  }
+
+  return sharp(data, { raw: { width: w, height: h, channels } }).png().toBuffer();
+}
+
 async function renderDnaWorkVagas(backgroundBuffer, values = {}) {
   const resolved = resolveValues(values);
 
@@ -207,22 +264,16 @@ async function renderDnaWorkVagas(backgroundBuffer, values = {}) {
     composites.push({ input: textBuffer, left: x, top: BLOCK_Y });
   }
 
-  // CTA inferior: recobre a área interna do botão laranja com o overlay pré-computado
-  // (mesma cor do CTA), apagando as frases legadas. O logotipo, o contorno arredondado
-  // do botão e o mascote à direita permanecem intactos.
-  const ctaFillBuffer = fs.readFileSync(CTA_FILL_PATH);
-  composites.push({ input: ctaFillBuffer, left: CTA_FILL_LEFT, top: CTA_FILL_TOP });
-
   const ctaTextBuffer = await renderTextBox("Envie seu currículo", CTA_TEXT_W, CTA_TEXT_H, {
-    maxFontSize: 32,
+    maxFontSize: 30,
     minFontSize: 18,
     maxLines: 1,
     fontWeight: 800,
   });
   composites.push({ input: ctaTextBuffer, left: CTA_TEXT_X, top: CTA_TEXT_Y });
 
-  return sharp(backgroundBuffer)
-    .resize(WIDTH, HEIGHT, { fit: "fill" })
+  const cleanedBackground = await eraseLegacyCtaCopy(backgroundBuffer);
+  return sharp(cleanedBackground)
     .composite(composites)
     .png()
     .toBuffer();
