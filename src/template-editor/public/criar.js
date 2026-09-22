@@ -12,6 +12,7 @@ const state = {
   photoBuffers: {},
   photoActiveKey: null,
   generatingPhoto: false,
+  photoPrompt: { sexo: "Indiferente", ambiente: "", descricao: "" },
   collectionsRecords: {},
   collectionSearchQuery: "",
   selectedCollectionId: null,
@@ -337,6 +338,72 @@ function createImageInput(v) {
     hint.className = "hint";
     hint.textContent = "Gere uma fotografia profissional com base no título da vaga.";
 
+    // Sexo
+    const sexoWrap = document.createElement("div");
+    sexoWrap.className = "field";
+    const sexoLabel = document.createElement("label");
+    sexoLabel.textContent = "Sexo da pessoa";
+    const sexoSelect = document.createElement("select");
+    sexoSelect.id = "photoSexo";
+    sexoSelect.className = "input";
+    const sexoOptions = [
+      { value: "Indiferente", label: "Indiferente" },
+      { value: "Masculino", label: "Masculino" },
+      { value: "Feminino", label: "Feminino" },
+    ];
+    for (const opt of sexoOptions) {
+      const option = document.createElement("option");
+      option.value = opt.value;
+      option.textContent = opt.label;
+      if (opt.value === state.photoPrompt.sexo) option.selected = true;
+      sexoSelect.appendChild(option);
+    }
+    sexoSelect.addEventListener("change", () => {
+      state.photoPrompt.sexo = sexoSelect.value;
+    });
+    sexoWrap.appendChild(sexoLabel);
+    sexoWrap.appendChild(sexoSelect);
+
+    // Ambiente
+    const ambienteWrap = document.createElement("div");
+    ambienteWrap.className = "field";
+    const ambienteLabel = document.createElement("label");
+    ambienteLabel.textContent = "Ambiente profissional";
+    const ambienteInput = document.createElement("input");
+    ambienteInput.type = "text";
+    ambienteInput.id = "photoAmbiente";
+    ambienteInput.className = "input";
+    ambienteInput.placeholder = "Ex: escritório moderno com telas de código";
+    ambienteInput.value = state.photoPrompt.ambiente;
+    ambienteInput.addEventListener("input", () => {
+      state.photoPrompt.ambiente = ambienteInput.value;
+    });
+    ambienteWrap.appendChild(ambienteLabel);
+    ambienteWrap.appendChild(ambienteInput);
+
+    // Descrição adicional
+    const descricaoWrap = document.createElement("div");
+    descricaoWrap.className = "field";
+    const descricaoLabel = document.createElement("label");
+    descricaoLabel.textContent = "Descrição adicional (opcional, máx. 300 caracteres)";
+    const descricaoInput = document.createElement("textarea");
+    descricaoInput.id = "photoDescricao";
+    descricaoInput.className = "input";
+    descricaoInput.rows = 2;
+    descricaoInput.maxLength = 300;
+    descricaoInput.placeholder = "Ex: sorrindo levemente, braços cruzados";
+    descricaoInput.value = state.photoPrompt.descricao;
+    const descricaoCounter = document.createElement("span");
+    descricaoCounter.className = "hint";
+    descricaoCounter.textContent = `${state.photoPrompt.descricao.length}/300`;
+    descricaoInput.addEventListener("input", () => {
+      state.photoPrompt.descricao = descricaoInput.value.slice(0, 300);
+      descricaoCounter.textContent = `${state.photoPrompt.descricao.length}/300`;
+    });
+    descricaoWrap.appendChild(descricaoLabel);
+    descricaoWrap.appendChild(descricaoInput);
+    descricaoWrap.appendChild(descricaoCounter);
+
     const actions = document.createElement("div");
     actions.className = "field-row";
 
@@ -367,6 +434,9 @@ function createImageInput(v) {
     versions.className = "versions";
 
     genWrap.appendChild(hint);
+    genWrap.appendChild(sexoWrap);
+    genWrap.appendChild(ambienteWrap);
+    genWrap.appendChild(descricaoWrap);
     genWrap.appendChild(actions);
     genWrap.appendChild(status);
     genWrap.appendChild(versions);
@@ -479,6 +549,7 @@ function showSelect() {
   state.photoBuffers = {};
   state.photoActiveKey = null;
   state.generatingPhoto = false;
+  state.photoPrompt = { sexo: "Indiferente", ambiente: "", descricao: "" };
   state.selectedCollectionId = null;
   state.selectedItemId = null;
   state.selectedItemRecord = null;
@@ -980,12 +1051,21 @@ async function generatePhoto(dryRun) {
   if (btnDryRun) btnDryRun.disabled = true;
 
   try {
+    const tituloVaga = state.values.titulo_vaga || "";
+    const ambiente = state.photoPrompt.ambiente.trim() || `ambiente profissional de ${tituloVaga}`.trim();
+    const payloadValues = {
+      ...state.values,
+      sexo: state.photoPrompt.sexo,
+      ambiente,
+      descricao_adicional: state.photoPrompt.descricao,
+    };
+
     const res = await api.json("/api/studio/generate-photo", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         templateId: state.selectedTemplate.id,
-        values: state.values,
+        values: payloadValues,
         visual: state.visual,
         collectionId: state.selectedCollectionId || null,
         itemId: state.selectedItemId || null,

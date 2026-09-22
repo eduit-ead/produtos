@@ -89,11 +89,20 @@ async function topRightMeanColor(pngBuffer) {
   const port = server.address().port;
 
   try {
-    // 1. Prompt fixo inclui título e restrições
-    const prompt = buildDnaWorkImagePrompt("Açougueiro");
-    assert.ok(prompt.includes("Açougueiro"), "prompt deve conter o título da vaga");
+    const APPROVED_PROGRAMMER_PHOTO = "dna-work-photo-mud01jha-94663197.png";
+
+    // 1. Prompt com campos de geração
+    const prompt = buildDnaWorkImagePrompt("Programador", "Masculino", "escritório tech com telas de código", "sorrindo levemente, braços cruzados");
+    assert.ok(prompt.includes("Programador"), "prompt deve conter o título da vaga");
+    assert.ok(prompt.includes("Masculino"), "prompt deve conter o sexo");
+    assert.ok(prompt.includes("escritório tech"), "prompt deve conter o ambiente");
+    assert.ok(prompt.includes("sorrindo levemente"), "prompt deve conter a descrição adicional");
     assert.ok(prompt.includes("EXATAMENTE UMA pessoa"), "prompt deve exigir uma pessoa");
+    assert.ok(prompt.includes("70%"), "prompt deve exigir ~70% de altura");
     assert.ok(DNA_WORK_NEGATIVE_PROMPT.includes("logotipos"), "negative prompt deve citar logotipos");
+
+    const indPrompt = buildDnaWorkImagePrompt("Recepcionista", "Indiferente", "", "");
+    assert.ok(indPrompt.includes("não impor aparência masculina ou feminina"), "Indiferente não deve impor gênero");
 
     // 2. Render sem foto e com dados padrão: dimensões corretas e sem área preta
     const emptyPayload = JSON.stringify({ values: {} });
@@ -106,18 +115,21 @@ async function topRightMeanColor(pngBuffer) {
     const emptyMean = await topRightMeanColor(emptyBuf);
     assert.ok(emptyMean.b > 15, "canto superior direito sem foto deve manter o fundo azul-marinho, não preto");
 
-    // 3. Render com todos os campos e foto placeholder
+    // 3. Render com todos os campos e foto aprovada de Programador
     const withPhoto = await renderSavedTemplate("dna-work-vagas", {
-      titulo_vaga: "Açougueiro",
+      titulo_vaga: "Programador",
       regime: "CLT",
-      salario: "R$ 2800,00",
-      beneficio: "Auxílio Transporte",
+      salario: "R$ 8.000,00",
+      beneficio: "Vale Refeição",
       local: "Jardim Cumbica Guarulhos",
-      imagem_principal: "dna-work-person.jpg",
+      imagem_principal: APPROVED_PROGRAMMER_PHOTO,
     });
     assert.equal((await sharp(withPhoto).metadata()).width, 1080);
     assert.equal((await sharp(withPhoto).metadata()).height, 1350);
     assert.ok(withPhoto.length > 100000);
+    // A foto deve aparecer na região superior direita (próximo ao rosto esperado)
+    const photoMean = await topRightMeanColor(withPhoto);
+    assert.ok(photoMean.r > 40 || photoMean.g > 40 || photoMean.b > 60, "região da foto deve conter cores da fotografia, não apenas fundo");
 
     // 4. Geração de fotografia por IA (dry-run, sem chamada real)
     const genRes = await request(port, "POST", "/api/studio/generate-photo", JSON.stringify({

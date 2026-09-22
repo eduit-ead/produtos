@@ -130,54 +130,61 @@ async function createMockPhoto(size = "1024x1792") {
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
-function buildDnaWorkImagePrompt(tituloVaga = "") {
+function buildDnaWorkImagePrompt(tituloVaga = "", sexo = "Indiferente", ambiente = "", descricaoAdicional = "") {
   const title = normalizeLine(tituloVaga || "profissional");
-  return `Gere uma fotografia publicitária hiper-realista de EXATAMENTE UMA pessoa adulta exercendo ou representando a profissão de ${title}.
+  const normalizedSexo = normalizeLine(sexo || "Indiferente");
+  const sexoKey = normalizedSexo.toLowerCase();
+  const sexoText =
+    sexoKey === "masculino"
+      ? "Aparência feminina ou masculina: apresentar uma pessoa adulta do sexo masculino."
+      : sexoKey === "feminino"
+      ? "Aparência feminina ou masculina: apresentar uma pessoa adulta do sexo feminino."
+      : "Aparência feminina ou masculina: não impor aparência masculina ou feminina; manter gênero neutro e inclusivo.";
 
-COMPOSIÇÃO OBRIGATÓRIA:
-- Formato vertical 3:4.
-- Exatamente uma pessoa na fotografia.
-- Pessoa em pé, com enquadramento da metade das coxas até acima da cabeça.
-- A pessoa deve ocupar aproximadamente 75% da altura total da imagem.
-- Posicionar a pessoa no centro horizontal da fotografia, sem cortar cabeça, braços, mãos ou tronco.
-- O rosto deve estar na região superior da fotografia, com espaço livre acima da cabeça.
-- Corpo voltado levemente para a esquerda da câmera, com o rosto olhando para a câmera ou discretamente para a esquerda.
-- Postura profissional, natural e confiante.
-- Rosto nítido, proporções anatômicas realistas e expressão amigável.
-- Vestimenta profissional compatível com a função de ${title}.
-- Mostrar a pessoa inteira dentro do enquadramento definido, sem cortes artificiais de ombros ou braços.
+  const defaultAmbiente = `ambiente profissional discreto relacionado à função de ${title}`;
+  const ambienteText = normalizeLine(ambiente) || defaultAmbiente;
+  const extra = normalizeLine(descricaoAdicional);
 
-CENÁRIO E ILUMINAÇÃO:
-- Ambiente de trabalho realista e diretamente relacionado à profissão de ${title}.
-- Cenário discreto, com poucos objetos e profundidade de campo suave.
-- Fundo levemente desfocado, sem pessoas adicionais.
-- Iluminação fotográfica profissional, suave e equilibrada.
-- Fotografia comercial de alta qualidade, com cores naturais e aparência autêntica.
-- Evitar objetos importantes junto às bordas esquerda e inferior.
+  const parts = [
+    `Gere uma fotografia publicitária fotorrealista de EXATAMENTE UMA pessoa adulta representando a profissão de ${title}.`,
+    ``,
+    `DADOS DA VAGA (usar como contexto, sem substituir as instruções fixas abaixo):`,
+    `- Cargo/profissão: ${title}`,
+    `- Sexo selecionado: ${normalizedSexo}`,
+    `- ${sexoText}`,
+    `- Ambiente profissional: ${ambienteText}`,
+  ];
+  if (extra) {
+    parts.push(`- Descrição adicional: ${extra}`);
+  }
 
-INTEGRAÇÃO COM O TEMPLATE:
-Esta fotografia será inserida exclusivamente no canto superior direito de um card publicitário vertical da DNA Work.
+  parts.push(
+    ``,
+    `INSTRUÇÕES FIXAS DE COMPOSIÇÃO (sempre obedecer):`,
+    `- Imagem vertical no formato 3:4.`,
+    `- Enquadramento da metade das coxas até acima da cabeça.`,
+    `- A pessoa deve ocupar aproximadamente 70% da altura total da imagem.`,
+    `- Posicionar a pessoa no centro horizontal da fotografia, ligeiramente à direita, sem cortar cabeça, mãos, braços ou tronco.`,
+    `- Corpo levemente voltado para a esquerda da câmera, com o rosto olhando para a câmera ou discretamente para a esquerda.`,
+    `- Rosto na região superior da imagem, com espaço livre acima da cabeça e à esquerda da pessoa.`,
+    `- Postura profissional, natural e confiante.`,
+    `- Rosto nítido, proporções anatômicas realistas e expressão amigável.`,
+    `- Vestimenta profissional coerente com a função de ${title}.`,
+    `- Cenário profissional discreto, com poucos objetos e profundidade de campo suave.`,
+    `- Fundo levemente desfocado, sem pessoas adicionais.`,
+    `- Iluminação fotográfica profissional, suave e equilibrada.`,
+    `- Fotografia comercial de alta qualidade, com cores naturais e aparência autêntica.`,
+    ``,
+    `INTEGRAÇÃO COM O TEMPLATE DNA WORK:`,
+    `A fotografia será inserida no canto superior direito de um card publicitário vertical de 1080x1350 pixels, aplicando uma máscara de transparência progressiva nas bordas esquerda e inferior para revelar o fundo azul-marinho do template.`,
+    `A fotografia NÃO deve conter o card publicitário, textos, letras, números, legendas, placas, logotipos, marcas comerciais, marcas-d'água, flyers, banners, anúncios, layouts gráficos, ilustrações, desenhos, caricaturas, personagens 3D, montagens, colagens, mosaicos, múltiplos enquadramentos, molduras, bordas ou gradientes artificiais.`,
+    `Não gerar mais de uma pessoa, pessoas ao fundo, pessoas parcialmente visíveis, mãos extras, dedos adicionais ou deformações anatômicas.`,
+    ``,
+    `RESULTADO FINAL:`,
+    `Uma única fotografia profissional fotorrealista de uma pessoa adulta representando a profissão de ${title}, pronta para ser posicionada no canto superior direito do template DNA Work.`
+  );
 
-A fotografia NÃO deve conter o card publicitário, textos ou elementos gráficos.
-
-O sistema aplicará posteriormente uma máscara de transparência nas bordas esquerda e inferior para integrar a imagem ao fundo azul-marinho do template.
-
-Manter a pessoa bem destacada e com boa separação visual do cenário, permitindo esse recorte sem prejudicar sua aparência.
-
-RESTRIÇÕES ABSOLUTAS:
-- Não gerar mais de uma pessoa.
-- Não gerar pessoas ao fundo, reflexos de pessoas ou pessoas parcialmente visíveis.
-- Não gerar montagem, colagem, mosaico ou múltiplos enquadramentos.
-- Não gerar textos, letras, números, legendas ou placas.
-- Não gerar logotipos, marcas comerciais ou marcas-d'água.
-- Não gerar flyer, banner, anúncio ou layout gráfico.
-- Não gerar ilustrações, desenhos, caricaturas ou personagens 3D.
-- Não cortar a cabeça nem os braços da pessoa.
-- Não gerar mãos extras, dedos adicionais ou deformações anatômicas.
-- Não adicionar molduras, bordas ou gradientes artificiais.
-
-RESULTADO FINAL:
-Uma única fotografia profissional realista de uma pessoa adulta representando a profissão de ${title}, centralizada, em enquadramento vertical da metade das coxas para cima, com cenário profissional discreto, pronta para ser posicionada na parte superior direita do template DNA Work.`;
+  return parts.join("\n");
 }
 
 const DNA_WORK_NEGATIVE_PROMPT = "Textos, letras, números, legendas, placas, logotipos, marcas comerciais, marcas-d'água, flyers, banners, anúncios, layouts gráficos, ilustrações, desenhos, caricaturas, personagens 3D, montagens, colagens, mosaicos, múltiplos enquadramentos, mais de uma pessoa, pessoas ao fundo, pessoas parcialmente visíveis, cortes na cabeça ou braços, mãos extras, dedos adicionais, deformações anatômicas, molduras, bordas artificiais, gradientes artificiais.";

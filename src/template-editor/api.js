@@ -430,7 +430,10 @@ function createRouter() {
       if (!tituloVaga) {
         return res.status(400).json({ error: "O título da vaga é obrigatório para gerar a fotografia." });
       }
-      const prompt = buildDnaWorkImagePrompt(tituloVaga);
+      const sexo = (values?.sexo || "Indiferente").trim();
+      const ambiente = (values?.ambiente || "").trim();
+      const descricaoAdicional = (values?.descricao_adicional || values?.descricaoAdicional || "").trim().slice(0, 300);
+      const prompt = buildDnaWorkImagePrompt(tituloVaga, sexo, ambiente, descricaoAdicional);
       const metadata = await generateStudioPhoto({
         templateId,
         values: values || {},

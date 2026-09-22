@@ -12,13 +12,13 @@ const { loadAssetBuffer, fitText, escapeXml } = require("./utils");
 const WIDTH = 1080;
 const HEIGHT = 1350;
 
-// Área da imagem principal (topo direito)
-const IMAGE_X = 540;
-const IMAGE_Y = 80;
-const IMAGE_W = 510;
-const IMAGE_H = 660;
-const IMAGE_FADE_LEFT = 160;
-const IMAGE_FADE_BOTTOM = 200;
+// Área da imagem principal (topo direito) — limitada à região X=560..1080, Y=70..760
+const IMAGE_X = 560;
+const IMAGE_Y = 70;
+const IMAGE_W = 520;
+const IMAGE_H = 690;
+const IMAGE_FADE_LEFT = 200;
+const IMAGE_FADE_BOTTOM = 240;
 
 // Caixa arredondada do título da vaga
 const TITLE_X = 115;
@@ -62,7 +62,7 @@ function resolveValues(values = {}) {
 
 async function resizeAndMaskImage(buffer, width, height) {
   const resized = await sharp(buffer)
-    .resize(width, height, { fit: "cover", position: "centre" })
+    .resize(width, height, { fit: "cover", position: "right top" })
     .ensureAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
