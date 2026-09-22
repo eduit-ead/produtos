@@ -48,17 +48,19 @@
 .preview-panel h3 { margin: 0; font-size: 14px; color: var(--text-muted); }
 
 .preview-wrap {
-  aspect-ratio: 1 / 1;
   background: var(--surface-2);
   border-radius: var(--radius-sm);
   overflow: hidden;
   display: grid;
   place-items: center;
+  width: 100%;
+  max-height: 80vh;
 }
 
 .preview-wrap img {
   width: 100%;
-  height: 100%;
+  height: auto;
+  max-height: 80vh;
   object-fit: contain;
 }
 
@@ -265,3 +267,13 @@
 
 #bgGenerationStatus.error { color: #ef4444; }
 #bgGenerationStatus.success { color: #22c55e; }
+
+.photo-generation {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#photoGenerationStatus.error { color: #ef4444; }
+#photoGenerationStatus.success { color: #22c55e; }

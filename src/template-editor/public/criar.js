@@ -8,6 +8,10 @@ const state = {
   generatedVersions: [],
   activeBackgroundKey: null,
   backgroundBuffers: {},
+  photoVersions: [],
+  photoBuffers: {},
+  photoActiveKey: null,
+  generatingPhoto: false,
   collectionsRecords: {},
   collectionSearchQuery: "",
   selectedCollectionId: null,
@@ -324,6 +328,51 @@ function createImageInput(v) {
   row.appendChild(uploadBtn);
   row.appendChild(fileInput);
   wrap.appendChild(row);
+
+  if (v.key === "imagem_principal" && state.selectedTemplate?.id === "dna-work-vagas") {
+    const genWrap = document.createElement("div");
+    genWrap.className = "photo-generation";
+
+    const hint = document.createElement("p");
+    hint.className = "hint";
+    hint.textContent = "Gere uma fotografia profissional com base no título da vaga.";
+
+    const actions = document.createElement("div");
+    actions.className = "field-row";
+
+    const btnGenerate = document.createElement("button");
+    btnGenerate.type = "button";
+    btnGenerate.id = "btnGeneratePhoto";
+    btnGenerate.className = "btn-primary btn-small";
+    btnGenerate.textContent = "Gerar imagem por IA";
+    btnGenerate.disabled = !state.openAiConfigured;
+    btnGenerate.addEventListener("click", () => generatePhoto(false));
+
+    const btnDryRun = document.createElement("button");
+    btnDryRun.type = "button";
+    btnDryRun.id = "btnDryRunPhoto";
+    btnDryRun.className = "btn-ghost btn-small";
+    btnDryRun.textContent = "Testar sem gastar créditos";
+    btnDryRun.addEventListener("click", () => generatePhoto(true));
+
+    actions.appendChild(btnGenerate);
+    actions.appendChild(btnDryRun);
+
+    const status = document.createElement("div");
+    status.id = "photoGenerationStatus";
+    status.className = "hint";
+
+    const versions = document.createElement("div");
+    versions.id = "photoVersions";
+    versions.className = "versions";
+
+    genWrap.appendChild(hint);
+    genWrap.appendChild(actions);
+    genWrap.appendChild(status);
+    genWrap.appendChild(versions);
+    wrap.appendChild(genWrap);
+  }
+
   wrap.dataset.key = v.key;
   return wrap;
 }
@@ -361,6 +410,9 @@ function getRenderPayload() {
   const runtimeAssets = {};
   if (state.activeBackgroundKey && state.backgroundBuffers[state.activeBackgroundKey]) {
     runtimeAssets[state.activeBackgroundKey] = state.backgroundBuffers[state.activeBackgroundKey];
+  }
+  if (state.photoActiveKey && state.photoBuffers[state.photoActiveKey]) {
+    runtimeAssets[state.photoActiveKey] = state.photoBuffers[state.photoActiveKey];
   }
   if (Object.keys(runtimeAssets).length > 0) {
     payload.runtimeAssets = runtimeAssets;
@@ -423,6 +475,10 @@ function showSelect() {
   state.generatedVersions = [];
   state.activeBackgroundKey = null;
   state.backgroundBuffers = {};
+  state.photoVersions = [];
+  state.photoBuffers = {};
+  state.photoActiveKey = null;
+  state.generatingPhoto = false;
   state.selectedCollectionId = null;
   state.selectedItemId = null;
   state.selectedItemRecord = null;
@@ -905,6 +961,157 @@ async function approveVersion(key) {
     setStatus("bgGenerationStatus", "success", "Imagem aprovada e definida como atual.");
   } catch (err) {
     handleApiError(err, "bgGenerationStatus");
+  }
+}
+
+async function generatePhoto(dryRun) {
+  const titulo = String(state.values.titulo_vaga || "").trim();
+  if (!titulo) {
+    setStatus("photoGenerationStatus", "warning", "Preencha o título da vaga antes de gerar a fotografia.");
+    return;
+  }
+  if (state.generatingPhoto) return;
+
+  state.generatingPhoto = true;
+  setStatus("photoGenerationStatus", "loading", dryRun ? "Gerando fotografia de teste..." : "Gerando fotografia com IA...");
+  const btnGenerate = byId("btnGeneratePhoto");
+  const btnDryRun = byId("btnDryRunPhoto");
+  if (btnGenerate) btnGenerate.disabled = true;
+  if (btnDryRun) btnDryRun.disabled = true;
+
+  try {
+    const res = await api.json("/api/studio/generate-photo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        templateId: state.selectedTemplate.id,
+        values: state.values,
+        visual: state.visual,
+        collectionId: state.selectedCollectionId || null,
+        itemId: state.selectedItemId || null,
+        dryRun,
+        size: "1024x1792",
+      }),
+    });
+
+    const key = res.metadata?.storage?.key || res.metadata?.runId;
+    const url = res.metadata?.urls?.foto;
+    if (!url) throw new Error("Resposta não trouxe URL da fotografia.");
+
+    const fetchRes = await fetch(url);
+    if (!fetchRes.ok) throw new Error("Falha ao carregar fotografia gerada.");
+    const buffer = await fetchRes.arrayBuffer();
+    const base64 = arrayBufferToBase64(buffer);
+
+    state.photoBuffers[key] = base64;
+    const version = {
+      key,
+      runId: res.metadata.runId,
+      generatedAt: res.metadata.generatedAt,
+      dryRun,
+      cost: res.metadata.cost,
+      approved: false,
+    };
+    if (!state.photoVersions.find((v) => v.key === key)) {
+      state.photoVersions.push(version);
+    }
+    state.photoActiveKey = key;
+    state.values.imagem_principal = key;
+
+    updateAssetSelectors();
+    renderPhotoVersions();
+    scheduleRender();
+    setStatus("photoGenerationStatus", "success", `Fotografia ${dryRun ? "de teste" : "gerada"} salva. ${res.metadata.cost?.totalCostUsd != null ? `Custo: US$ ${res.metadata.cost.totalCostUsd.toFixed(4)}` : ""}`);
+  } catch (err) {
+    handleApiError(err, "photoGenerationStatus");
+  } finally {
+    state.generatingPhoto = false;
+    if (btnDryRun) btnDryRun.disabled = false;
+    if (btnGenerate) btnGenerate.disabled = !state.openAiConfigured;
+  }
+}
+
+function renderPhotoVersions() {
+  const container = byId("photoVersions");
+  if (!container) return;
+  container.innerHTML = "";
+  if (!state.photoVersions.length) return;
+
+  for (const v of state.photoVersions) {
+    const chip = document.createElement("div");
+    chip.className = `version-chip${v.key === state.photoActiveKey ? " active" : ""}${v.approved ? " approved" : ""}${v.dryRun ? " simulation" : ""}`;
+    const label = v.dryRun ? "Simulação" : "v." + v.runId.slice(-4);
+
+    let action = "";
+    if (v.approved) {
+      action = `<span class="version-approved">Aprovada</span>`;
+    } else if (v.dryRun) {
+      action = `<span class="version-hint">Simulação · não aprovável</span>`;
+    } else {
+      action = `<button type="button" class="btn-primary btn-small btn-approve-photo" data-key="${escapeHtml(v.key)}">Usar como imagem oficial</button>`;
+    }
+
+    chip.innerHTML = `
+      <div class="version-main">
+        <button type="button" class="btn-select-photo" data-key="${escapeHtml(v.key)}">${escapeHtml(label)} · ${new Date(v.generatedAt).toLocaleTimeString()}</button>
+        ${action}
+      </div>
+    `;
+    chip.querySelector(".btn-select-photo").addEventListener("click", () => {
+      state.photoActiveKey = v.key;
+      state.values.imagem_principal = v.key;
+      renderPhotoVersions();
+      updateAssetSelectors();
+      scheduleRender();
+    });
+    const approveBtn = chip.querySelector(".btn-approve-photo");
+    if (approveBtn) {
+      approveBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        approvePhotoVersion(v.key);
+      });
+    }
+    container.appendChild(chip);
+  }
+}
+
+async function approvePhotoVersion(key) {
+  const version = state.photoVersions.find((v) => v.key === key);
+  if (!version) return;
+  if (version.dryRun) {
+    setStatus("photoGenerationStatus", "warning", "Versões de simulação não podem ser aprovadas.");
+    return;
+  }
+
+  const ok = await confirmModal("Definir esta fotografia como imagem oficial aprovada?");
+  if (!ok) return;
+
+  setStatus("photoGenerationStatus", "loading", "Aprovando fotografia...");
+  try {
+    const res = await api.json("/api/studio/approve-background", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        runId: version.runId,
+        collectionId: state.selectedCollectionId || null,
+        itemId: state.selectedItemId || null,
+        templateId: state.selectedTemplate.id,
+        values: state.values,
+      }),
+    });
+
+    if (!res.assetId) throw new Error("Resposta não trouxe assetId da fotografia aprovada.");
+
+    await loadAssets();
+    state.values.imagem_principal = res.assetId;
+    state.photoActiveKey = null;
+    version.approved = true;
+    updateAssetSelectors();
+    renderPhotoVersions();
+    scheduleRender();
+    setStatus("photoGenerationStatus", "success", "Fotografia aprovada e definida como atual.");
+  } catch (err) {
+    handleApiError(err, "photoGenerationStatus");
   }
 }
 

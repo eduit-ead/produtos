@@ -163,6 +163,10 @@ async function generateImage(course, options = {}) {
   const dryRun = options.dryRun || false;
   const force = options.force || false;
   const outputDir = options.outputDir || OUTPUT_DIR;
+  const model = options.model || DEFAULT_MODEL;
+  const quality = options.quality || DEFAULT_QUALITY;
+  const size = options.size || DEFAULT_SIZE;
+  const format = options.format || DEFAULT_FORMAT;
 
   if (!apiKey && !dryRun) {
     throw new Error("Variável de ambiente OPENAI_API_KEY não configurada.");
@@ -174,7 +178,9 @@ async function generateImage(course, options = {}) {
 
   fs.mkdirSync(outputDir, { recursive: true });
 
-  const pngPath = path.join(outputDir, `${course.slug}-fundo-ia.png`);
+  const suffix = options.fileSuffix || "fundo-ia";
+  const ext = format === "jpeg" ? "jpg" : "png";
+  const pngPath = path.join(outputDir, `${course.slug}-${suffix}.${ext}`);
   const jsonPath = path.join(outputDir, `${course.slug}.json`);
 
   if (fs.existsSync(pngPath) && !dryRun && !force) {
@@ -187,10 +193,10 @@ async function generateImage(course, options = {}) {
     return {
       course_id: course.course_id,
       slug: course.slug,
-      modelo: DEFAULT_MODEL,
-      qualidade: DEFAULT_QUALITY,
-      tamanho: DEFAULT_SIZE,
-      formato: DEFAULT_FORMAT,
+      modelo: model,
+      qualidade: quality,
+      tamanho: size,
+      formato: format,
       prompt: course.prompt,
       data: new Date().toISOString(),
       caminho_arquivo: pngPath,
@@ -201,11 +207,11 @@ async function generateImage(course, options = {}) {
   const openai = new OpenAI({ apiKey });
 
   const response = await openai.images.generate({
-    model: DEFAULT_MODEL,
+    model,
     prompt: course.prompt,
     n: 1,
-    size: DEFAULT_SIZE,
-    quality: DEFAULT_QUALITY,
+    size,
+    quality,
   });
 
   const b64 = response.data?.[0]?.b64_json;
@@ -217,16 +223,16 @@ async function generateImage(course, options = {}) {
   fs.writeFileSync(pngPath, buffer);
 
   const usage = response.usage || null;
-  const cost = estimateCost(DEFAULT_MODEL, usage);
+  const cost = estimateCost(model, usage);
 
   const record = {
     course_id: course.course_id,
     slug: course.slug,
     curso: course.curso,
-    modelo: DEFAULT_MODEL,
-    qualidade: DEFAULT_QUALITY,
-    tamanho: DEFAULT_SIZE,
-    formato: DEFAULT_FORMAT,
+    modelo: model,
+    qualidade: quality,
+    tamanho: size,
+    formato: format,
     prompt: course.prompt,
     data: new Date().toISOString(),
     caminho_arquivo: pngPath,

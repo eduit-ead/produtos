@@ -14,7 +14,14 @@ const { validateTemplate, createEmptyTemplate } = require("./schema/template-sch
 const { renderTemplate } = require("./renderer");
 const { renderSavedTemplate } = require("./renderer/render-saved-template");
 const { RUNTIME } = require("../config/runtime");
-const { generateStudioBackground, estimateImageCost } = require("./ai-background");
+const {
+  generateStudioBackground,
+  estimateImageCost,
+  generateStudioPhoto,
+  approveStudioPhoto,
+  buildDnaWorkImagePrompt,
+  DNA_WORK_NEGATIVE_PROMPT,
+} = require("./ai-background");
 const courseService = require("../course-production-service");
 const genericProduction = require("../production/generic-production-service");
 const { createStorageProvider } = require("../storage");
@@ -416,17 +423,55 @@ function createRouter() {
     }
   });
 
+  router.post("/studio/generate-photo", express.json({ limit: "1mb" }), async (req, res) => {
+    try {
+      const { templateId, values, visual, collectionId, itemId, dryRun, model, quality, size } = req.body || {};
+      const tituloVaga = (values?.titulo_vaga || "").trim();
+      if (!tituloVaga) {
+        return res.status(400).json({ error: "O título da vaga é obrigatório para gerar a fotografia." });
+      }
+      const prompt = buildDnaWorkImagePrompt(tituloVaga);
+      const metadata = await generateStudioPhoto({
+        templateId,
+        values: values || {},
+        visual: visual || {},
+        collectionId,
+        itemId,
+        dryRun: Boolean(dryRun || !process.env.OPENAI_API_KEY),
+        model,
+        quality,
+        size: size || "1024x1792",
+        prompt,
+        negativePrompt: DNA_WORK_NEGATIVE_PROMPT,
+      });
+      res.json({ ok: true, metadata });
+    } catch (err) {
+      console.error(err);
+      const status = err.message?.includes("inválido") || err.message?.includes("obrigatório") || err.message?.includes("não encontrada") || err.message?.includes("não possui")
+        ? 400
+        : 500;
+      res.status(status).json({ error: err.message || "Erro ao gerar fotografia." });
+    }
+  });
+
   router.post("/studio/approve-background", express.json({ limit: "2mb" }), async (req, res) => {
     try {
       const { runId, collectionId, itemId, templateId, values } = req.body || {};
-      if (!runId || !collectionId || !itemId) {
-        return res.status(400).json({ error: "runId, collectionId e itemId são obrigatórios." });
+      if (!runId) {
+        return res.status(400).json({ error: "runId é obrigatório." });
       }
-      const slug = itemId;
-      const record = await genericProduction.getRecord(collectionId, slug);
-      if (!record) return res.status(404).json({ error: "Item não encontrado." });
 
-      const catalogDir = genericProduction.catalogDirFor(collectionId);
+      // Para fotografias de estúdio, collectionId/itemId são opcionais.
+      let catalogDir;
+      let record = null;
+      let slug = itemId || null;
+      if (collectionId && itemId) {
+        catalogDir = genericProduction.catalogDirFor(collectionId);
+        record = await genericProduction.getRecord(collectionId, itemId);
+        if (!record) return res.status(404).json({ error: "Item não encontrado." });
+      } else {
+        catalogDir = RUNTIME.catalogDir;
+      }
       const storage = createStorageProvider({ baseDir: catalogDir });
       const metaPath = path.join(catalogDir, "studio", runId, "metadata.json");
       if (!fs.existsSync(metaPath)) return res.status(404).json({ error: "Fundo do estúdio não encontrado." });
@@ -435,9 +480,22 @@ function createRouter() {
         return res.status(409).json({ error: "Versões de simulação/dry-run não podem ser aprovadas." });
       }
       const usedTemplateId = templateId || meta.templateId;
+      if (meta.kind !== "photo" && (!collectionId || !itemId)) {
+        return res.status(400).json({ error: "collectionId e itemId são obrigatórios para aprovar este tipo de imagem." });
+      }
       if (meta.collectionId !== collectionId || meta.itemId !== itemId || meta.templateId !== usedTemplateId) {
         return res.status(409).json({ error: "Metadados do fundo não correspondem ao item/template selecionado." });
       }
+
+      if (meta.kind === "photo") {
+        // Aprovação de fotografia de estúdio: copia para assets e retorna o assetId.
+        if (meta.dryRun === true) {
+          return res.status(409).json({ error: "Versões de simulação/dry-run não podem ser aprovadas." });
+        }
+        const { assetId, url } = await approveStudioPhoto(runId, { catalogDir, assetsDir: ASSETS_DIR });
+        return res.json({ ok: true, assetId, url, kind: "photo", runId });
+      }
+
       const backgroundKey = meta.storage?.key;
       if (!backgroundKey || !(await storage.exists(backgroundKey))) {
         return res.status(404).json({ error: "Fundo do estúdio não disponível." });

@@ -27,9 +27,9 @@ const TITLE_W = 330;
 const TITLE_H = 72;
 
 // 4 blocos de informação (valores abaixo dos rótulos do fundo)
-const BLOCK_W = 200;
-const BLOCK_H = 88;
-const BLOCK_Y = 985;
+const BLOCK_W = 175;
+const BLOCK_H = 86;
+const BLOCK_Y = 970;
 const BLOCK_XS = [60, 300, 545, 730];
 
 function cleanText(value) {
@@ -62,7 +62,7 @@ function resolveValues(values = {}) {
 
 async function resizeAndMaskImage(buffer, width, height) {
   const resized = await sharp(buffer)
-    .resize(width, height, { fit: "cover", position: "right top" })
+    .resize(width, height, { fit: "cover", position: "centre" })
     .ensureAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
@@ -190,11 +190,46 @@ async function renderDnaWorkVagas(backgroundBuffer, values = {}) {
     .toBuffer();
 }
 
+async function prepareDnaWorkBackground(backgroundBuffer) {
+  const { data, info } = await sharp(backgroundBuffer)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const w = info.width;
+  const h = info.height;
+  const channels = info.channels;
+  // Cor de fundo azul-marinho oficial (amostrada da área segura).
+  const bgR = 10, bgG = 26, bgB = 53;
+  // O arquivo-fonte contém uma faixa preta no lado direito reservada à foto.
+  // Substituímos pixels pretos nessa região para que, sem fotografia, o fundo
+  // oficial apareça em vez da faixa preta.
+  const xThreshold = Math.floor(w * 0.66);
+  const blackThreshold = 18;
+  for (let y = 0; y < h; y++) {
+    for (let x = xThreshold; x < w; x++) {
+      const idx = (y * w + x) * channels;
+      if (
+        data[idx] <= blackThreshold &&
+        data[idx + 1] <= blackThreshold &&
+        data[idx + 2] <= blackThreshold
+      ) {
+        data[idx] = bgR;
+        data[idx + 1] = bgG;
+        data[idx + 2] = bgB;
+      }
+    }
+  }
+  return sharp(data, { raw: { width: w, height: h, channels } })
+    .jpeg({ quality: 95 })
+    .toBuffer();
+}
+
 async function renderDnaWorkVagasTemplate(values = {}, runtimeAssets = {}) {
-  const backgroundBuffer = loadAssetBuffer("dna-work-vagas-bg.jpg", runtimeAssets);
+  let backgroundBuffer = loadAssetBuffer("dna-work-vagas-bg.jpg", runtimeAssets);
   if (!backgroundBuffer) {
     throw new Error("Asset de fundo DNA Work não encontrado: dna-work-vagas-bg.jpg");
   }
+  backgroundBuffer = await prepareDnaWorkBackground(backgroundBuffer);
 
   // Normaliza acesso a buffers em memória usados pelos testes/estúdio
   const assets = { ...(runtimeAssets || {}) };
