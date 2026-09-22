@@ -30,7 +30,7 @@ const TITLE_H = 72;
 const BLOCK_W = 175;
 const BLOCK_H = 86;
 const BLOCK_Y = 970;
-const BLOCK_XS = [60, 300, 545, 730];
+const BLOCK_XS = [60, 300, 545, 770];
 
 function cleanText(value) {
   if (value === undefined || value === null) return "";
@@ -198,27 +198,66 @@ async function prepareDnaWorkBackground(backgroundBuffer) {
   const w = info.width;
   const h = info.height;
   const channels = info.channels;
-  // Cor de fundo azul-marinho oficial (amostrada da área segura).
-  const bgR = 10, bgG = 26, bgB = 53;
-  // O arquivo-fonte contém uma faixa preta no lado direito reservada à foto.
-  // Substituímos pixels pretos nessa região para que, sem fotografia, o fundo
-  // oficial apareça em vez da faixa preta.
-  const xThreshold = Math.floor(w * 0.66);
-  const blackThreshold = 18;
+
+  // O arquivo-fonte contém um retângulo preto no canto superior direito usado
+  // como placeholder da fotografia. Para que, sem foto, a área apareça como o
+  // próprio fundo azul-marinho, varremos cada linha da direita para a
+  // esquerda, identificamos a borda do placeholder e preenchemos a região
+  // à direita com a cor média do fundo imediatamente antes da borda,
+  // garantindo um tom azulado mínimo para nunca parecer preto puro.
+  const blackThreshold = 15;
+  const sampleWindow = 24;
   for (let y = 0; y < h; y++) {
-    for (let x = xThreshold; x < w; x++) {
+    let boundary = -1;
+    for (let x = w - 1; x >= 0; x--) {
       const idx = (y * w + x) * channels;
-      if (
+      const isBlack =
         data[idx] <= blackThreshold &&
         data[idx + 1] <= blackThreshold &&
-        data[idx + 2] <= blackThreshold
-      ) {
-        data[idx] = bgR;
-        data[idx + 1] = bgG;
-        data[idx + 2] = bgB;
+        data[idx + 2] <= blackThreshold;
+      if (!isBlack) {
+        boundary = x;
+        break;
+      }
+    }
+    if (boundary >= 0 && boundary < w - 1) {
+      let r = 0, g = 0, bSum = 0, n = 0;
+      const start = Math.max(0, boundary - sampleWindow);
+      for (let x = start; x < boundary; x++) {
+        const idx = (y * w + x) * channels;
+        if (
+          data[idx] > blackThreshold ||
+          data[idx + 1] > blackThreshold ||
+          data[idx + 2] > blackThreshold
+        ) {
+          r += data[idx];
+          g += data[idx + 1];
+          bSum += data[idx + 2];
+          n++;
+        }
+      }
+      let rr, gg, bb;
+      if (n > 0) {
+        rr = Math.round(r / n);
+        gg = Math.round(g / n);
+        bb = Math.round(bSum / n);
+      } else {
+        rr = 0; gg = 4; bb = 60;
+      }
+      // Garante tom azulado mínimo (evita preto puro), mas preserva o
+      // gradiente escuro do fundo para não criar transições artificiais.
+      if (bb < 30 && rr < 30 && gg < 30) {
+        bb = Math.max(bb, 30);
+      }
+      for (let x = boundary + 1; x < w; x++) {
+        const idx = (y * w + x) * channels;
+        data[idx] = rr;
+        data[idx + 1] = gg;
+        data[idx + 2] = bb;
       }
     }
   }
+
   return sharp(data, { raw: { width: w, height: h, channels } })
     .jpeg({ quality: 95 })
     .toBuffer();
