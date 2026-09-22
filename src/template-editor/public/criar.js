@@ -891,9 +891,16 @@ async function approveVersion(key) {
         values: state.values,
       }),
     });
+
+    const updatedItem = await api.json(`/api/items/${encodeURIComponent(state.selectedItemId)}?collection=${encodeURIComponent(state.selectedCollectionId)}`);
+    if (!updatedItem || updatedItem.visual_status !== "aprovado") {
+      throw new Error("Aprovação não foi refletida no registro do item.");
+    }
+
     version.approved = true;
     state.activeBackgroundKey = key;
     state.values.imagemFundo = key;
+    state.selectedItemRecord = updatedItem;
     renderVersions();
     scheduleRender();
     setStatus("bgGenerationStatus", "success", "Imagem aprovada e definida como atual.");

@@ -32,7 +32,8 @@ const express = require("express");
 const { createRouter } = require("../src/template-editor/api");
 const { saveCollection, deleteCollection } = require("../src/collections/manager");
 const { createStorageProvider } = require("../src/storage");
-
+const { resolveItemVisual, resolveBackgroundBufferForItem } = require("../src/production/visual-resolver");
+const { getImageBuffer } = require("../src/image-cache");
 
 const app = express();
 app.use("/api", createRouter());
@@ -157,6 +158,32 @@ async function pollJob(port, jobId, targetStatuses, timeoutMs = 10000) {
       }, null, 2)
     );
 
+    // Candidato pendente + imagem original: current continua sendo a original
+    const originalImageUrl = sample.current_background_url || sample.ai_background_url;
+    assert.ok(originalImageUrl, "curso de amostra deve ter imagem original");
+    const visualWithCandidate = await resolveItemVisual("graduacao-cruzeiro", sample.slug, { sourceImage: originalImageUrl });
+    assert.equal(visualWithCandidate.visualStatus, "aguardando_revisao", "candidato pendente fica aguardando revisao");
+    assert.equal(visualWithCandidate.currentBackgroundUrl, originalImageUrl, "currentBackgroundUrl deve ser imagem original");
+    assert.ok(visualWithCandidate.candidateBackgroundUrl, "deve haver candidato pendente");
+    assert.equal(visualWithCandidate.candidateSource, "studio", "candidateSource deve ser studio");
+    const chosenBuffer = await resolveBackgroundBufferForItem("graduacao-cruzeiro", sample.slug, { sourceImage: originalImageUrl });
+    assert.ok(Buffer.isBuffer(chosenBuffer) && chosenBuffer.length > 0, "resolveBackgroundBufferForItem deve resolver imagem oficial (original)");
+
+    // Tentar aprovar com metadados de outro item deve ser rejeitado
+    const mismatchRes = await request(port, "POST", "/api/studio/approve-background", JSON.stringify({
+      runId: realRunId,
+      collectionId: "graduacao-cruzeiro",
+      itemId: itemsRes.body[1].slug,
+      templateId: "cruzeiro-graduacao-v1",
+      values: {
+        titulo: sample.curso || sample.title || sample.slug,
+        modalidade: "EAD",
+        formacao: "Bacharelado",
+        duracao: "8 semestres",
+      },
+    }), { "Content-Type": "application/json" });
+    assert.equal(mismatchRes.status, 409, "aprovação de metadados de outro item deve retornar 409");
+
     const approveRes = await request(port, "POST", "/api/studio/approve-background", JSON.stringify({
       runId: realRunId,
       collectionId: "graduacao-cruzeiro",
@@ -261,6 +288,48 @@ async function pollJob(port, jobId, targetStatuses, timeoutMs = 10000) {
     const ignoredFinished = await pollJob(port, ignoredJob.id, ["concluido", "concluido_com_erros"], 15000);
     assert.equal(ignoredFinished.stats.ignored, 1, "item sem imagem deve ser ignorado");
     assert.equal(ignoredFinished.stats.ready, 0, "não deve haver itens prontos");
+
+    // Candidato pendente sem imagem original: "Usar imagem existente" ignora o item
+    const noImageRunId = `studio-noimage-${Date.now()}`;
+    const noImageCatalogDir = path.join(runtimeDir, "output", "ai-catalog", "test-no-image");
+    const noImageStudioDir = path.join(noImageCatalogDir, "studio", noImageRunId);
+    fs.mkdirSync(noImageStudioDir, { recursive: true });
+    const noImageBgKey = `studio/${noImageRunId}/fundo.png`;
+    const noImageBgBuffer = await sharp({ create: { width: 1080, height: 1080, channels: 3, background: "#ff0000" } }).png().toBuffer();
+    const noImageStorage = createStorageProvider({ baseDir: noImageCatalogDir });
+    await noImageStorage.save(noImageBgKey, noImageBgBuffer, { contentType: "image/png" });
+    fs.writeFileSync(
+      path.join(noImageStudioDir, "metadata.json"),
+      JSON.stringify({
+        runId: noImageRunId,
+        templateId: "demo",
+        collectionId: "test-no-image",
+        itemId: noImageItem.slug,
+        dryRun: true,
+        generatedAt: new Date().toISOString(),
+        values: { titulo: "Sem Imagem" },
+        storage: { key: noImageBgKey, provider: process.env.STORAGE_PROVIDER || "local" },
+        urls: { fundo: `/api/files?key=${encodeURIComponent(noImageBgKey)}` },
+      }, null, 2)
+    );
+
+    const noImageCandidate = await resolveItemVisual("test-no-image", noImageItem.slug, { sourceImage: noImageItem.fields?.image_url || "" });
+    assert.equal(noImageCandidate.visualStatus, "simulacao", "candidato dry-run sem original fica simulacao");
+    assert.equal(noImageCandidate.currentBackgroundUrl, null, "sem original, currentBackgroundUrl é null");
+    assert.ok(noImageCandidate.candidateBackgroundUrl, "candidato existe");
+
+    const ignoredWithCandidate = await request(port, "POST", "/api/batches", JSON.stringify({
+      collection_id: "test-no-image",
+      courses: [{ course_id: noImageItem.record_id, slug: noImageItem.slug }],
+      template_id: "demo",
+      background_source: "original",
+      dryRun: false,
+    }), { "Content-Type": "application/json" });
+    assert.equal(ignoredWithCandidate.status, 201, `criar lote ignorado com candidato falhou: ${JSON.stringify(ignoredWithCandidate.body)}`);
+    const ignoredWithCandidateJob = ignoredWithCandidate.body.job;
+    await request(port, "POST", `/api/batches/${ignoredWithCandidateJob.id}/start`);
+    const ignoredWithCandidateFinished = await pollJob(port, ignoredWithCandidateJob.id, ["concluido", "concluido_com_erros"], 15000);
+    assert.equal(ignoredWithCandidateFinished.stats.ignored, 1, "item sem imagem oficial deve ser ignorado mesmo com candidato");
 
     deleteCollection("test-no-image");
 

@@ -429,13 +429,16 @@ function createRouter() {
       if (meta.dryRun === true) {
         return res.status(409).json({ error: "Versões de simulação/dry-run não podem ser aprovadas." });
       }
+      const usedTemplateId = templateId || meta.templateId;
+      if (meta.collectionId !== collectionId || meta.itemId !== itemId || meta.templateId !== usedTemplateId) {
+        return res.status(409).json({ error: "Metadados do fundo não correspondem ao item/template selecionado." });
+      }
       const backgroundKey = meta.storage?.key;
       if (!backgroundKey || !(await storage.exists(backgroundKey))) {
         return res.status(404).json({ error: "Fundo do estúdio não disponível." });
       }
 
       const backgroundBuffer = await storage.read(backgroundKey);
-      const usedTemplateId = templateId || meta.templateId;
       const usedValues = { ...(values || meta.values || {}) };
       usedValues.imagemFundo = genericProduction.PRODUCTION_BACKGROUND_KEY;
       const runtimeAssets = { [genericProduction.PRODUCTION_BACKGROUND_KEY]: backgroundBuffer };

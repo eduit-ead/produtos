@@ -2,8 +2,8 @@
  * Resolvedor compartilhado do visual atual de um item.
  *
  * Regras:
- * - current_* = somente imagem oficial: approvedVisual ou imagem original da fonte.
- * - candidate_* = nova versão ainda não aprovada (card+fundo ou fundo isolado).
+ * - current_* / current*Key = somente imagem oficial: approvedVisual ou imagem original da fonte.
+ * - candidate_* / candidate*Key = nova versão ainda não aprovada.
  * - nunca usa candidato pendente como imagem atual automaticamente.
  */
 
@@ -76,6 +76,7 @@ function findStudioMetadataForItem(studioMetas, collectionId, itemId) {
 }
 
 async function keyToPublicUrl(storage, key) {
+  if (!key) return null;
   return storage.getPublicUrl(key);
 }
 
@@ -104,21 +105,32 @@ async function resolveItemVisual(collectionId, slug, record) {
   const studioMetas = await listStudioMetadata(catalogDir);
   const studioMeta = findStudioMetadataForItem(studioMetas, collectionId, record?.id || slug);
 
+  const originalUrl = record?.sourceImage || record?.image_url || null;
+
   // 1. Aprovado oficial
   const approvedVisual = entry.approvedVisual || null;
   if (approvedVisual && await keyExists(storage, approvedVisual.backgroundKey) && await keyExists(storage, approvedVisual.cardKey)) {
+    const approvedWhatsAppUrl = approvedVisual.whatsappKey && (await keyExists(storage, approvedVisual.whatsappKey))
+      ? await keyToPublicUrl(storage, approvedVisual.whatsappKey)
+      : null;
     return {
       visualStatus: "aprovado",
+      visualSource: approvedVisual.source || "batch",
+      visualUpdatedAt: approvedVisual.updatedAt || approvedVisual.approvedAt || null,
+      approvedVisual,
+      currentBackgroundKey: approvedVisual.backgroundKey,
+      currentCardKey: approvedVisual.cardKey,
+      currentWhatsAppKey: approvedVisual.whatsappKey || null,
       currentBackgroundUrl: await keyToPublicUrl(storage, approvedVisual.backgroundKey),
       currentCardUrl: await keyToPublicUrl(storage, approvedVisual.cardKey),
-      currentWhatsAppUrl: approvedVisual.whatsappKey && (await keyExists(storage, approvedVisual.whatsappKey))
-        ? await keyToPublicUrl(storage, approvedVisual.whatsappKey)
-        : null,
+      currentWhatsAppUrl: approvedWhatsAppUrl,
+      candidateBackgroundKey: null,
+      candidateCardKey: null,
+      candidateWhatsAppKey: null,
       candidateBackgroundUrl: null,
       candidateCardUrl: null,
-      visualUpdatedAt: approvedVisual.updatedAt || approvedVisual.approvedAt || null,
-      visualSource: approvedVisual.source || "batch",
-      approvedVisual,
+      candidateWhatsAppUrl: null,
+      candidateSource: null,
       backgroundKey: approvedVisual.backgroundKey,
       cardKey: approvedVisual.cardKey,
       whatsappKey: approvedVisual.whatsappKey || null,
@@ -180,40 +192,63 @@ async function resolveItemVisual(collectionId, slug, record) {
   const latestCandidate = pickLatest(existingCandidates);
 
   // 2. Imagem original da fonte de dados (current oficial quando não há aprovado)
-  const originalUrl = record?.sourceImage || record?.image_url || null;
+  if (originalUrl) {
+    const candidateBackgroundUrl = latestCandidate ? await keyToPublicUrl(storage, latestCandidate.backgroundKey) : null;
+    const candidateCardUrl = latestCandidate?.cardKey && (await keyExists(storage, latestCandidate.cardKey))
+      ? await keyToPublicUrl(storage, latestCandidate.cardKey)
+      : null;
+    const candidateWhatsAppUrl = latestCandidate?.whatsappKey && (await keyExists(storage, latestCandidate.whatsappKey))
+      ? await keyToPublicUrl(storage, latestCandidate.whatsappKey)
+      : null;
 
-  if (latestCandidate) {
-    const isSimulation = latestCandidate.dryRun === true;
     return {
-      visualStatus: isSimulation ? "simulacao" : "aguardando_revisao",
-      currentBackgroundUrl: originalUrl || null,
+      visualStatus: latestCandidate ? (latestCandidate.dryRun === true ? "simulacao" : "aguardando_revisao") : "original",
+      visualSource: "spreadsheet",
+      visualUpdatedAt: latestCandidate ? (latestCandidate.updatedAt || latestCandidate.generatedAt || null) : null,
+      approvedVisual: null,
+      currentBackgroundKey: null,
+      currentCardKey: null,
+      currentWhatsAppKey: null,
+      currentBackgroundUrl: originalUrl,
       currentCardUrl: null,
       currentWhatsAppUrl: null,
+      candidateBackgroundKey: latestCandidate?.backgroundKey || null,
+      candidateCardKey: latestCandidate?.cardKey || null,
+      candidateWhatsAppKey: latestCandidate?.whatsappKey || null,
+      candidateBackgroundUrl,
+      candidateCardUrl,
+      candidateWhatsAppUrl,
+      candidateSource: latestCandidate?.source || null,
+      backgroundKey: null,
+      cardKey: null,
+      whatsappKey: null,
+    };
+  }
+
+  // 3. Apenas candidato, sem imagem original
+  if (latestCandidate) {
+    return {
+      visualStatus: latestCandidate.dryRun === true ? "simulacao" : "aguardando_revisao",
+      visualSource: null,
+      visualUpdatedAt: latestCandidate.updatedAt || latestCandidate.generatedAt || null,
+      approvedVisual: null,
+      currentBackgroundKey: null,
+      currentCardKey: null,
+      currentWhatsAppKey: null,
+      currentBackgroundUrl: null,
+      currentCardUrl: null,
+      currentWhatsAppUrl: null,
+      candidateBackgroundKey: latestCandidate.backgroundKey,
+      candidateCardKey: latestCandidate.cardKey || null,
+      candidateWhatsAppKey: latestCandidate.whatsappKey || null,
       candidateBackgroundUrl: await keyToPublicUrl(storage, latestCandidate.backgroundKey),
       candidateCardUrl: latestCandidate.cardKey && (await keyExists(storage, latestCandidate.cardKey))
         ? await keyToPublicUrl(storage, latestCandidate.cardKey)
         : null,
-      visualUpdatedAt: latestCandidate.updatedAt || latestCandidate.generatedAt || null,
-      visualSource: latestCandidate.source,
-      approvedVisual: null,
-      backgroundKey: latestCandidate.backgroundKey,
-      cardKey: latestCandidate.cardKey || null,
-      whatsappKey: latestCandidate.whatsappKey || null,
-    };
-  }
-
-  // 3. Apenas imagem original
-  if (originalUrl) {
-    return {
-      visualStatus: "original",
-      currentBackgroundUrl: originalUrl,
-      currentCardUrl: null,
-      currentWhatsAppUrl: null,
-      candidateBackgroundUrl: null,
-      candidateCardUrl: null,
-      visualUpdatedAt: null,
-      visualSource: "spreadsheet",
-      approvedVisual: null,
+      candidateWhatsAppUrl: latestCandidate.whatsappKey && (await keyExists(storage, latestCandidate.whatsappKey))
+        ? await keyToPublicUrl(storage, latestCandidate.whatsappKey)
+        : null,
+      candidateSource: latestCandidate.source,
       backgroundKey: null,
       cardKey: null,
       whatsappKey: null,
@@ -223,14 +258,22 @@ async function resolveItemVisual(collectionId, slug, record) {
   // 4. Sem imagem
   return {
     visualStatus: "sem_imagem",
+    visualSource: null,
+    visualUpdatedAt: null,
+    approvedVisual: null,
+    currentBackgroundKey: null,
+    currentCardKey: null,
+    currentWhatsAppKey: null,
     currentBackgroundUrl: null,
     currentCardUrl: null,
     currentWhatsAppUrl: null,
+    candidateBackgroundKey: null,
+    candidateCardKey: null,
+    candidateWhatsAppKey: null,
     candidateBackgroundUrl: null,
     candidateCardUrl: null,
-    visualUpdatedAt: null,
-    visualSource: null,
-    approvedVisual: null,
+    candidateWhatsAppUrl: null,
+    candidateSource: null,
     backgroundKey: null,
     cardKey: null,
     whatsappKey: null,
@@ -239,14 +282,15 @@ async function resolveItemVisual(collectionId, slug, record) {
 
 async function resolveBackgroundBufferForItem(collectionId, slug, record) {
   const visual = await resolveItemVisual(collectionId, slug, record);
-  if (visual.visualStatus === "aprovado" && visual.backgroundKey) {
+  if (visual.currentBackgroundKey) {
     const catalogDir = catalogDirFor(collectionId);
     const storage = createStorageProvider({ baseDir: catalogDir });
-    return storage.read(visual.backgroundKey);
+    return storage.read(visual.currentBackgroundKey);
   }
-  if (visual.visualStatus === "original" && (record?.sourceImage || record?.image_url)) {
+  const originalUrl = record?.sourceImage || record?.image_url || null;
+  if (originalUrl) {
     const { getImageBuffer } = require("../image-cache");
-    return getImageBuffer(record.sourceImage || record.image_url);
+    return getImageBuffer(originalUrl);
   }
   throw new Error("Nenhum fundo oficial disponível para renderizar.");
 }

@@ -189,6 +189,28 @@ function recordSourceImageUrl(record) {
 // Operações legadas
 // ============================================================
 
+function buildVisualFields(visual, overrides = {}) {
+  return {
+    visual_status: visual.visualStatus,
+    visual_source: visual.visualSource,
+    visual_updated_at: visual.visualUpdatedAt,
+    current_background_key: visual.currentBackgroundKey,
+    current_card_key: visual.currentCardKey,
+    current_whatsapp_key: visual.currentWhatsAppKey,
+    current_background_url: visual.currentBackgroundUrl,
+    current_card_url: visual.currentCardUrl,
+    current_whatsapp_url: visual.currentWhatsAppUrl,
+    candidate_background_key: visual.candidateBackgroundKey,
+    candidate_card_key: visual.candidateCardKey,
+    candidate_whatsapp_key: visual.candidateWhatsAppKey,
+    candidate_background_url: visual.candidateBackgroundUrl,
+    candidate_card_url: visual.candidateCardUrl,
+    candidate_whatsapp_url: visual.candidateWhatsAppUrl,
+    candidate_source: visual.candidateSource,
+    ...overrides,
+  };
+}
+
 async function listLegacyItems() {
   const courses = await courseService.listCourses();
   return Promise.all(courses.map(async (course) => {
@@ -196,14 +218,14 @@ async function listLegacyItems() {
     const visual = await resolveItemVisual(LEGACY_COLLECTION_ID, course.slug, record);
     return {
       ...course,
-      visual_status: visual.visualStatus,
-      current_background_url: visual.currentBackgroundUrl || course.current_background_url || null,
-      current_card_url: visual.currentCardUrl || course.current_card_url || null,
-      current_whatsapp_url: visual.currentWhatsAppUrl || course.current_whatsapp_url || null,
-      candidate_background_url: visual.candidateBackgroundUrl,
-      candidate_card_url: visual.candidateCardUrl,
-      visual_updated_at: visual.visualUpdatedAt,
-      visual_source: visual.visualSource,
+      ...buildVisualFields(visual, {
+        current_background_url: visual.currentBackgroundUrl || course.current_background_url || null,
+        current_card_url: visual.currentCardUrl || course.current_card_url || null,
+        current_whatsapp_url: visual.currentWhatsAppUrl || course.current_whatsapp_url || null,
+      }),
+      ai_background_url: visual.candidateBackgroundUrl || course.current_background_url || null,
+      ai_card_url: visual.candidateCardUrl || course.current_card_url || null,
+      status: visual.visualStatus,
     };
   }));
 }
@@ -215,14 +237,14 @@ async function getLegacyItem(slug) {
   const visual = await resolveItemVisual(LEGACY_COLLECTION_ID, slug, record);
   return {
     ...course,
-    visual_status: visual.visualStatus,
-    current_background_url: visual.currentBackgroundUrl || course.current_background_url || null,
-    current_card_url: visual.currentCardUrl || course.current_card_url || null,
-    current_whatsapp_url: visual.currentWhatsAppUrl || course.current_whatsapp_url || null,
-    candidate_background_url: visual.candidateBackgroundUrl,
-    candidate_card_url: visual.candidateCardUrl,
-    visual_updated_at: visual.visualUpdatedAt,
-    visual_source: visual.visualSource,
+    ...buildVisualFields(visual, {
+      current_background_url: visual.currentBackgroundUrl || course.current_background_url || null,
+      current_card_url: visual.currentCardUrl || course.current_card_url || null,
+      current_whatsapp_url: visual.currentWhatsAppUrl || course.current_whatsapp_url || null,
+    }),
+    ai_background_url: visual.candidateBackgroundUrl || course.current_background_url || null,
+    ai_card_url: visual.candidateCardUrl || course.current_card_url || null,
+    status: visual.visualStatus,
   };
 }
 
@@ -245,16 +267,9 @@ async function listItems(collectionId) {
       slug: record.slug,
       title: record.title,
       fields: record.fields,
-      visual_status: visual.visualStatus,
-      current_background_url: visual.currentBackgroundUrl,
-      current_card_url: visual.currentCardUrl,
-      current_whatsapp_url: visual.currentWhatsAppUrl,
-      candidate_background_url: visual.candidateBackgroundUrl,
-      candidate_card_url: visual.candidateCardUrl,
+      ...buildVisualFields(visual),
       ai_background_url: visual.candidateBackgroundUrl || catalogFileUrl(collectionId, record.slug, `${record.slug}-fundo.png`),
       ai_card_url: visual.candidateCardUrl || catalogFileUrl(collectionId, record.slug, `${record.slug}-card.png`),
-      visual_updated_at: visual.visualUpdatedAt,
-      visual_source: visual.visualSource,
       status: visual.visualStatus,
       source_status: record.sourceStatus,
       collection_name: collection.name,
@@ -280,16 +295,9 @@ async function getItem(collectionId, slug) {
     title: record.title,
     fields: record.fields,
     prompt: record.prompt || record.title,
-    visual_status: visual.visualStatus,
-    current_background_url: visual.currentBackgroundUrl,
-    current_card_url: visual.currentCardUrl,
-    current_whatsapp_url: visual.currentWhatsAppUrl,
-    candidate_background_url: visual.candidateBackgroundUrl,
-    candidate_card_url: visual.candidateCardUrl,
+    ...buildVisualFields(visual),
     ai_background_url: visual.candidateBackgroundUrl || catalogFileUrl(collectionId, slug, `${slug}-fundo.png`),
     ai_card_url: visual.candidateCardUrl || catalogFileUrl(collectionId, slug, `${slug}-card.png`),
-    visual_updated_at: visual.visualUpdatedAt,
-    visual_source: visual.visualSource,
     status: visual.visualStatus,
     source_status: record.sourceStatus,
     manifest: entry,
