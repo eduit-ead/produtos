@@ -15,12 +15,36 @@
     <p class="page-subtitle">Gerencie bases de conteúdo, templates e assets usados nas produções.</p>
 
     <div class="tabs">
-      <div class="tab active" data-tab="bases">Bases de conteúdo</div>
+      <div class="tab active" data-tab="finished">Peças finalizadas</div>
+      <div class="tab" data-tab="bases">Bases de conteúdo</div>
       <div class="tab" data-tab="templates">Templates</div>
       <div class="tab" data-tab="assets">Assets</div>
     </div>
 
-    <section id="tab-bases" class="tab-panel active">
+    <section id="tab-finished" class="tab-panel active">
+      <div class="action-bar">
+        <a href="/criar.html" class="btn-primary">Nova imagem</a>
+        <span class="spacer"></span>
+        <input type="text" id="finishedSearch" placeholder="Buscar peças..." style="max-width:220px">
+        <select id="finishedTemplateFilter" class="input" style="max-width:160px">
+          <option value="">Todos os templates</option>
+        </select>
+        <select id="finishedSourceFilter" class="input" style="max-width:140px">
+          <option value="">Todas as origens</option>
+          <option value="criar">Criar imagem</option>
+          <option value="batch">Produção em lote</option>
+          <option value="migration">Migração</option>
+        </select>
+        <input type="date" id="finishedFrom" title="De" class="input" style="max-width:130px">
+        <input type="date" id="finishedTo" title="Até" class="input" style="max-width:130px">
+        <button type="button" id="btnFinishedFilter" class="btn-secondary">Filtrar</button>
+      </div>
+      <div id="finishedCount" class="hint" style="margin-bottom:12px"></div>
+      <div id="finishedList" class="grid grid-4"></div>
+      <div id="finishedPagination" class="pagination-bar"></div>
+    </section>
+
+    <section id="tab-bases" class="tab-panel">
       <div class="action-bar">
         <a href="/importar.html" class="btn-primary">Nova base de conteúdo</a>
         <span class="spacer"></span>

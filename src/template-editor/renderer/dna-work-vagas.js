@@ -7,16 +7,20 @@
  */
 
 const sharp = require("sharp");
+const fs = require("fs");
+const path = require("path");
 const { loadAssetBuffer, fitText, escapeXml } = require("./utils");
 
 const WIDTH = 1080;
 const HEIGHT = 1350;
 
-// Área da imagem principal (topo direito) — limitada à região X=560..1080, Y=70..760
-const IMAGE_X = 560;
-const IMAGE_Y = 70;
-const IMAGE_W = 520;
-const IMAGE_H = 690;
+// Área da imagem principal (topo direito) — aumentada ~13% linearmente,
+// expandindo para a esquerda e para baixo, mantendo o topo em Y=0.
+const IMAGE_X = 492;
+const IMAGE_Y = 0;
+const IMAGE_W = 588;
+const IMAGE_H = 859;
+const IMAGE_FADE_TOP = 100;
 const IMAGE_FADE_LEFT = 200;
 const IMAGE_FADE_BOTTOM = 240;
 
@@ -27,10 +31,24 @@ const TITLE_W = 330;
 const TITLE_H = 72;
 
 // 4 blocos de informação (valores abaixo dos rótulos do fundo)
-const BLOCK_W = 175;
-const BLOCK_H = 86;
-const BLOCK_Y = 970;
-const BLOCK_XS = [60, 300, 545, 770];
+// Centros reais dos ícones no fundo oficial: 158, 403, 667, 917 px
+const BLOCK_W = 190;
+const BLOCK_H = 70;
+const BLOCK_Y = 985;
+const BLOCK_XS = [63, 308, 572, 822];
+
+// CTA inferior: o interior do botão laranja (direita) é recoberto por um overlay
+// pré-computado (data/assets/dna-work-cta-fill-rendered.png), que reconstrói a
+// área interna do CTA com a cor original do botão, apagando as frases legadas.
+// O logotipo DNA Work, o contorno arredondado do botão e o mascote são preservados.
+const CTA_FILL_PATH = path.join(__dirname, "..", "..", "..", "data", "assets", "dna-work-cta-fill-rendered.png");
+const CTA_FILL_LEFT = 500;
+const CTA_FILL_TOP = 1156;
+
+const CTA_TEXT_X = 530;
+const CTA_TEXT_Y = 1184;
+const CTA_TEXT_W = 340;
+const CTA_TEXT_H = 40;
 
 function cleanText(value) {
   if (value === undefined || value === null) return "";
@@ -75,9 +93,10 @@ async function resizeAndMaskImage(buffer, width, height) {
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const idx = (y * w + x) * channels;
+      const topFactor = Math.min(1, y / Math.max(1, IMAGE_FADE_TOP));
       const hFactor = Math.min(1, x / Math.max(1, IMAGE_FADE_LEFT));
       const vFactor = Math.min(1, (h - 1 - y) / Math.max(1, IMAGE_FADE_BOTTOM));
-      const factor = Math.min(hFactor, vFactor);
+      const factor = Math.min(topFactor, hFactor, vFactor);
       data[idx + 3] = Math.max(0, Math.min(255, Math.round(data[idx + 3] * factor)));
     }
   }
@@ -121,13 +140,17 @@ async function renderTextBox(text, width, height, options = {}) {
     minFontSize
   );
 
-  const totalHeight = lines.length * fontSize * lineHeight;
-  const startY = (height - totalHeight) / 2 + fontSize * 0.85;
+  // Centraliza o bloco de linhas verticalmente na caixa. Cada linha é
+  // desenhada com dominant-baseline="middle", de forma que o centro da
+  // linha fique alinhado ao centro do seu espaçamento vertical.
+  const lineSpacing = fontSize * lineHeight;
+  const blockTop = Math.max(0, (height - lines.length * lineSpacing) / 2);
+  const firstLineCenterY = blockTop + lineSpacing / 2;
 
   const tspans = lines
     .map((line, index) => {
-      const dy = index === 0 ? 0 : fontSize * lineHeight;
-      return `<tspan x="${width / 2}" dy="${dy}" text-anchor="middle" font-family="${escapeXml(fontFamily)}">${escapeXml(line)}</tspan>`;
+      const dy = index === 0 ? 0 : lineSpacing;
+      return `<tspan x="${width / 2}" dy="${dy}" dominant-baseline="middle" text-anchor="middle" font-family="${escapeXml(fontFamily)}">${escapeXml(line)}</tspan>`;
     })
     .join("\n");
 
@@ -135,8 +158,9 @@ async function renderTextBox(text, width, height, options = {}) {
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" overflow="hidden">
   <text
     x="${width / 2}"
-    y="${startY}"
+    y="${firstLineCenterY}"
     text-anchor="middle"
+    dominant-baseline="middle"
     font-size="${fontSize}"
     font-weight="${fontWeight}"
     fill="${fill}"
@@ -182,6 +206,20 @@ async function renderDnaWorkVagas(backgroundBuffer, values = {}) {
     });
     composites.push({ input: textBuffer, left: x, top: BLOCK_Y });
   }
+
+  // CTA inferior: recobre a área interna do botão laranja com o overlay pré-computado
+  // (mesma cor do CTA), apagando as frases legadas. O logotipo, o contorno arredondado
+  // do botão e o mascote à direita permanecem intactos.
+  const ctaFillBuffer = fs.readFileSync(CTA_FILL_PATH);
+  composites.push({ input: ctaFillBuffer, left: CTA_FILL_LEFT, top: CTA_FILL_TOP });
+
+  const ctaTextBuffer = await renderTextBox("Envie seu currículo", CTA_TEXT_W, CTA_TEXT_H, {
+    maxFontSize: 32,
+    minFontSize: 18,
+    maxLines: 1,
+    fontWeight: 800,
+  });
+  composites.push({ input: ctaTextBuffer, left: CTA_TEXT_X, top: CTA_TEXT_Y });
 
   return sharp(backgroundBuffer)
     .resize(WIDTH, HEIGHT, { fit: "fill" })

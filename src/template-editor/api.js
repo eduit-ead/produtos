@@ -43,6 +43,7 @@ const { convertCardToWhatsAppJpeg } = require("../whatsapp-image");
 const xlsxSync = require("../xlsx-sync");
 const { loadCourseBySlug, loadAllCourses, INPUT_FILE } = require("../read-courses");
 const { listCollections, loadCollection, saveCollection, deleteCollection, archiveCollection } = require("../collections/manager");
+const finishedPiecesService = require("../finished-pieces");
 const ExcelJS = require("exceljs");
 const { validateCollection, isSafeRelative, ROOT } = require("../collections/schema");
 const { getDataSource } = require("../data-sources");
@@ -360,6 +361,92 @@ function createRouter() {
         ? 400
         : 500;
       return res.status(status).json({ error: err.message || "Erro ao renderizar WhatsApp." });
+    }
+  });
+
+  // ============================================================
+  // Histórico de peças finalizadas
+  // ============================================================
+
+  router.post("/finished-pieces", express.json({ limit: "2mb" }), async (req, res) => {
+    try {
+      const { templateId, values, runtimeAssets, collectionId, itemId } = req.body || {};
+      const piece = await finishedPiecesService.createFromRender({
+        templateId,
+        values: values || {},
+        runtimeAssets,
+        source: "criar",
+        collectionId,
+        itemId,
+      });
+      res.json({ ok: true, piece });
+    } catch (err) {
+      console.error(err);
+      const status = err.message?.includes("obrigatório") || err.message?.includes("não encontrado") ? 400 : 500;
+      res.status(status).json({ error: err.message || "Erro ao finalizar peça." });
+    }
+  });
+
+  router.get("/finished-pieces", async (req, res) => {
+    try {
+      const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+      const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+      const result = await finishedPiecesService.list({
+        page,
+        limit,
+        query: req.query.q,
+        templateId: req.query.templateId,
+        source: req.query.source,
+        from: req.query.from,
+        to: req.query.to,
+      });
+      res.json(result);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao listar peças finalizadas." });
+    }
+  });
+
+  router.get("/finished-pieces/:id", async (req, res) => {
+    try {
+      const piece = await finishedPiecesService.get(path.basename(req.params.id));
+      if (!piece) return res.status(404).json({ error: "Peça não encontrada." });
+      res.json(piece);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao buscar peça." });
+    }
+  });
+
+  router.delete("/finished-pieces/:id", async (req, res) => {
+    try {
+      const piece = await finishedPiecesService.remove(path.basename(req.params.id));
+      res.json({ ok: true, piece });
+    } catch (err) {
+      console.error(err);
+      const status = err.message?.includes("não encontrada") ? 404 : 500;
+      res.status(status).json({ error: err.message || "Erro ao excluir peça." });
+    }
+  });
+
+  router.post("/finished-pieces/:id/duplicate", async (req, res) => {
+    try {
+      const data = await finishedPiecesService.duplicateData(path.basename(req.params.id));
+      if (!data) return res.status(404).json({ error: "Peça não encontrada." });
+      res.json({ ok: true, ...data });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao duplicar peça." });
+    }
+  });
+
+  router.post("/finished-pieces/migrate", async (req, res) => {
+    try {
+      const result = await finishedPiecesService.migrate();
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message || "Erro ao migrar peças." });
     }
   });
 

@@ -28,6 +28,7 @@ const { getImageBuffer } = require("../image-cache");
 const { convertCardToWhatsAppJpeg } = require("../whatsapp-image");
 const courseService = require("../course-production-service");
 const { resolveItemVisual, resolveBackgroundBufferForItem } = require("./visual-resolver");
+const finishedPiecesService = require("../finished-pieces");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const LEGACY_COLLECTION_ID = "graduacao-cruzeiro";
@@ -674,6 +675,19 @@ async function approveItem(collectionId, slug, { source = "batch", runId = null,
     },
   });
   saveManifest(collectionId, manifest);
+
+  try {
+    await finishedPiecesService.createFromBatchApprovedVisual({
+      collectionId,
+      slug,
+      approvedVisual: getManifestEntry(manifest, slug).approvedVisual,
+      manifest,
+      source: "batch",
+    });
+  } catch (err) {
+    console.warn("Falha ao registrar peça finalizada no histórico:", err.message);
+  }
+
   return getManifestEntry(manifest, slug);
 }
 

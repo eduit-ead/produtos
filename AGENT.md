@@ -221,3 +221,30 @@ Aprovação/rejeição de um item aberto a partir de um lote não refletia ao vo
 - Arquivos alterados: `src/course-production-service.js`, `src/template-editor/api.js`, `src/template-editor/public/{batch.*,cursos.*,home.js,index.html}`.
 - Arquivos novos: `scripts/test-batch-review-persistence.js`.
 - Importação do piloto foi reexecutada para restaurar fundos que haviam sido sobrescritos (motivo externo não identificado); estado final dos três cursos restabelecido com hashes idênticos ao piloto.
+
+## 2026-09-22 — Histórico persistente de peças finalizadas
+
+### Contexto
+As peças geradas individualmente em "Criar imagem" eram baixadas no navegador sem registro no servidor; a Biblioteca só listava assets, templates e bases. A produção em lote já persistia cards aprovados via manifest/approvedVisual, mas sem uma galeria unificada. Era necessário separar assets de criação de peças finalizadas, garantir imutabilidade e permitir busca, filtros, paginação e ações (visualizar, baixar, duplicar, excluir).
+
+### Decisão
+- Criar `src/finished-pieces/finished-pieces-service.js` como serviço dedicado, reutilizando `StorageProvider` e o diretório de catálogo (`output/ai-catalog/finished`).
+- Cada peça finalizada recebe ID único (`fp-{timestamp}-{hash}`), armazena uma cópia imutável do PNG sob a chave `finished/{id}.png` e um registro em `finished/index.json`.
+- O registro contém: id, título, template, data, origem (`criar`, `batch`, `migration`), base/item de origem, valores dos campos, referências dos assets e dimensões. Não armazena imagens em base64.
+- Novos endpoints em `src/template-editor/api.js`: `POST /api/finished-pieces`, `GET /api/finished-pieces`, `GET /api/finished-pieces/:id`, `DELETE /api/finished-pieces/:id`, `POST /api/finished-pieces/:id/duplicate`, `POST /api/finished-pieces/migrate`.
+- Botão "Finalizar e salvar" em `criar.html`/`criar.js`; a duplicação abre `criar.html?duplicate=ID` preenchendo template e valores.
+- Nova aba "Peças finalizadas" como primeira aba da Biblioteca, com busca, filtros (template, origem, período), ordenação e paginação.
+- Integração na aprovação de lotes (`generic-production-service.js#approveItem`): cria registro de peça `source: "batch"` a partir do `approvedVisual`, copiando o card aprovado para `finished/`, preservando o manifesto original.
+- Migração idempotente dos manifestos de lote existentes via `/api/finished-pieces/migrate`; ignora itens sem card, não importa fotos/backgrounds isolados e não apaga arquivos antigos.
+- Exclusão de peça remove apenas a cópia final e o registro; assets compartilhados e manifestos permanecem intactos.
+- Renderizadores da DNA Work e Cruzeiro, geração OpenAI e fluxo de aprovação de fotografias não foram alterados.
+
+### Alternativas descartadas
+- Criar um banco de dados separado ou novo sistema de armazenamento: descartado; reaproveitou-se `StorageProvider` e `output/ai-catalog` já usados pela produção em lote.
+- Referenciar diretamente os cards aprovados do lote sem copiar: descartado, pois reexecuções futuras do mesmo slug poderiam sobrescrever o arquivo e quebrar a imutabilidade do histórico.
+- Migrar arquivos soltos de `output/final/` e `output/whatsapp/`: descartado por falta de metadados verificáveis; migrou-se apenas manifestos de lote.
+
+### Impacto
+- Arquivos novos: `src/finished-pieces/finished-pieces-service.js`, `src/finished-pieces/index.js`, `scripts/test-finished-pieces-stage1.js`, `scripts/test-finished-pieces-stage2.js`.
+- Arquivos alterados: `src/template-editor/api.js`, `src/template-editor/public/criar.html`, `src/template-editor/public/criar.js`, `src/template-editor/public/biblioteca.html`, `src/template-editor/public/biblioteca.js`, `src/production/generic-production-service.js`, `AGENT.md`.
+- Testes: `scripts/test-finished-pieces-stage1.js` e `scripts/test-finished-pieces-stage2.js` passam; `scripts/test-dna-work-template.js` continua passando.

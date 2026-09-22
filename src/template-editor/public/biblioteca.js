@@ -2,8 +2,9 @@ const state = {
   collections: [],
   templates: [],
   assets: [],
+  finished: { items: [], total: 0, page: 1, limit: 12 },
   baseStats: {},
-  activeTab: "bases",
+  activeTab: "finished",
   showArchived: false,
   viewItemsId: null,
   viewItemsRecords: null,
@@ -16,7 +17,7 @@ async function init() {
 
   const params = new URLSearchParams(window.location.search);
   const requested = params.get("tab");
-  if (requested && ["bases", "templates", "assets"].includes(requested)) {
+  if (requested && ["finished", "bases", "templates", "assets"].includes(requested)) {
     switchTab(requested);
   }
   const baseParam = params.get("base");
@@ -32,6 +33,13 @@ async function init() {
 
   byId("assetUpload").addEventListener("change", handleAssetUpload);
   byId("assetSearch").addEventListener("input", renderAssets);
+
+  byId("finishedSearch").addEventListener("keydown", (e) => { if (e.key === "Enter") loadFinished(); });
+  byId("btnFinishedFilter").addEventListener("click", loadFinished);
+  byId("finishedTemplateFilter").addEventListener("change", loadFinished);
+  byId("finishedSourceFilter").addEventListener("change", loadFinished);
+  byId("finishedFrom").addEventListener("change", loadFinished);
+  byId("finishedTo").addEventListener("change", loadFinished);
 }
 
 function initTabs() {
@@ -44,6 +52,7 @@ function switchTab(tab) {
   state.activeTab = tab;
   document.querySelectorAll(".tab").forEach((el) => el.classList.toggle("active", el.dataset.tab === tab));
   document.querySelectorAll(".tab-panel").forEach((el) => el.classList.toggle("active", el.id === `tab-${tab}`));
+  if (tab === "finished") renderFinished();
   if (tab === "bases") renderBases();
   if (tab === "templates") renderTemplates();
   if (tab === "assets") renderAssets();
@@ -59,11 +68,13 @@ async function loadAll() {
     state.collections = collections;
     state.templates = templates;
     state.assets = assets;
-    await loadBaseStats();
+    populateFinishedTemplateFilter();
+    await Promise.all([loadFinished(), loadBaseStats()]);
     renderBases();
     renderTemplates();
     renderAssets();
-    setStatus("status", "ready", `${collections.length} bases · ${templates.length} templates · ${assets.length} assets`);
+    if (state.activeTab === "finished") renderFinished();
+    setStatus("status", "ready", `${collections.length} bases · ${templates.length} templates · ${assets.length} assets · ${state.finished.total} peças finalizadas`);
 
     if (state.viewItemsId) {
       openItemsModal(state.viewItemsId);
@@ -71,6 +82,136 @@ async function loadAll() {
   } catch (err) {
     handleApiError(err, "status");
   }
+}
+
+function populateFinishedTemplateFilter() {
+  const select = byId("finishedTemplateFilter");
+  if (!select) return;
+  select.innerHTML = `<option value="">Todos os templates</option>` +
+    state.templates.map((t) => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name || t.id)}</option>`).join("");
+}
+
+async function loadFinished(page = state.finished.page) {
+  try {
+    const q = byId("finishedSearch").value.trim();
+    const templateId = byId("finishedTemplateFilter").value;
+    const source = byId("finishedSourceFilter").value;
+    const from = byId("finishedFrom").value;
+    const to = byId("finishedTo").value;
+    const params = new URLSearchParams({ page: String(page), limit: String(state.finished.limit) });
+    if (q) params.set("q", q);
+    if (templateId) params.set("templateId", templateId);
+    if (source) params.set("source", source);
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    const result = await api.json(`/api/finished-pieces?${params.toString()}`);
+    state.finished = { ...state.finished, ...result, page };
+    if (state.activeTab === "finished") renderFinished();
+    byId("finishedCount").textContent = `${state.finished.total} peça(s) finalizada(s)`;
+  } catch (err) {
+    handleApiError(err, "status");
+  }
+}
+
+function sourceLabel(source) {
+  const map = { criar: "Criar imagem", batch: "Produção em lote", migration: "Migração" };
+  return map[source] || source;
+}
+
+function renderFinished() {
+  const container = byId("finishedList");
+  const { items, total, page, limit } = state.finished;
+  if (items.length === 0) {
+    container.innerHTML = `<p class="hint">Nenhuma peça finalizada encontrada.</p>`;
+    byId("finishedPagination").innerHTML = "";
+    return;
+  }
+  container.innerHTML = "";
+  for (const piece of items) {
+    const card = document.createElement("div");
+    card.className = "card finished-card";
+    card.innerHTML = `
+      <div class="thumb"><img src="${escapeHtml(piece.url)}" alt="${escapeHtml(piece.title)}" loading="lazy"></div>
+      <div class="name" title="${escapeHtml(piece.title)}">${escapeHtml(piece.title)}</div>
+      <div class="meta">${escapeHtml(piece.templateName || piece.templateId)} · ${sourceLabel(piece.source)}</div>
+      <div class="meta">${formatDate(piece.createdAt)} · ${piece.dimensions?.width || 0}×${piece.dimensions?.height || 0} px</div>
+      <div class="actions">
+        <button type="button" class="btn-secondary view-piece" data-id="${escapeHtml(piece.id)}">Visualizar</button>
+        <a class="btn-secondary" href="${escapeHtml(piece.url)}?download=1" download="${escapeHtml((piece.title || piece.id).replace(/[^\w.-]/g, "_"))}.png">Baixar</a>
+        <a class="btn-secondary" href="/criar.html?duplicate=${encodeURIComponent(piece.id)}">Duplicar</a>
+        <button type="button" class="btn-danger delete-piece" data-id="${escapeHtml(piece.id)}">Excluir</button>
+      </div>
+    `;
+    container.appendChild(card);
+  }
+  document.querySelectorAll(".view-piece").forEach((btn) => btn.addEventListener("click", () => openFinishedPieceModal(btn.dataset.id)));
+  document.querySelectorAll(".delete-piece").forEach((btn) => btn.addEventListener("click", () => deleteFinishedPiece(btn.dataset.id)));
+  renderFinishedPagination(total, page, limit);
+}
+
+function renderFinishedPagination(total, page, limit) {
+  const pages = Math.max(1, Math.ceil(total / limit));
+  const container = byId("finishedPagination");
+  if (pages <= 1) {
+    container.innerHTML = "";
+    return;
+  }
+  let html = `<span>Página ${page} de ${pages}</span>`;
+  if (page > 1) html += `<button type="button" class="btn-ghost prev-page">&larr; Anterior</button>`;
+  if (page < pages) html += `<button type="button" class="btn-ghost next-page">Próxima &rarr;</button>`;
+  container.innerHTML = html;
+  container.querySelector(".prev-page")?.addEventListener("click", () => loadFinished(page - 1));
+  container.querySelector(".next-page")?.addEventListener("click", () => loadFinished(page + 1));
+}
+
+async function openFinishedPieceModal(id) {
+  try {
+    setStatus("status", "loading", "Carregando peça...");
+    const piece = await api.json(`/api/finished-pieces/${encodeURIComponent(id)}`);
+    const body = document.createElement("div");
+    body.innerHTML = `
+      <p><img src="${escapeHtml(piece.url)}" alt="${escapeHtml(piece.title)}" style="width:100%;border-radius:8px"></p>
+      <div class="meta">Template: ${escapeHtml(piece.templateName || piece.templateId)}</div>
+      <div class="meta">Origem: ${sourceLabel(piece.source)}</div>
+      <div class="meta">Finalizado em: ${formatDate(piece.createdAt)}</div>
+      <div class="meta">Dimensões: ${piece.dimensions?.width || 0}×${piece.dimensions?.height || 0} px</div>
+      ${piece.collectionId ? `<div class="meta">Base: ${escapeHtml(piece.collectionTitle || piece.collectionId)} · Item: ${escapeHtml(piece.itemId || "—")}</div>` : ""}
+    `;
+    createModal({
+      title: piece.title || "Peça finalizada",
+      body,
+      footer: [
+        { label: "Fechar", className: "btn-secondary", close: true },
+        { label: "Baixar", className: "btn-primary", close: false, onClick: () => downloadBlobUrl(piece.url, `${(piece.title || piece.id).replace(/[^\w.-]/g, "_")}.png`) },
+      ],
+    });
+    setStatus("status", "ready", "Peça carregada.");
+  } catch (err) {
+    handleApiError(err, "status");
+  }
+}
+
+async function deleteFinishedPiece(id) {
+  const piece = state.finished.items.find((p) => p.id === id);
+  if (!piece) return;
+  if (!confirm(`Excluir "${piece.title}" do histórico de peças finalizadas?\n\nO arquivo final será removido, mas os assets compartilhados não serão apagados.`)) return;
+  try {
+    setStatus("status", "loading", "Excluindo peça...");
+    await api.json(`/api/finished-pieces/${encodeURIComponent(id)}`, { method: "DELETE" });
+    setStatus("status", "success", "Peça excluída.");
+    await loadFinished();
+  } catch (err) {
+    handleApiError(err, "status");
+  }
+}
+
+function downloadBlobUrl(url, filename) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 async function loadBaseStats() {

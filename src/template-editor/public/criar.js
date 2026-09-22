@@ -54,6 +54,36 @@ async function loadStudioSystemStatus() {
 async function loadTemplates() {
   state.templates = await api.json("/api/templates");
   renderTemplateCards();
+
+  const params = new URLSearchParams(window.location.search);
+  const duplicateId = params.get("duplicate");
+  const templateId = params.get("template");
+
+  if (duplicateId) {
+    try {
+      const data = await api.json(`/api/finished-pieces/${encodeURIComponent(duplicateId)}/duplicate`);
+      const tpl = state.templates.find((t) => t.id === data.templateId);
+      if (tpl) {
+        await selectTemplate(tpl.id);
+        state.values = { ...state.values, ...(data.values || {}) };
+        buildForm();
+        updateAssetSelectors();
+        updateBackgroundInputs();
+        updateFinalPrompt();
+        scheduleRender();
+      } else {
+        setStatus("status", "warning", "Template original não encontrado. Escolha um template para continuar.");
+      }
+    } catch (err) {
+      handleApiError(err, "status");
+    }
+    return;
+  }
+
+  if (templateId) {
+    const tpl = state.templates.find((t) => t.id === templateId);
+    if (tpl) await selectTemplate(tpl.id);
+  }
 }
 
 async function loadAssets() {
@@ -500,6 +530,7 @@ async function renderPreview() {
   state.previewAbort = controller;
 
   const hasRequired = validateRequired();
+  byId("btnSave").disabled = !hasRequired;
   byId("btnDownload").disabled = !hasRequired;
   byId("btnDownloadWhatsapp").disabled = !hasRequired;
   if (!hasRequired) {
@@ -593,6 +624,29 @@ async function downloadWhatsapp() {
     });
     downloadBlob(blob, `${slugify(state.selectedTemplate.name || state.selectedTemplate.id)}-whatsapp.jpg`);
     setStatus("status", "success", "WhatsApp baixado.");
+  } catch (err) {
+    handleApiError(err, "status");
+  }
+}
+
+async function saveFinishedPiece() {
+  if (!validateRequired()) return;
+  setStatus("status", "loading", "Finalizando e salvando...");
+  try {
+    const payload = getRenderPayload();
+    const result = await api.json(`/api/finished-pieces`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        templateId: state.selectedTemplate.id,
+        values: payload.values,
+        runtimeAssets: payload.runtimeAssets,
+        collectionId: state.selectedCollectionId,
+        itemId: state.selectedItemId,
+      }),
+    });
+    setStatus("status", "success", `Peça "${result.piece.title}" salva na Biblioteca.`);
+    byId("status").insertAdjacentHTML("afterend", `<p class="hint">Ver em <a href="/biblioteca.html?tab=finished">Peças finalizadas</a>.</p>`);
   } catch (err) {
     handleApiError(err, "status");
   }
@@ -1199,7 +1253,7 @@ async function init() {
   registerNav("criar");
   await loadStudioSystemStatus();
   loadCollections();
-  loadTemplates();
+  await loadTemplates();
   byId("btnBack").addEventListener("click", showSelect);
   byId("btnReset").addEventListener("click", () => {
     state.values = getDefaultValues(state.selectedTemplate);
@@ -1210,6 +1264,7 @@ async function init() {
     updateFinalPrompt();
     scheduleRender();
   });
+  byId("btnSave").addEventListener("click", saveFinishedPiece);
   byId("btnDownload").addEventListener("click", downloadPng);
   byId("btnDownloadWhatsapp").addEventListener("click", downloadWhatsapp);
 }
