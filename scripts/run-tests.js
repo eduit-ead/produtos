@@ -26,6 +26,7 @@ const tests = [
   "test-batch-entrypoint.js",
   "test-studio-ai-background.js",
   "test-studio-batch-visual-integration.js",
+  "test-dna-work-template.js",
 ];
 
 let failed = false;

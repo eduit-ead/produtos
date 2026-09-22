@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "id": "dna-work-vagas",
+  "name": "DNA Work - Temos Vagas",
+  "rendererType": "dna-work-vagas",
+  "canvas": {
+    "width": 1080,
+    "height": 1350,
+    "background": "#0a1a35"
+  },
+  "variables": [
+    {
+      "key": "titulo_vaga",
+      "label": "Título da vaga",
+      "type": "string",
+      "defaultValue": "Vaga disponível",
+      "required": true
+    },
+    {
+      "key": "regime",
+      "label": "Regime",
+      "type": "string",
+      "defaultValue": "CLT",
+      "required": false
+    },
+    {
+      "key": "salario",
+      "label": "Salário",
+      "type": "string",
+      "defaultValue": "A combinar",
+      "required": false
+    },
+    {
+      "key": "beneficio",
+      "label": "Benefício",
+      "type": "string",
+      "defaultValue": "A combinar",
+      "required": false
+    },
+    {
+      "key": "local",
+      "label": "Local",
+      "type": "string",
+      "defaultValue": "-",
+      "required": false
+    },
+    {
+      "key": "imagem_principal",
+      "label": "Imagem principal",
+      "type": "image",
+      "defaultValue": "",
+      "required": false
+    }
+  ],
+  "assets": [
+    "dna-work-vagas-bg.jpg"
+  ],
+  "layers": [],
+  "metadata": {
+    "createdAt": "2026-09-22T12:46:00.000Z",
+    "updatedAt": "2026-09-22T12:46:00.000Z"
+  }
+}

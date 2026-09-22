@@ -14,6 +14,7 @@ const { RUNTIME } = require("../../config/runtime");
 const { renderTemplate } = require("./index");
 const { loadAssetBuffer } = require("./utils");
 const { renderCourseCard, prepareBackgroundBuffer } = require("../../render-card");
+const { renderDnaWorkVagasTemplate } = require("./dna-work-vagas");
 
 async function renderSavedTemplate(templateId, values = {}, runtimeAssets = {}) {
   const filePath = path.join(RUNTIME.templatesDir, `${templateId}.json`);
@@ -45,6 +46,10 @@ async function renderSavedTemplate(templateId, values = {}, runtimeAssets = {}) 
     };
 
     return renderCourseCard(prepared, course);
+  }
+
+  if (template.rendererType === "dna-work-vagas") {
+    return renderDnaWorkVagasTemplate(values, runtimeAssets);
   }
 
   return renderTemplate(template, values, { runtimeAssets });

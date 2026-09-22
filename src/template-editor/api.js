@@ -164,7 +164,12 @@ function createRouter() {
       .filter((f) => f.endsWith(".json"))
       .map((f) => {
         const id = path.basename(f, ".json");
-        return { id, name: id };
+        try {
+          const data = JSON.parse(fs.readFileSync(path.join(TEMPLATES_DIR, f), "utf8"));
+          return { id, name: data.name || id, rendererType: data.rendererType || null };
+        } catch {
+          return { id, name: id, rendererType: null };
+        }
       });
     res.json(files);
   });
