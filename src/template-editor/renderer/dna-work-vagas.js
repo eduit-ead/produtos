@@ -14,22 +14,22 @@ const HEIGHT = 1350;
 
 // Área da imagem principal (topo direito)
 const IMAGE_X = 540;
-const IMAGE_Y = 90;
+const IMAGE_Y = 80;
 const IMAGE_W = 510;
-const IMAGE_H = 650;
+const IMAGE_H = 660;
 const IMAGE_FADE_LEFT = 160;
-const IMAGE_FADE_BOTTOM = 180;
+const IMAGE_FADE_BOTTOM = 200;
 
 // Caixa arredondada do título da vaga
-const TITLE_X = 110;
-const TITLE_Y = 560;
-const TITLE_W = 340;
-const TITLE_H = 70;
+const TITLE_X = 115;
+const TITLE_Y = 558;
+const TITLE_W = 330;
+const TITLE_H = 72;
 
 // 4 blocos de informação (valores abaixo dos rótulos do fundo)
 const BLOCK_W = 200;
-const BLOCK_H = 70;
-const BLOCK_Y = 980;
+const BLOCK_H = 88;
+const BLOCK_Y = 985;
 const BLOCK_XS = [60, 300, 545, 730];
 
 function cleanText(value) {
@@ -132,7 +132,7 @@ async function renderTextBox(text, width, height, options = {}) {
     .join("\n");
 
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" overflow="hidden">
   <text
     x="${width / 2}"
     y="${startY}"
@@ -163,8 +163,8 @@ async function renderDnaWorkVagas(backgroundBuffer, values = {}) {
 
   // Título da vaga
   const titleBuffer = await renderTextBox(resolved.titulo_vaga, TITLE_W, TITLE_H, {
-    maxFontSize: 56,
-    minFontSize: 28,
+    maxFontSize: 44,
+    minFontSize: 22,
     maxLines: 2,
     fontWeight: 800,
   });
@@ -175,8 +175,8 @@ async function renderDnaWorkVagas(backgroundBuffer, values = {}) {
   for (let i = 0; i < blockValues.length; i++) {
     const x = BLOCK_XS[i];
     const textBuffer = await renderTextBox(blockValues[i], BLOCK_W, BLOCK_H, {
-      maxFontSize: 32,
-      minFontSize: 20,
+      maxFontSize: 30,
+      minFontSize: 18,
       maxLines: 2,
       fontWeight: 700,
     });

@@ -382,7 +382,6 @@ async function renderPreview() {
   byId("btnDownloadWhatsapp").disabled = !hasRequired;
   if (!hasRequired) {
     setStatus("status", "warning", "Preencha os campos obrigatórios.");
-    return;
   }
 
   try {
