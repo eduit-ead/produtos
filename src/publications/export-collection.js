@@ -187,11 +187,18 @@ function toCsv(keys, rows) {
   return `\uFEFF${lines.join("\r\n")}`;
 }
 
+function worksheetValue(value) {
+  // Célula vazia não pode ir como string "". O ExcelJS grava isso como
+  // shared string e o Excel mostra o índice (por exemplo 72) no lugar do vazio.
+  if (value == null || value === "") return null;
+  return value;
+}
+
 async function toXlsx(keys, rows) {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("Coleção");
   sheet.addRow(keys.map((key) => headerLabel(key)));
-  for (const row of rows) sheet.addRow(keys.map((key) => row[key]));
+  for (const row of rows) sheet.addRow(keys.map((key) => worksheetValue(row[key])));
   return workbook.xlsx.writeBuffer();
 }
 

@@ -162,6 +162,56 @@ function request(port, method, urlPath, { body, cookie } = {}) {
   });
 }
 
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    if (quoted) {
+      if (char === "\"") {
+        if (text[i + 1] === "\"") {
+          cell += "\"";
+          i += 1;
+        } else quoted = false;
+      } else cell += char;
+    } else if (char === "\"") quoted = true;
+    else if (char === ";") {
+      row.push(cell);
+      cell = "";
+    } else if (char === "\n") {
+      if (cell.endsWith("\r")) cell = cell.slice(0, -1);
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+    } else cell += char;
+  }
+  if (cell.length || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows;
+}
+
+function columnLetter(index) {
+  let n = index;
+  let letters = "";
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters;
+}
+
+async function xlsxSheetXml(buffer) {
+  const JSZip = require("jszip");
+  const zip = await JSZip.loadAsync(buffer);
+  return zip.file("xl/worksheets/sheet1.xml").async("string");
+}
+
 function piece(id, itemId, fileKey, collectionId = "lote-teste") {
   return { id, title: id, collectionId, itemId, fileKey, createdAt: "2026-01-01T00:00:00.000Z" };
 }
@@ -345,6 +395,14 @@ function piece(id, itemId, fileKey, collectionId = "lote-teste") {
   assert.equal(afterReplace.version, 2);
   assert.equal((await publications.currentPublication("lote-teste", "escolha")).version, 1);
 
+  const publicUrl = "https://bwipo.example/api/public/images/graduacao-cruzeiro/administracao";
+  await repo.patchRecordFields("graduacao-cruzeiro", "administracao", {
+    imagem_url: publicUrl,
+    imagem_status: "publicada",
+    imagem_publicada_em: "2026-09-23T12:00:00.000Z",
+    duracao: "72",
+  });
+
   const exported = await collectionExport.exportCollection("graduacao-cruzeiro", "xlsx");
   assert.equal(exported.total, 128);
   assert.equal(exported.report.filled, 2);
@@ -369,6 +427,17 @@ function piece(id, itemId, fileKey, collectionId = "lote-teste") {
   const csv = second.body.toString("utf8");
   assert.match(csv.split("\r\n")[0], /Descrição curta;.*URL da imagem;Status da imagem;Publicada em/);
   assert.match(csv, /"Curta ADM\nlinha 2 — ção"/);
+  const csvRows = parseCsv(csv.replace(/^\uFEFF/, ""));
+  const csvHeader = csvRows[0];
+  const csvAdm = csvRows.find((row) => row[csvHeader.indexOf("course_id")] === "9001");
+  const csvEmpty = csvRows.find((row) => row[csvHeader.indexOf("course_id")] === "7777");
+  assert.equal(csvAdm[csvHeader.indexOf("URL da imagem")], publicUrl);
+  assert.equal(csvAdm[csvHeader.indexOf("Status da imagem")], "publicada");
+  assert.equal(csvAdm[csvHeader.indexOf("Publicada em")], "2026-09-23T12:00:00.000Z");
+  assert.equal(csvAdm[csvHeader.indexOf("duracao")], "72");
+  assert.equal(csvEmpty[csvHeader.indexOf("URL da imagem")], "");
+  assert.equal(csvEmpty[csvHeader.indexOf("Status da imagem")], "");
+  assert.equal(csvEmpty[csvHeader.indexOf("Publicada em")], "");
 
   const readBack = new ExcelJS.Workbook();
   await readBack.xlsx.load(exported.body);
@@ -384,6 +453,26 @@ function piece(id, itemId, fileKey, collectionId = "lote-teste") {
   assert.equal(values.filter((value) => value === "Curta ADM\nlinha 2 — ção").length, 1);
   assert.equal(values.includes("Descrição longa ADM"), false);
   assert.equal(values.filter((value) => value === "Texto já editado no sistema").length, 1);
+  const courseCol = headers.indexOf("course_id") + 1;
+  const imageCols = ["URL da imagem", "Status da imagem", "Publicada em"].map((name) => headers.indexOf(name) + 1);
+  let publishedRow = 0;
+  let emptyRow = 0;
+  out.eachRow((row, number) => {
+    const courseId = String(row.getCell(courseCol).value || "");
+    if (courseId === "9001") publishedRow = number;
+    if (courseId === "7777") emptyRow = number;
+  });
+  assert.equal(out.getRow(publishedRow).getCell(imageCols[0]).value, publicUrl);
+  assert.equal(out.getRow(publishedRow).getCell(imageCols[1]).value, "publicada");
+  assert.equal(out.getRow(publishedRow).getCell(imageCols[2]).value, "2026-09-23T12:00:00.000Z");
+  assert.equal(out.getRow(publishedRow).getCell(headers.indexOf("duracao") + 1).value, "72");
+  for (const col of imageCols) assert.equal(out.getRow(emptyRow).getCell(col).value, null);
+  const sheetXml = await xlsxSheetXml(exported.body);
+  for (const col of imageCols) {
+    const ref = `${columnLetter(col)}${emptyRow}`;
+    assert.equal(sheetXml.includes(`r="${ref}"`), false, ref);
+  }
+  assert.match(sheetXml, new RegExp(`r="${columnLetter(imageCols[0])}${publishedRow}"`));
 
   const { createRouter } = require("../src/template-editor/api");
   const { requireAuth } = require("../src/auth/middleware");
