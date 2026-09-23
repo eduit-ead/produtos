@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Importar dados do projeto</title>
+  <link rel="icon" href="/assets/favicon.png" type="image/png">
+  <link rel="stylesheet" href="/shared.css">
+</head>
+<body>
+  <header id="appHeader" class="app-header"></header>
+  <main class="container">
+    <h1 class="page-title">Importar dados do projeto</h1>
+    <p class="page-subtitle">Envia o ZIP gerado no Windows e restaura templates, assets, planilhas e o histórico no volume persistente.</p>
+
+    <section class="card">
+      <div class="field-group">
+        <label for="zipFile">Arquivo ZIP</label>
+        <input type="file" id="zipFile" accept=".zip,application/zip">
+        <div class="hint">Use o pacote criado por <code>node scripts/export-migration.js</code>. O arquivo não é convertido para base64.</div>
+      </div>
+      <div class="field-group">
+        <label>
+          <input type="checkbox" id="confirmPolicy">
+          Se um arquivo do volume for diferente do ZIP, guardar backup e usar a versão do Windows.
+        </label>
+        <div class="hint">Arquivos idênticos são ignorados. Repetir a importação não duplica o histórico.</div>
+      </div>
+      <button type="button" class="btn-primary" id="startImport" disabled>Importar</button>
+      <p id="progressText" class="hint"></p>
+      <progress id="progressBar" max="100" value="0" style="width:100%"></progress>
+      <ul id="errorList"></ul>
+      <pre id="resultBox" class="hint"></pre>
+    </section>
+  </main>
+  <script src="/shared.js"></script>
+  <script src="/migracao.js"></script>
+</body>
+</html>

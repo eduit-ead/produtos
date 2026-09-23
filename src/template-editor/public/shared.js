@@ -270,6 +270,7 @@ function registerNav(active) {
       <a href="/criar.html" class="${active === "criar" ? "active" : ""}">Criar imagem</a>
       <a href="/batch.html" class="${active === "lote" ? "active" : ""}">Produção em lote</a>
       <a href="/biblioteca.html" class="${active === "biblioteca" ? "active" : ""}">Biblioteca</a>
+      <a href="/migracao.html" class="${active === "migracao" ? "active" : ""}">Migração</a>
       <a href="#" id="logoutLink" class="nav-logout">Sair</a>
     </nav>
   `;

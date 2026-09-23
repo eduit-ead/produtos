@@ -15,6 +15,7 @@ const { validateAuthConfig, authDisabled } = require("../auth/config");
 const authRoutes = require("../auth/routes");
 const { requireAuth, isAuthenticated } = require("../auth/middleware");
 const { createRouter } = require("./api");
+const { createMigrationRouter } = require("../migration/routes");
 
 // Garante diretórios de runtime e copia defaults quando em volume externo.
 seedRuntimeDefaults();
@@ -71,6 +72,7 @@ app.use("/api", (req, res, next) => {
   requireAuth(req, res, next);
 });
 
+app.use("/api/admin/migration", createMigrationRouter());
 app.use("/api", createRouter());
 
 // Protege páginas HTML antes de servir estáticos.
