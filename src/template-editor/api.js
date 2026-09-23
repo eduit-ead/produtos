@@ -1025,7 +1025,7 @@ function createRouter() {
     }
   });
 
-  router.post("/collections/:id/download", async (req, res) => {
+  router.post("/collections/:id/download", express.json(), async (req, res) => {
     try {
       const file = await collectionExport.exportCollection(req.params.id, req.body?.format);
       res.setHeader("Content-Type", file.contentType);

@@ -4,6 +4,7 @@
  */
 
 process.env.AUTH_DISABLED = "false";
+process.env.APP_SESSION_SECRET = "test-session-secret-32chars-minimum";
 process.env.DATA_SOURCE = "postgres";
 process.env.ALLOW_TEST_DATABASE = "1";
 process.env.DATABASE_URL = "postgres://bwipoart_user:senha@localhost:5432/bwipoart_test";
@@ -132,22 +133,32 @@ function listen(app) {
   });
 }
 
-function request(port, method, urlPath) {
+function request(port, method, urlPath, { body, cookie } = {}) {
+  const payload = body == null ? null : Buffer.from(JSON.stringify(body));
+  const headers = {};
+  if (payload) {
+    headers["Content-Type"] = "application/json";
+    headers["Content-Length"] = String(payload.length);
+  }
+  if (cookie) headers.Cookie = cookie;
   return new Promise((resolve, reject) => {
     const req = http.request({
       hostname: "127.0.0.1",
       port,
       path: urlPath,
       method,
-      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      headers,
     }, (res) => {
       const chunks = [];
       res.on("data", (chunk) => chunks.push(chunk));
-      res.on("end", () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString("utf8") }));
+      res.on("end", () => resolve({
+        status: res.statusCode,
+        headers: res.headers,
+        body: Buffer.concat(chunks),
+      }));
     });
     req.on("error", reject);
-    if (method === "POST") req.end("{}");
-    else req.end();
+    req.end(payload || undefined);
   });
 }
 
@@ -376,19 +387,55 @@ function piece(id, itemId, fileKey, collectionId = "lote-teste") {
 
   const { createRouter } = require("../src/template-editor/api");
   const { requireAuth } = require("../src/auth/middleware");
+  const { cookieName, sessionSecret } = require("../src/auth/config");
+  const cookie = require("cookie");
+  const signature = require("cookie-signature");
+  const session = cookie.serialize(cookieName, signature.sign(JSON.stringify({
+    authenticated: true,
+    expiresAt: Date.now() + 60_000,
+  }), sessionSecret), { path: "/" });
   const app = express();
-  app.use(express.json());
   app.use("/api", (req, res, next) => {
     if (req.path === "/health" || req.path.startsWith("/auth/")) return next();
     requireAuth(req, res, next);
   });
   app.use("/api", createRouter());
   const server = await listen(app);
-  const previewDenied = await request(server.address().port, "GET", "/api/collections/graduacao-cruzeiro/publish-preview");
-  const downloadDenied = await request(server.address().port, "POST", "/api/collections/graduacao-cruzeiro/download");
-  server.close();
+  const port = server.address().port;
+  const previewDenied = await request(port, "GET", "/api/collections/graduacao-cruzeiro/publish-preview");
+  const downloadDenied = await request(port, "POST", "/api/collections/graduacao-cruzeiro/download", { body: { format: "xlsx" } });
   assert.equal(previewDenied.status, 401);
   assert.equal(downloadDenied.status, 401);
+
+  for (const format of ["xlsx", "csv"]) {
+    const response = await request(port, "POST", "/api/collections/graduacao-cruzeiro/download", {
+      body: { format },
+      cookie: session,
+    });
+    assert.equal(response.status, 200, response.body.toString("utf8"));
+    assert.match(response.headers["content-disposition"], new RegExp(`graduacao-cruzeiro-colecao\\.${format}`));
+    if (format === "csv") {
+      assert.match(response.headers["content-type"], /text\/csv/);
+      assert.equal(response.body[0], 0xEF);
+      const csv = response.body.toString("utf8");
+      assert.match(csv.split("\r\n")[0], /Descrição curta;.*URL da imagem;Status da imagem;Publicada em/);
+      assert.match(csv, /"Curta ADM\nlinha 2 — ção"/);
+    } else {
+      assert.match(response.headers["content-type"], /spreadsheetml/);
+      const readBack = new ExcelJS.Workbook();
+      await readBack.xlsx.load(response.body);
+      const out = readBack.getWorksheet("Coleção");
+      assert.equal(out.rowCount, 129);
+      const headers = out.getRow(1).values.slice(1);
+      assert.ok(headers.includes("Descrição curta"));
+      assert.ok(headers.includes("URL da imagem"));
+      const descIndex = headers.indexOf("Descrição curta") + 1;
+      const values = [];
+      out.eachRow((row, number) => { if (number > 1) values.push(row.getCell(descIndex).value); });
+      assert.equal(values.filter((value) => value === "Curta ADM\nlinha 2 — ção").length, 1);
+    }
+  }
+  server.close();
 
   assert.equal(crypto.createHash("sha256").update(fs.readFileSync(SOURCE_XLSX)).digest("hex"), sourceHash);
   fs.unlinkSync(FIXTURE);
