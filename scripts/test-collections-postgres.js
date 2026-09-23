@@ -257,10 +257,11 @@ function outputColumns() {
     await bind("bwipoart_test");
     const first = await applyMigrations();
     const second = await applyMigrations();
-    assert.deepEqual(first.applied, ["001_collections_and_records"]);
+    assert.deepEqual(first.applied, ["001_collections_and_records", "002_published_images"]);
     assert.deepEqual(second.applied, []);
     assert.ok(second.skipped.includes("001_collections_and_records"));
-    assert.equal(memory.state.schemaSql, 1);
+    assert.ok(second.skipped.includes("002_published_images"));
+    assert.equal(memory.state.schemaSql, 2);
     const migrationSql = fs.readFileSync(path.join(ROOT, "migrations", "001_collections_and_records.sql"), "utf8");
     assert.match(migrationSql, /JSONB/);
     assert.match(migrationSql, /REFERENCES collections/);

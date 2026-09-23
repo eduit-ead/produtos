@@ -29,6 +29,7 @@ const tests = [
   "test-dna-work-template.js",
   "test-database-connection.js",
   "test-collections-postgres.js",
+  "test-image-publish.js",
 ];
 
 let failed = false;

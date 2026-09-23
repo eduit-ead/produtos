@@ -267,3 +267,21 @@ As coleções e os registros viviam em JSON e planilhas no volume persistente. A
 ### Impacto
 - Arquivos novos: `migrations/001_collections_and_records.sql`, `src/db/collections-repository.js`, `src/db/migrate.js`, `src/db/import-collections.js`, `src/collections/store.js`, `scripts/apply-db-migrations.js`, `scripts/migrate-collections-to-postgres.js`.
 - As telas passam a consultar o PostgreSQL somente com `DATA_SOURCE=postgres`. Renderizadores, peças finalizadas e publicação de imagens não mudam de formato.
+
+## 2026-09-23 — URL permanente para imagem publicada
+
+### Contexto
+Cada registro precisa de um endereço público estável para a imagem final, com troca manual da peça sem mudar o link e sem sobrescrever o histórico.
+
+### Decisão
+- Uma publicação por `collection_id` + `item_id` em `published_images`, com versões em `published_image_versions`.
+- A URL é `/api/public/images/{collectionId}/{itemId}`. A substituição grava um arquivo novo e mantém `public_url` e `imagem_url`.
+- Só essa rota é pública. Publicar continua atrás da autenticação já existente. O PNG do histórico não é alterado.
+
+### Alternativas descartadas
+- Colocar a versão ou a data na URL: descartado porque o endereço deixaria de ser permanente.
+- Sobrescrever o arquivo publicado: descartado porque uma falha poderia apagar a imagem que a URL ainda precisa servir.
+
+### Impacto
+- Migration `002_published_images.sql`, serviço `src/publications/service.js` e ação Publicar na Biblioteca.
+- A exportação XLSX passa a incluir `imagem_url` porque o campo fica no JSON do registro. `cursos.xlsx` não é substituído.

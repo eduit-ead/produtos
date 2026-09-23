@@ -113,6 +113,27 @@ async function loadFinished(page = state.finished.page) {
   }
 }
 
+function publishButtonLabel(piece) {
+  if (!piece.publication) return "Publicar";
+  if (piece.publication.finishedPieceId === piece.id) return "Copiar link público";
+  return "Substituir imagem publicada";
+}
+
+function absolutePublicUrl(publicUrl) {
+  return new URL(publicUrl, window.location.origin).href;
+}
+
+async function copyPublicLink(publicUrl) {
+  const link = absolutePublicUrl(publicUrl);
+  try {
+    await navigator.clipboard.writeText(link);
+    setStatus("status", "success", "Link público copiado.");
+  } catch {
+    setStatus("status", "success", `Imagem publicada. Link: ${link}`);
+  }
+  return link;
+}
+
 function sourceLabel(source) {
   const map = { criar: "Criar imagem", batch: "Produção em lote", migration: "Migração" };
   return map[source] || source;
@@ -135,8 +156,10 @@ function renderFinished() {
       <div class="name" title="${escapeHtml(piece.title)}">${escapeHtml(piece.title)}</div>
       <div class="meta">${escapeHtml(piece.templateName || piece.templateId)} · ${sourceLabel(piece.source)}</div>
       <div class="meta">${formatDate(piece.createdAt)} · ${piece.dimensions?.width || 0}×${piece.dimensions?.height || 0} px</div>
+      ${piece.publication?.finishedPieceId === piece.id ? `<div class="meta"><span class="badge badge-success">Publicada</span></div>` : ""}
       <div class="actions">
         <button type="button" class="btn-secondary view-piece" data-id="${escapeHtml(piece.id)}">Visualizar</button>
+        <button type="button" class="btn-primary publish-piece" data-id="${escapeHtml(piece.id)}">${publishButtonLabel(piece)}</button>
         <a class="btn-secondary" href="${escapeHtml(piece.url)}?download=1" download="${escapeHtml((piece.title || piece.id).replace(/[^\w.-]/g, "_"))}.png">Baixar</a>
         <a class="btn-secondary" href="/criar.html?duplicate=${encodeURIComponent(piece.id)}">Duplicar</a>
         <button type="button" class="btn-danger delete-piece" data-id="${escapeHtml(piece.id)}">Excluir</button>
@@ -145,6 +168,7 @@ function renderFinished() {
     container.appendChild(card);
   }
   document.querySelectorAll(".view-piece").forEach((btn) => btn.addEventListener("click", () => openFinishedPieceModal(btn.dataset.id)));
+  document.querySelectorAll(".publish-piece").forEach((btn) => btn.addEventListener("click", () => publishFinishedPiece(btn.dataset.id)));
   document.querySelectorAll(".delete-piece").forEach((btn) => btn.addEventListener("click", () => deleteFinishedPiece(btn.dataset.id)));
   renderFinishedPagination(total, page, limit);
 }
@@ -176,16 +200,50 @@ async function openFinishedPieceModal(id) {
       <div class="meta">Finalizado em: ${formatDate(piece.createdAt)}</div>
       <div class="meta">Dimensões: ${piece.dimensions?.width || 0}×${piece.dimensions?.height || 0} px</div>
       ${piece.collectionId ? `<div class="meta">Base: ${escapeHtml(piece.collectionTitle || piece.collectionId)} · Item: ${escapeHtml(piece.itemId || "—")}</div>` : ""}
+      ${piece.publication?.finishedPieceId === piece.id ? `<div class="meta"><span class="badge badge-success">Publicada</span></div>` : ""}
     `;
+    const footer = [
+      { label: "Fechar", className: "btn-secondary", close: true },
+      { label: publishButtonLabel(piece), className: "btn-primary", close: false, onClick: () => publishFinishedPiece(piece.id) },
+      { label: "Baixar", className: "btn-secondary", close: false, onClick: () => downloadBlobUrl(piece.url, `${(piece.title || piece.id).replace(/[^\w.-]/g, "_")}.png`) },
+    ];
     createModal({
       title: piece.title || "Peça finalizada",
       body,
-      footer: [
-        { label: "Fechar", className: "btn-secondary", close: true },
-        { label: "Baixar", className: "btn-primary", close: false, onClick: () => downloadBlobUrl(piece.url, `${(piece.title || piece.id).replace(/[^\w.-]/g, "_")}.png`) },
-      ],
+      footer,
     });
     setStatus("status", "ready", "Peça carregada.");
+  } catch (err) {
+    handleApiError(err, "status");
+  }
+}
+
+async function publishFinishedPiece(id) {
+  try {
+    setStatus("status", "loading", "Preparando publicação...");
+    const preview = await api.json(`/api/finished-pieces/${encodeURIComponent(id)}/publish-preview`);
+    if (!preview.ok) {
+      setStatus("status", "warning", preview.message || "Não foi possível publicar esta peça.");
+      return;
+    }
+    if (preview.publication && preview.publication.finishedPieceId === id) {
+      await copyPublicLink(preview.publication.publicUrl);
+      return;
+    }
+    const message = preview.publication
+      ? `Substituir a imagem publicada de "${preview.recordTitle}"?\n\nPublicada agora: ${preview.publication.pieceTitle || "peça anterior"}\nNova imagem: ${preview.pieceTitle}\n\nO link público permanece o mesmo.`
+      : `Publicar "${preview.pieceTitle}" no registro "${preview.recordTitle}"?\n\nSerá criado um link público permanente.`;
+    const ok = await confirmModal(message, {
+      confirmText: preview.publication ? "Substituir" : "Publicar",
+    });
+    if (!ok) {
+      setStatus("status", "ready", "Publicação cancelada.");
+      return;
+    }
+    setStatus("status", "loading", "Publicando imagem...");
+    const result = await api.json(`/api/finished-pieces/${encodeURIComponent(id)}/publish`, { method: "POST" });
+    await copyPublicLink(result.publication.publicUrl);
+    await loadFinished(state.finished.page);
   } catch (err) {
     handleApiError(err, "status");
   }

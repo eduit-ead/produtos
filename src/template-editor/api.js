@@ -54,6 +54,7 @@ const {
   usesPostgres,
 } = require("../collections/store");
 const finishedPiecesService = require("../finished-pieces");
+const publications = require("../publications/service");
 const ExcelJS = require("exceljs");
 const { validateCollection, isSafeRelative, ROOT } = require("../collections/schema");
 const { getDataSource } = require("../data-sources");
@@ -410,6 +411,7 @@ function createRouter() {
         from: req.query.from,
         to: req.query.to,
       });
+      result.items = await publications.attach(result.items);
       res.json(result);
     } catch (err) {
       console.error(err);
@@ -421,7 +423,8 @@ function createRouter() {
     try {
       const piece = await finishedPiecesService.get(path.basename(req.params.id));
       if (!piece) return res.status(404).json({ error: "Peça não encontrada." });
-      res.json(piece);
+      const [withPublication] = await publications.attach([piece]);
+      res.json(withPublication);
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: err.message || "Erro ao buscar peça." });
@@ -436,6 +439,32 @@ function createRouter() {
       console.error(err);
       const status = err.message?.includes("não encontrada") ? 404 : 500;
       res.status(status).json({ error: err.message || "Erro ao excluir peça." });
+    }
+  });
+
+  router.get("/finished-pieces/:id/publish-preview", async (req, res) => {
+    try {
+      const piece = await finishedPiecesService.get(path.basename(req.params.id));
+      if (!piece) return res.status(404).json({ error: "Peça não encontrada." });
+      const preview = await publications.preview(piece, {
+        findPiece: (id) => finishedPiecesService.get(id),
+      });
+      res.json(preview);
+    } catch (err) {
+      console.error(err.code || err.message);
+      res.status(err.status || 500).json({ error: err.message || "Erro ao preparar publicação." });
+    }
+  });
+
+  router.post("/finished-pieces/:id/publish", async (req, res) => {
+    try {
+      const piece = await finishedPiecesService.get(path.basename(req.params.id));
+      if (!piece) return res.status(404).json({ error: "Peça não encontrada." });
+      const result = await publications.publish(piece, { baseUrl: publications.requestBaseUrl(req) });
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      console.error(err.code || err.message);
+      res.status(err.status || 500).json({ error: err.message || "Erro ao publicar imagem." });
     }
   });
 

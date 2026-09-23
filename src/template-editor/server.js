@@ -18,6 +18,7 @@ const { createRouter } = require("./api");
 const { createMigrationRouter } = require("../migration/routes");
 const { createDatabaseRouter } = require("../db/routes");
 const { closeDatabase } = require("../db/postgres");
+const { sendPublishedImage } = require("../publications/service");
 
 // Garante diretórios de runtime e copia defaults quando em volume externo.
 seedRuntimeDefaults();
@@ -65,6 +66,9 @@ app.use("/api/auth", (req, res, next) => {
   next();
 });
 app.use("/api/auth", authRoutes);
+
+// Imagem publicada: única rota de arquivo sem autenticação.
+app.get("/api/public/images/:collectionId/:itemId", sendPublishedImage);
 
 // Protege a API, exceto health e auth.
 app.use("/api", (req, res, next) => {

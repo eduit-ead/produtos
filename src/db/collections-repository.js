@@ -303,12 +303,13 @@ async function importRecords(collection, records, { onConflict = "skip" } = {}) 
   return { collectionId: collection.id, ...counts };
 }
 
-async function patchRecordFields(collectionId, itemId, patch) {
-  await ready();
+async function patchRecordFields(collectionId, itemId, patch, runner = null) {
+  if (!runner) await ready();
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
     throw exposeError("Campos para atualizar devem ser um objeto.", 400);
   }
-  const existingResult = await query(SQL.getRecord, [collectionId, String(itemId)]);
+  const db = runner || { query };
+  const existingResult = await db.query(SQL.getRecord, [collectionId, String(itemId)]);
   const existing = existingResult.rows[0];
   if (!existing) return null;
   const fields = mergeFields(asObject(existing.fields), patch, "merge");
@@ -317,7 +318,7 @@ async function patchRecordFields(collectionId, itemId, patch) {
     fields
   );
   const now = new Date().toISOString();
-  await query(SQL.updateRecord, [
+  await db.query(SQL.updateRecord, [
     collectionId,
     existing.item_id,
     existing.slug,
@@ -327,6 +328,7 @@ async function patchRecordFields(collectionId, itemId, patch) {
     JSON.stringify(record),
     now,
   ]);
+  if (runner) return { ...record, id: existing.item_id, slug: existing.slug, fields };
   return getRecord(collectionId, existing.item_id);
 }
 
