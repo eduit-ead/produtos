@@ -14,6 +14,7 @@ const assert = require("node:assert/strict");
 const crypto = require("crypto");
 const fs = require("fs");
 const http = require("http");
+const os = require("os");
 const path = require("path");
 const express = require("express");
 const ExcelJS = require("exceljs");
@@ -524,6 +525,68 @@ function piece(id, itemId, fileKey, collectionId = "lote-teste") {
       assert.equal(values.filter((value) => value === "Curta ADM\nlinha 2 — ção").length, 1);
     }
   }
+  const catalogDir = fs.mkdtempSync(path.join(os.tmpdir(), "bwipo-publish-"));
+  process.env.AI_CATALOG_DIR = catalogDir;
+  const finished = require("../src/finished-pieces/finished-pieces-service");
+  await repo.saveCollection({ ...base, id: "http-publicar", name: "HTTP" }, { onConflict: "replace" });
+  await repo.importRecords({ ...base, id: "http-publicar" }, ["pendente", "publicado-http"].map((id) => ({
+    id,
+    slug: id,
+    title: id,
+    fields: { course_id: id, curso: id, slug: id },
+    prompt: "",
+    sourceImage: "",
+    sourceStatus: "",
+  })), { onConflict: "skip" });
+  const pendingArt = await finished.createFromExistingArt({
+    collectionId: "http-publicar",
+    itemId: "pendente",
+    templateId: "cruzeiro-graduacao-v1",
+    buffer: Buffer.from("png-pendente"),
+    fingerprint: "fp-pendente-http",
+    title: "Pendente",
+  });
+  const publishedArt = await finished.createFromExistingArt({
+    collectionId: "http-publicar",
+    itemId: "publicado-http",
+    templateId: "cruzeiro-graduacao-v1",
+    buffer: Buffer.from("png-publicado"),
+    fingerprint: "fp-publicado-http",
+    title: "Já publicado",
+  });
+  files.set(pendingArt.piece.fileKey, Buffer.from("png-pendente"));
+  files.set(publishedArt.piece.fileKey, Buffer.from("png-publicado"));
+  const kept = await publications.publish(publishedArt.piece, { baseUrl: "https://bwipo.example" });
+  const keptUrl = kept.publication.publicUrl;
+  const keptPieceId = kept.publication.finishedPieceId;
+
+  const unconfirmed = await request(port, "POST", "/api/collections/http-publicar/publish-images", {
+    body: { replace: false, choices: {} },
+    cookie: session,
+  });
+  assert.equal(unconfirmed.status, 400);
+  assert.match(unconfirmed.body.toString("utf8"), /Confirme a publicação depois de revisar a prévia/);
+  assert.equal(await publications.currentPublication("http-publicar", "pendente"), null);
+
+  const publishResponse = await request(port, "POST", "/api/collections/http-publicar/publish-images", {
+    body: { confirm: true, replace: false, choices: {} },
+    cookie: session,
+  });
+  assert.equal(publishResponse.status, 200, publishResponse.body.toString("utf8"));
+  const publishBody = JSON.parse(publishResponse.body.toString("utf8"));
+  assert.equal(publishBody.published, 1);
+  assert.equal(publishBody.replaced, 0);
+  assert.equal(publishBody.alreadyPublished, 1);
+  const pendingNow = await publications.currentPublication("http-publicar", "pendente");
+  const stillPublished = await publications.currentPublication("http-publicar", "publicado-http");
+  assert.equal(pendingNow.finishedPieceId, pendingArt.piece.id);
+  assert.equal(pendingNow.version, 1);
+  assert.equal(stillPublished.publicUrl, keptUrl);
+  assert.equal(stillPublished.finishedPieceId, keptPieceId);
+  assert.equal(stillPublished.version, 1);
+
+  delete process.env.AI_CATALOG_DIR;
+  fs.rmSync(catalogDir, { recursive: true, force: true });
   server.close();
 
   assert.equal(crypto.createHash("sha256").update(fs.readFileSync(SOURCE_XLSX)).digest("hex"), sourceHash);

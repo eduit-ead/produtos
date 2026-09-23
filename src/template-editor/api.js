@@ -1008,7 +1008,7 @@ function createRouter() {
     }
   });
 
-  router.post("/collections/:id/publish-images", async (req, res) => {
+  router.post("/collections/:id/publish-images", express.json(), async (req, res) => {
     try {
       if (req.body?.confirm !== true) {
         return res.status(400).json({ error: "Confirme a publicação depois de revisar a prévia." });
