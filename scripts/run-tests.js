@@ -31,6 +31,7 @@ const tests = [
   "test-collections-postgres.js",
   "test-image-publish.js",
   "test-collection-batch-export.js",
+  "test-finalize-existing.js",
 ];
 
 let failed = false;

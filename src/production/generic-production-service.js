@@ -563,6 +563,37 @@ function applyProductionBackground(template, values, collection) {
   return { template, values };
 }
 
+async function renderOfficialCardBuffer(collectionId, slug, record) {
+  const backgroundRecord = {
+    id: record.id || record.slug || slug,
+    sourceImage: record.sourceImage || record.image_url || record.current_background_url || "",
+    image_url: record.image_url || record.sourceImage || record.current_background_url || "",
+  };
+  const backgroundBuffer = await resolveBackgroundBufferForItem(collectionId, slug, backgroundRecord);
+  if (isLegacyCollection(collectionId)) {
+    const prepared = await prepareBackgroundBuffer(backgroundBuffer);
+    return renderCourseCard(prepared, {
+      curso: record.curso || record.title || "",
+      modalidade: record.modalidade || "",
+      formacao: record.formacao || "",
+      duracao: record.duracao || "",
+    });
+  }
+
+  const collection = await loadCollection(collectionId);
+  const useTemplateId = collection.defaultTemplateId;
+  const template = await loadTemplate(useTemplateId);
+  const values = resolveTemplateBindingsValues(collection, record);
+  const missing = requiredVariablesMissing(template, values);
+  if (missing.length > 0) {
+    throw new Error(`Variáveis obrigatórias sem binding: ${missing.join(", ")}`);
+  }
+  const applied = applyProductionBackground(template, values, collection);
+  return renderTemplate(applied.template || template, applied.values, {
+    runtimeAssets: { [PRODUCTION_BACKGROUND_KEY]: backgroundBuffer },
+  });
+}
+
 async function renderItem(collectionId, slug, { templateId = null } = {}) {
   if (isLegacyCollection(collectionId)) {
     return courseService.renderCourse(slug);
@@ -766,6 +797,7 @@ module.exports = {
   generateAIBackground,
   uploadBackground,
   renderItem,
+  renderOfficialCardBuffer,
   approveItem,
   rejectItem,
   generateWhatsApp,

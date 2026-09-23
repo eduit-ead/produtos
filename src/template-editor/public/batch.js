@@ -103,6 +103,70 @@ async function loadInitial() {
   }
 }
 
+function previewLines(items, empty) {
+  if (!items.length) return `<p class="meta">${empty}</p>`;
+  return `<ul>${items.slice(0, 8).map((item) => `<li>${escapeHtml(item.title || item.slug)}${item.note ? ` — ${escapeHtml(item.note)}` : ""}${item.blocked ? ` — ${escapeHtml(item.blocked)}` : ""}</li>`).join("")}${items.length > 8 ? `<li>e mais ${items.length - 8}</li>` : ""}</ul>`;
+}
+
+async function openFinalizeExisting() {
+  const slugs = [...state.selected];
+  if (!slugs.length || !state.collectionId) return;
+  setStatus("status", "loading", "Preparando finalização...");
+  try {
+    const preview = await api.json(`/api/collections/${encodeURIComponent(state.collectionId)}/finalize-existing/preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slugs }),
+    });
+    clearStatus("status");
+    const body = document.createElement("div");
+    body.innerHTML = `
+      <p>${preview.selected} curso(s) selecionado(s). ${preview.ready.length} com fundo oficial. ${preview.blocked.length} não podem ser finalizados. ${preview.alreadyFinished.length} já têm peça finalizada.</p>
+      <p class="meta">Aguardando revisão, quando houver fotografia candidata, não substitui o fundo oficial e não será aprovada por esta ação.</p>
+      <h4>Com fundo oficial</h4>
+      ${previewLines(preview.ready, "Nenhum curso novo para finalizar.")}
+      <h4>Não podem ser finalizados</h4>
+      ${previewLines(preview.blocked, "Nenhum bloqueio.")}
+      <h4>Já possuem peça finalizada</h4>
+      ${previewLines(preview.alreadyFinished, "Nenhum curso com peça finalizada.")}
+    `;
+    const overlay = createModal({
+      title: "Finalizar imagens existentes",
+      body,
+      footer: [
+        { label: "Fechar", className: "btn-secondary" },
+        {
+          label: "Finalizar elegíveis",
+          className: "btn-primary",
+          close: false,
+          disabled: preview.ready.length === 0,
+          onClick: async () => {
+            const confirmed = await confirmModal(
+              "Renderizar as artes elegíveis com o fundo oficial e o template atual, sem gerar imagens novas?",
+              { confirmText: "Finalizar" }
+            );
+            if (!confirmed) return;
+            setStatus("status", "loading", "Finalizando...");
+            try {
+              const result = await api.json(`/api/collections/${encodeURIComponent(state.collectionId)}/finalize-existing`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ confirm: true, slugs }),
+              });
+              overlay.remove();
+              setStatus("status", result.errors.length ? "error" : "success", `Finalizadas: ${result.finalized}. Já finalizadas: ${result.alreadyFinished}. Sem fundo oficial: ${result.blocked}. Erros: ${result.errors.length}. Publique as pendentes em Biblioteca → Publicar imagens da coleção.`);
+            } catch (err) {
+              handleApiError(err, "status");
+            }
+          },
+        },
+      ],
+    });
+  } catch (err) {
+    handleApiError(err, "status");
+  }
+}
+
 function setupEvents() {
   byId("btnSelectFiltered").addEventListener("click", () => {
     for (const item of state.filtered) state.selected.add(item.slug);
@@ -131,6 +195,7 @@ function setupEvents() {
     renderItems();
   });
   byId("btnItemsBack").addEventListener("click", () => goStep("base"));
+  byId("btnFinalizeExisting").addEventListener("click", () => openFinalizeExisting());
   byId("btnItemsNext").addEventListener("click", () => goStep("config"));
   byId("btnConfigBack").addEventListener("click", () => goStep("items"));
   byId("btnConfigTest").addEventListener("click", () => createBatch(true));
@@ -471,6 +536,7 @@ function renderItems() {
     : `${count} selecionado${count === 1 ? "" : "s"} · ${eligible} elegíveis · ${ignored} ignorados`;
   bar.classList.remove("hidden");
   byId("btnItemsNext").disabled = count === 0;
+  byId("btnFinalizeExisting").disabled = count === 0;
 }
 
 function renderItemsInfo() {

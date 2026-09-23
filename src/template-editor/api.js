@@ -57,6 +57,7 @@ const finishedPiecesService = require("../finished-pieces");
 const publications = require("../publications/service");
 const collectionPublish = require("../publications/batch");
 const collectionExport = require("../publications/export-collection");
+const finalizeExisting = require("../production/finalize-existing");
 const ExcelJS = require("exceljs");
 const { validateCollection, isSafeRelative, ROOT } = require("../collections/schema");
 const { getDataSource } = require("../data-sources");
@@ -1022,6 +1023,29 @@ function createRouter() {
     } catch (err) {
       console.error(err.code || err.message);
       res.status(err.status || 500).json({ error: err.expose ? err.message : "Erro ao publicar imagens da coleção." });
+    }
+  });
+
+  router.post("/collections/:id/finalize-existing/preview", express.json(), async (req, res) => {
+    try {
+      const slugs = Array.isArray(req.body?.slugs) ? req.body.slugs : [];
+      res.json(await finalizeExisting.planFinalizeExisting(req.params.id, slugs));
+    } catch (err) {
+      console.error(err.code || err.message);
+      res.status(err.status || 500).json({ error: err.expose ? err.message : "Erro ao preparar a finalização." });
+    }
+  });
+
+  router.post("/collections/:id/finalize-existing", express.json(), async (req, res) => {
+    try {
+      if (req.body?.confirm !== true) {
+        return res.status(400).json({ error: "Confirme a finalização depois de revisar a prévia." });
+      }
+      const slugs = Array.isArray(req.body?.slugs) ? req.body.slugs : [];
+      res.json({ ok: true, ...(await finalizeExisting.finalizeExisting(req.params.id, slugs)) });
+    } catch (err) {
+      console.error(err.code || err.message);
+      res.status(err.status || 500).json({ error: err.expose ? err.message : "Erro ao finalizar imagens existentes." });
     }
   });
 

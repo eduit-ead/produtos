@@ -281,6 +281,45 @@ async function createFromBatchApprovedVisual({ collectionId, slug, approvedVisua
   return record;
 }
 
+async function createFromExistingArt({ collectionId, itemId, templateId, buffer, fingerprint, title, values } = {}) {
+  if (!collectionId || !itemId || !fingerprint || !Buffer.isBuffer(buffer)) {
+    throw new Error("Peça finalizada exige coleção, item, conteúdo e imagem.");
+  }
+  const index = readIndex();
+  const same = index.pieces.find((piece) => piece.existingArt?.fingerprint === fingerprint);
+  if (same) return { piece: same, created: false };
+
+  const id = `fp-${sha256Hex(fingerprint).slice(0, 16)}`;
+  const byId = index.pieces.find((piece) => piece.id === id);
+  if (byId) return { piece: byId, created: false };
+
+  const fileKey = fileKeyForId(id);
+  const storage = storageForFinished();
+  if (await storage.exists(fileKey)) {
+    return { piece: byId, created: false };
+  }
+  await storage.save(fileKey, buffer, { contentType: "image/png" });
+
+  const record = buildRecord({
+    id,
+    templateId: templateId || "existing",
+    templateName: templateId || "existing",
+    values: values || {},
+    source: "existing-art",
+    collectionId,
+    itemId,
+    fileKey,
+    dimensions: { width: 0, height: 0 },
+    collectionTitle: title || itemId,
+  });
+  record.existingArt = { fingerprint, templateId: templateId || null };
+  record.title = title || record.title;
+
+  index.pieces.unshift(record);
+  writeIndexAtomic(index);
+  return { piece: record, created: true };
+}
+
 async function list({ page = 1, limit = 20, query = "", templateId = "", source = "", from = "", to = "" } = {}) {
   const index = readIndex();
   let items = [...index.pieces];
@@ -404,6 +443,7 @@ async function migrate() {
 module.exports = {
   createFromRender,
   createFromBatchApprovedVisual,
+  createFromExistingArt,
   list,
   listRaw,
   get,
