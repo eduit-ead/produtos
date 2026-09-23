@@ -28,6 +28,7 @@ const tests = [
   "test-studio-batch-visual-integration.js",
   "test-dna-work-template.js",
   "test-database-connection.js",
+  "test-collections-postgres.js",
 ];
 
 let failed = false;

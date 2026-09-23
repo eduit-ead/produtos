@@ -248,3 +248,22 @@ As peças geradas individualmente em "Criar imagem" eram baixadas no navegador s
 - Arquivos novos: `src/finished-pieces/finished-pieces-service.js`, `src/finished-pieces/index.js`, `scripts/test-finished-pieces-stage1.js`, `scripts/test-finished-pieces-stage2.js`.
 - Arquivos alterados: `src/template-editor/api.js`, `src/template-editor/public/criar.html`, `src/template-editor/public/criar.js`, `src/template-editor/public/biblioteca.html`, `src/template-editor/public/biblioteca.js`, `src/production/generic-production-service.js`, `AGENT.md`.
 - Testes: `scripts/test-finished-pieces-stage1.js` e `scripts/test-finished-pieces-stage2.js` passam; `scripts/test-dna-work-template.js` continua passando.
+
+## 2026-09-23 — Persistência das coleções no PostgreSQL
+
+### Contexto
+As coleções e os registros viviam em JSON e planilhas no volume persistente. A conexão com o banco `bwipoart` já existia, mas não podia passar a ser a fonte só porque `DATABASE_URL` estava definida.
+
+### Decisão
+- Tabelas únicas `collections` e `collection_records`, com campos dinâmicos em JSONB e a chave `(collection_id, item_id)` usando os IDs já existentes.
+- `DATA_SOURCE=files` permanece o padrão. `DATA_SOURCE=postgres` lê e grava coleções e registros no PostgreSQL, sem fallback para arquivo quando o banco falha e sem dual-write.
+- Migrations e importação são comandos explícitos. A importação é idempotente e, por padrão, não sobrescreve linha já existente (`--on-conflict=skip`).
+- A planilha de origem não é apagada nem substituída. A exportação gera um arquivo novo.
+
+### Alternativas descartadas
+- Uma tabela por curso ou planilha: descartada porque as bases têm campos diferentes e os IDs precisam continuar estáveis.
+- Gravar no PostgreSQL sempre que `DATABASE_URL` existir: descartado para não misturar arquivo e banco antes da migração ser validada.
+
+### Impacto
+- Arquivos novos: `migrations/001_collections_and_records.sql`, `src/db/collections-repository.js`, `src/db/migrate.js`, `src/db/import-collections.js`, `src/collections/store.js`, `scripts/apply-db-migrations.js`, `scripts/migrate-collections-to-postgres.js`.
+- As telas passam a consultar o PostgreSQL somente com `DATA_SOURCE=postgres`. Renderizadores, peças finalizadas e publicação de imagens não mudam de formato.

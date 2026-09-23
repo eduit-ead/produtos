@@ -9,7 +9,7 @@ const crypto = require("crypto");
 const sharp = require("sharp");
 
 const { RUNTIME } = require("../config/runtime");
-const { loadCollection } = require("../collections/manager");
+const { loadCollection } = require("../collections/store");
 const { getDataSource } = require("../data-sources");
 const { createStorageProvider } = require("../storage");
 const { courseFiles } = require("../batch/naming");
@@ -108,7 +108,7 @@ function recordToMetadataRecord(record) {
 }
 
 async function loadCollectionAndRecords(collectionId) {
-  const collection = loadCollection(collectionId);
+  const collection = await loadCollection(collectionId);
   const source = getDataSource(collection);
   const records = await source.listRecords();
   return { collection, records, source };
@@ -571,7 +571,7 @@ async function renderItem(collectionId, slug, { templateId = null } = {}) {
   const record = await getRecord(collectionId, validateSlug(slug));
   if (!record) throw new Error("Item não encontrado.");
 
-  const collection = loadCollection(collectionId);
+  const collection = await loadCollection(collectionId);
   const useTemplateId = templateId || collection.defaultTemplateId;
 
   if (useTemplateId === LEGACY_TEMPLATE_ID) {

@@ -78,6 +78,20 @@ DATABASE_URL=postgres://bwipoart_user:SENHA@banco_banco:5432/bwipoart
 
 A senha fica só no painel. Sem essa variável, a aplicação continua nos arquivos locais. Com ela, a verificação autenticada é `GET /api/admin/database/status`.
 
+A presença de `DATABASE_URL` não muda a fonte das coleções. O padrão permanece:
+
+```env
+DATA_SOURCE=files
+```
+
+Depois de aplicar as migrations e importar as bases, ative no painel do serviço (variáveis de ambiente, não no banco):
+
+```env
+DATA_SOURCE=postgres
+```
+
+Recrie o serviço para carregar a variável. Os arquivos em `/app/persistent` continuam no volume. Se o PostgreSQL falhar com `DATA_SOURCE=postgres`, a API devolve erro e não volta a ler os arquivos.
+
 A chave OpenAI fica só no painel. O frontend recebe apenas se ela está configurada, nunca o valor.
 
 ### Atualizar sem perder arquivos

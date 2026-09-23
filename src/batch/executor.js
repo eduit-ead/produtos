@@ -41,8 +41,7 @@ const {
   applyProductionBackground,
   PRODUCTION_BACKGROUND_KEY,
 } = require("../production/generic-production-service");
-const { getDataSource } = require("../data-sources");
-const { loadCollection } = require("../collections/manager");
+const { loadCollection } = require("../collections/store");
 const { renderTemplate } = require("../template-editor/renderer");
 const { resolveItemVisual, resolveBackgroundBufferForItem } = require("../production/visual-resolver");
 
@@ -208,8 +207,11 @@ function createLegacyProvider() {
 }
 
 function createGenericProvider(collectionId) {
-  const collection = loadCollection(collectionId);
-  const source = getDataSource(collection);
+  let collectionPromise;
+  function loadCol() {
+    if (!collectionPromise) collectionPromise = loadCollection(collectionId);
+    return collectionPromise;
+  }
 
   async function loadMap() {
     const { records } = await loadCollectionAndRecords(collectionId);
@@ -258,6 +260,7 @@ function createGenericProvider(collectionId) {
   }
 
   async function renderCard(job, item, record, backgroundBuffer) {
+    const collection = await loadCol();
     const templateId = job.template_id || collection.defaultTemplateId;
     if (templateId === LEGACY_TEMPLATE_ID) {
       throw new Error("Template Cruzeiro não pode ser usado fora da coleção padrão.");

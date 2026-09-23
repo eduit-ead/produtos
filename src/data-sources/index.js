@@ -5,8 +5,10 @@
 const { XlsxDataSource } = require("./xlsx-data-source");
 const { CsvDataSource } = require("./csv-data-source");
 const { JsonDataSource } = require("./json-data-source");
+const { PostgresRecordSource } = require("./postgres-record-source");
+const { usesPostgres } = require("../db/data-source-mode");
 
-function getDataSource(collection) {
+function getFileDataSource(collection) {
   const type = collection.source?.type;
   switch (type) {
     case "xlsx":
@@ -20,4 +22,9 @@ function getDataSource(collection) {
   }
 }
 
-module.exports = { getDataSource };
+function getDataSource(collection) {
+  if (usesPostgres()) return new PostgresRecordSource(collection);
+  return getFileDataSource(collection);
+}
+
+module.exports = { getDataSource, getFileDataSource };

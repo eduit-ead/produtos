@@ -42,7 +42,17 @@ const { courseFiles } = require("../batch/naming");
 const { convertCardToWhatsAppJpeg } = require("../whatsapp-image");
 const xlsxSync = require("../xlsx-sync");
 const { loadCourseBySlug, loadAllCourses, INPUT_FILE } = require("../read-courses");
-const { listCollections, loadCollection, saveCollection, deleteCollection, archiveCollection } = require("../collections/manager");
+const {
+  listCollections,
+  loadCollection,
+  saveCollection,
+  deleteCollection,
+  archiveCollection,
+  duplicateCollection,
+  listRecords,
+  importRecordsFromFile,
+  usesPostgres,
+} = require("../collections/store");
 const finishedPiecesService = require("../finished-pieces");
 const ExcelJS = require("exceljs");
 const { validateCollection, isSafeRelative, ROOT } = require("../collections/schema");
@@ -694,22 +704,41 @@ function createRouter() {
   // Coleções
   // ============================================================
 
-  router.get("/collections", (req, res) => {
+  function readRecordPage(req) {
+    if (req.query.limit == null || req.query.limit === "") return null;
+    const limit = Number(req.query.limit);
+    const offset = Number(req.query.offset || 0);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+      const err = new Error("limit deve ser um inteiro entre 1 e 500.");
+      err.status = 400;
+      err.expose = true;
+      throw err;
+    }
+    if (!Number.isInteger(offset) || offset < 0) {
+      const err = new Error("offset deve ser um inteiro maior ou igual a zero.");
+      err.status = 400;
+      err.expose = true;
+      throw err;
+    }
+    return { limit, offset };
+  }
+
+  router.get("/collections", async (req, res) => {
     try {
       const includeArchived = req.query.archived === "all";
-      res.json(listCollections({ includeArchived }));
+      res.json(await listCollections({ includeArchived }));
     } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: err.message });
+      console.error(err.code || err.message);
+      res.status(err.status || 500).json({ error: err.message });
     }
   });
 
-  router.get("/collections/:id", (req, res) => {
+  router.get("/collections/:id", async (req, res) => {
     try {
-      res.json(loadCollection(req.params.id));
+      res.json(await loadCollection(req.params.id));
     } catch (err) {
-      console.error(err);
-      const status = err.message?.includes("não encontrada") ? 404 : 400;
+      console.error(err.code || err.message);
+      const status = err.status || (err.message?.includes("não encontrada") ? 404 : 400);
       res.status(status).json({ error: err.message });
     }
   });
@@ -725,11 +754,15 @@ function createRouter() {
       if (prodErrors.length > 0) {
         return res.status(400).json({ error: "Configuração de produção inválida.", details: prodErrors });
       }
-      const collection = saveCollection({ ...body, createdAt: new Date().toISOString() });
-      res.status(201).json({ ok: true, collection });
+      const collection = await saveCollection({ ...body, createdAt: new Date().toISOString() });
+      let imported = null;
+      if (usesPostgres()) {
+        imported = await importRecordsFromFile(collection, { onConflict: "merge" });
+      }
+      res.status(201).json({ ok: true, collection, imported });
     } catch (err) {
-      console.error(err);
-      res.status(400).json({ error: err.message });
+      console.error(err.code || err.message);
+      res.status(err.status || 400).json({ error: err.message });
     }
   });
 
@@ -737,7 +770,7 @@ function createRouter() {
     try {
       const id = path.basename(req.params.id);
       const body = req.body || {};
-      const existing = loadCollection(id);
+      const existing = await loadCollection(id);
       const updated = { ...existing, ...body, id };
       const errors = validateCollection(updated);
       if (errors.length > 0) {
@@ -747,57 +780,58 @@ function createRouter() {
       if (prodErrors.length > 0) {
         return res.status(400).json({ error: "Configuração de produção inválida.", details: prodErrors });
       }
-      const collection = saveCollection(updated);
+      const collection = await saveCollection(updated);
       res.json({ ok: true, collection });
     } catch (err) {
-      console.error(err);
-      const status = err.message?.includes("não encontrada") ? 404 : 400;
+      console.error(err.code || err.message);
+      const status = err.status || (err.message?.includes("não encontrada") ? 404 : 400);
       res.status(status).json({ error: err.message });
     }
   });
 
-  router.delete("/collections/:id", (req, res) => {
+  router.delete("/collections/:id", async (req, res) => {
     try {
-      deleteCollection(req.params.id);
+      await deleteCollection(req.params.id);
       res.json({ ok: true });
     } catch (err) {
-      console.error(err);
-      res.status(400).json({ error: err.message });
+      console.error(err.code || err.message);
+      res.status(err.status || 400).json({ error: err.message });
     }
   });
 
   router.get("/collections/:id/records", async (req, res) => {
     try {
-      const collection = loadCollection(req.params.id);
-      const source = getDataSource(collection);
-      const records = await source.listRecords();
+      const page = readRecordPage(req);
+      const records = await listRecords(req.params.id, page);
       res.json(records);
     } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: err.message });
+      console.error(err.code || err.message);
+      res.status(err.status || 500).json({ error: err.message });
     }
   });
 
   router.get("/collections/:id/records/:slug", async (req, res) => {
     try {
-      const collection = loadCollection(req.params.id);
+      const collection = await loadCollection(req.params.id);
       const source = getDataSource(collection);
-      const records = await source.listRecords();
+      const direct = await source.getRecord(req.params.slug);
+      const records = direct ? [] : await source.listRecords();
       const primaryKey = collection.primaryKey || "slug";
-      const found = records.find((r) => String(r[primaryKey] || r.slug || r.id) === req.params.slug);
+      const listed = Array.isArray(records) ? records : [];
+      const found = direct || listed.find((r) => String(r[primaryKey] || r.fields?.[primaryKey] || r.slug || r.id) === req.params.slug);
       if (!found) {
         return res.status(404).json({ error: "Registro não encontrado." });
       }
       res.json(found);
     } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: err.message });
+      console.error(err.code || err.message);
+      res.status(err.status || 500).json({ error: err.message });
     }
   });
 
   router.get("/collections/:id/filters/:field/options", async (req, res) => {
     try {
-      const collection = loadCollection(req.params.id);
+      const collection = await loadCollection(req.params.id);
       const source = getDataSource(collection);
       const options = await source.getFilterOptions(req.params.field);
       res.json({ field: req.params.field, options });
@@ -809,7 +843,7 @@ function createRouter() {
 
   router.get("/collections/:id/fields", async (req, res) => {
     try {
-      const collection = loadCollection(req.params.id);
+      const collection = await loadCollection(req.params.id);
       const source = getDataSource(collection);
       const fields = await source.getFields();
       res.json({ fields });
@@ -901,7 +935,7 @@ function createRouter() {
   router.post("/collections/:id/archive", async (req, res) => {
     try {
       const archived = req.body?.archived !== false;
-      const collection = archiveCollection(req.params.id, archived);
+      const collection = await archiveCollection(req.params.id, archived);
       res.json({ ok: true, collection });
     } catch (err) {
       console.error(err);
@@ -912,16 +946,7 @@ function createRouter() {
   // Duplica uma coleção existente.
   router.post("/collections/:id/duplicate", async (req, res) => {
     try {
-      const original = loadCollection(req.params.id);
-      const newId = `${original.id}-copia-${Date.now()}`;
-      const copy = {
-        ...original,
-        id: newId,
-        name: `${original.name} (cópia)`,
-        archived: false,
-        updatedAt: new Date().toISOString(),
-      };
-      saveCollection(copy);
+      const copy = await duplicateCollection(req.params.id);
       res.status(201).json({ ok: true, collection: copy });
     } catch (err) {
       console.error(err);
@@ -932,7 +957,7 @@ function createRouter() {
   // Exporta configuração de uma coleção.
   router.get("/collections/:id/export-config", async (req, res) => {
     try {
-      const collection = loadCollection(req.params.id);
+      const collection = await loadCollection(req.params.id);
       res.setHeader("Content-Type", "application/json");
       res.setHeader("Content-Disposition", `attachment; filename="${collection.id}.json"`);
       res.send(JSON.stringify(collection, null, 2));
@@ -1354,7 +1379,7 @@ function createRouter() {
       }
       const collectionId = body.collection_id || genericProduction.LEGACY_COLLECTION_ID;
       if (collectionId !== genericProduction.LEGACY_COLLECTION_ID) {
-        loadCollection(collectionId); // valida existência
+        await loadCollection(collectionId);
       }
 
       const job = BatchExecutor.createJob(courses, {
@@ -1564,8 +1589,26 @@ function createRouter() {
   // XLSX sync (coleção padrão legada)
   // ============================================================
 
+  function postgresSyncReport(plan) {
+    return {
+      summary: {
+        wouldChange: plan.wouldChangeCount || 0,
+        noChange: plan.noChangeCount || 0,
+        notFound: plan.notFound?.length || 0,
+        skipped: plan.skippedCount || 0,
+      },
+      notFound: plan.notFound || [],
+    };
+  }
+
   router.post("/xlsx/sync-preview", express.json(), async (req, res) => {
     try {
+      if (usesPostgres()) {
+        const collection = await loadCollection(genericProduction.LEGACY_COLLECTION_ID);
+        const source = getDataSource(collection);
+        const result = await source.syncApprovedRecords(listMetadata(getCatalogDir()), { confirm: false });
+        return res.json({ ok: true, mode: "dry-run", report: postgresSyncReport(result.plan) });
+      }
       const coursesMetadata = listMetadata(getCatalogDir());
       const workbook = await xlsxSync.loadWorkbook(INPUT_FILE);
       xlsxSync.addImageColumnsIfNeeded(workbook);
@@ -1585,6 +1628,12 @@ function createRouter() {
         return res.status(400).json({
           error: "Confirmação necessária. Envie { confirm: true } para sincronizar.",
         });
+      }
+      if (usesPostgres()) {
+        const collection = await loadCollection(genericProduction.LEGACY_COLLECTION_ID);
+        const source = getDataSource(collection);
+        const result = await source.syncApprovedRecords(listMetadata(getCatalogDir()), { confirm: true });
+        return res.json({ ok: true, mode: "sync", report: postgresSyncReport(result.plan), backup: null });
       }
       const coursesMetadata = listMetadata(getCatalogDir());
       const workbook = await xlsxSync.loadWorkbook(INPUT_FILE);
@@ -1606,6 +1655,13 @@ function createRouter() {
   router.post("/xlsx/export", express.json(), async (req, res) => {
     try {
       const body = req.body || {};
+      if (usesPostgres()) {
+        const collection = await loadCollection(genericProduction.LEGACY_COLLECTION_ID);
+        const source = getDataSource(collection);
+        const outputPath = body.outputPath || path.join(EXPORTS_DIR, "graduacao-cruzeiro-com-imagens.xlsx");
+        const plan = await source.exportUpdatedCopy(listMetadata(getCatalogDir()), outputPath);
+        return res.json({ ok: true, mode: "export", report: postgresSyncReport(plan), outputPath });
+      }
       const outputPath = body.outputPath || path.join(getCatalogDir(), "cursos-export.xlsx");
       const coursesMetadata = listMetadata(getCatalogDir());
       const report = await xlsxSync.exportUpdatedSpreadsheet(coursesMetadata, outputPath);
@@ -1622,7 +1678,7 @@ function createRouter() {
 
   router.post("/collections/:id/sync-preview", express.json(), async (req, res) => {
     try {
-      const collection = loadCollection(req.params.id);
+      const collection = await loadCollection(req.params.id);
       const source = getDataSource(collection);
       const catalogDir = genericProduction.catalogDirFor(collection.id);
       const metadataList = genericProduction.listMetadataForCollection
@@ -1642,7 +1698,7 @@ function createRouter() {
       if (body.confirm !== true) {
         return res.status(400).json({ error: "Confirmação necessária. Envie { confirm: true }." });
       }
-      const collection = loadCollection(req.params.id);
+      const collection = await loadCollection(req.params.id);
       const source = getDataSource(collection);
       const metadataList = genericProduction.listMetadataForCollection
         ? await genericProduction.listMetadataForCollection(collection.id)
@@ -1659,7 +1715,7 @@ function createRouter() {
 
   router.post("/collections/:id/export", express.json(), async (req, res) => {
     try {
-      const collection = loadCollection(req.params.id);
+      const collection = await loadCollection(req.params.id);
       const source = getDataSource(collection);
       const metadataList = genericProduction.listMetadataForCollection
         ? await genericProduction.listMetadataForCollection(collection.id)

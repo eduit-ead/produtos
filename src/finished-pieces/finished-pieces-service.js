@@ -14,7 +14,7 @@ const sharp = require("sharp");
 const { createStorageProvider } = require("../storage");
 const { getCatalogDir } = require("../batch/metadata");
 const { renderSavedTemplate } = require("../template-editor/renderer/render-saved-template");
-const { loadCollection } = require("../collections/manager");
+const { loadCollection } = require("../collections/store");
 const { getDataSource } = require("../data-sources");
 const { RUNTIME } = require("../config/runtime");
 
@@ -218,12 +218,15 @@ async function createFromRender({ templateId, values, runtimeAssets, source = "c
 
 async function getCollectionItemData(collectionId, itemId) {
   try {
-    const collection = loadCollection(collectionId);
+    const collection = await loadCollection(collectionId);
     if (!collection) return null;
     const ds = getDataSource(collection);
+    const found = await ds.getRecord(itemId);
+    if (found) return found;
     const records = await ds.listRecords();
     return records.find((r) => r.id === itemId || r.slug === itemId) || null;
-  } catch {
+  } catch (err) {
+    if (err.status === 503) throw err;
     return null;
   }
 }

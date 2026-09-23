@@ -5,6 +5,8 @@
 const ExcelJS = require("exceljs");
 const { cleanUrl } = require("./image-cache");
 const { COURSES_FILE } = require("./config/runtime");
+const { usesPostgres } = require("./db/data-source-mode");
+const { loadCoursesFromPostgres, loadCourseFromPostgres } = require("./db/course-records");
 
 const INPUT_FILE = COURSES_FILE;
 const SHEET_NAME = "Graduação";
@@ -14,6 +16,7 @@ function col(headerMap, name) {
 }
 
 async function loadAllCourses() {
+  if (usesPostgres()) return loadCoursesFromPostgres();
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(INPUT_FILE);
   const sheet = workbook.getWorksheet(SHEET_NAME);
@@ -69,6 +72,7 @@ async function loadAllCourses() {
 }
 
 async function loadCourseBySlug(targetSlug) {
+  if (usesPostgres()) return loadCourseFromPostgres(targetSlug);
   const courses = await loadAllCourses();
   return courses.find((c) => c.slug === targetSlug) || null;
 }

@@ -14,7 +14,10 @@
     "image:preview": "node src/generate-ai-preview.js",
     "image:pilot-batch": "node src/generate-ai-pilot.js",
     "image:catalog": "node src/generate-ai-catalog.js",
-    "template:editor": "node src/template-editor/server.js"
+    "template:editor": "node src/template-editor/server.js",
+    "db:migrate": "node scripts/apply-db-migrations.js --database bwipoart",
+    "db:import:dry-run": "node scripts/migrate-collections-to-postgres.js --dry-run",
+    "db:import": "node scripts/migrate-collections-to-postgres.js --database bwipoart"
   },
   "keywords": [],
   "author": "",

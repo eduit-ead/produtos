@@ -79,6 +79,67 @@ async function resetDatabaseForTests() {
   poolFactory = createPgPool;
 }
 
+function exposeError(message, status = 503) {
+  const err = new Error(message);
+  err.status = status;
+  err.expose = true;
+  return err;
+}
+
+function safeDbMessage(err) {
+  const raw = String(err && err.message ? err.message : "");
+  if (!raw || raw.includes("://") || raw.includes("@") || /password/i.test(raw)) return "";
+  return raw.slice(0, 300);
+}
+
+function sanitizeDbError(err) {
+  if (err && err.expose) return err;
+  const code = err && err.code ? err.code : "erro";
+  const safe = safeDbMessage(err);
+  console.error("Falha PostgreSQL.", code, safe || "");
+  const wrapped = exposeError("Não foi possível acessar o PostgreSQL.", 503);
+  wrapped.code = code;
+  return wrapped;
+}
+
+function requirePool() {
+  const current = getPool();
+  if (!current) throw exposeError("PostgreSQL não configurado.", 503);
+  return current;
+}
+
+async function query(text, params) {
+  try {
+    return await requirePool().query(text, params);
+  } catch (err) {
+    throw sanitizeDbError(err);
+  }
+}
+
+async function withTransaction(fn) {
+  let client;
+  try {
+    client = await requirePool().connect();
+  } catch (err) {
+    throw sanitizeDbError(err);
+  }
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      // a conexão já pode ter caído
+    }
+    throw sanitizeDbError(err);
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   CONNECT_SQL,
   POOL_MAX,
@@ -87,4 +148,7 @@ module.exports = {
   closeDatabase,
   setPoolFactoryForTests,
   resetDatabaseForTests,
+  query,
+  withTransaction,
+  sanitizeDbError,
 };
