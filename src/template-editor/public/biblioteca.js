@@ -320,6 +320,8 @@ function renderBases() {
       <div class="actions">
         <a class="btn-primary" href="/batch.html?collection=${encodeURIComponent(c.id)}&autostart=1">Produzir imagens</a>
         <button type="button" class="btn-secondary view-items" data-id="${escapeHtml(c.id)}">Ver itens</button>
+        <button type="button" class="btn-secondary publish-collection" data-id="${escapeHtml(c.id)}">Publicar imagens da coleção</button>
+        <button type="button" class="btn-secondary export-collection" data-id="${escapeHtml(c.id)}">Exportar coleção</button>
         <button type="button" class="btn-secondary configure-base" data-id="${escapeHtml(c.id)}">Configurar</button>
         <div class="spacer"></div>
         <div class="menu">
@@ -346,6 +348,8 @@ function renderBases() {
   });
 
   document.querySelectorAll(".view-items").forEach((btn) => btn.addEventListener("click", () => openItemsModal(btn.dataset.id)));
+  document.querySelectorAll(".publish-collection").forEach((btn) => btn.addEventListener("click", () => openPublishCollection(btn.dataset.id)));
+  document.querySelectorAll(".export-collection").forEach((btn) => btn.addEventListener("click", () => openExportCollection(btn.dataset.id)));
   document.querySelectorAll(".configure-base").forEach((btn) => btn.addEventListener("click", () => openConfigModal(btn.dataset.id)));
   document.querySelectorAll(".duplicate-base").forEach((btn) => btn.addEventListener("click", () => duplicateBase(btn.dataset.id)));
   document.querySelectorAll(".archive-base").forEach((btn) => btn.addEventListener("click", () => archiveBase(btn.dataset.id)));
@@ -521,6 +525,147 @@ async function archiveBase(id) {
     });
     setStatus("status", "success", "Status atualizado.");
     await loadAll();
+  } catch (err) {
+    handleApiError(err, "status");
+  }
+}
+
+function listPreview(items, empty) {
+  if (!items.length) return `<p class="meta">${empty}</p>`;
+  const shown = items.slice(0, 8).map((item) => `<li>${escapeHtml(item.title || item.itemId)}</li>`).join("");
+  const extra = items.length > 8 ? `<li>e mais ${items.length - 8}</li>` : "";
+  return `<ul>${shown}${extra}</ul>`;
+}
+
+function choiceFields(items, name) {
+  return items.map((item) => {
+    const options = item.pieces.map((piece) => (
+      `<option value="${escapeHtml(piece.id)}">${escapeHtml(piece.title || piece.id)}</option>`
+    )).join("");
+    return `<label class="meta">${escapeHtml(item.title)}<select data-choice="${escapeHtml(item.itemId)}" data-choice-group="${name}"><option value="">Escolher peça</option>${options}</select></label>`;
+  }).join("");
+}
+
+function readChoices(root, group) {
+  const choices = {};
+  root.querySelectorAll(`select[data-choice-group="${group}"]`).forEach((select) => {
+    if (select.value) choices[select.dataset.choice] = select.value;
+  });
+  return choices;
+}
+
+async function openPublishCollection(id) {
+  setStatus("status", "loading", "Preparando publicação...");
+  try {
+    const preview = await api.json(`/api/collections/${encodeURIComponent(id)}/publish-preview`);
+    clearStatus("status");
+    const body = document.createElement("div");
+    body.innerHTML = `
+      <p>${preview.ready.length} com peça finalizada vinculada. ${preview.published.length} já publicados. ${preview.missing.length} sem peça finalizada. ${preview.choices.length} com mais de uma peça elegível.</p>
+      <h4>Prontos para publicar</h4>
+      ${listPreview(preview.ready, "Nenhum curso pendente.")}
+      <h4>Já publicados</h4>
+      ${listPreview(preview.published, "Nenhum curso publicado.")}
+      <h4>Sem peça finalizada</h4>
+      ${listPreview(preview.missing, "Todos os cursos têm peça ou exigem escolha.")}
+      <h4>Escolha necessária</h4>
+      ${preview.choices.length ? choiceFields(preview.choices, "pending") : "<p class=\"meta\">Nenhum curso com mais de uma peça.</p>"}
+      ${preview.published.some((item) => item.pieces.length > 1) ? `<h4>Substituir: escolha a peça</h4>${choiceFields(preview.published.filter((item) => item.pieces.length > 1), "replace")}` : ""}
+    `;
+    const overlay = createModal({
+      title: "Publicar imagens da coleção",
+      body,
+      footer: [
+        { label: "Fechar", className: "btn-secondary" },
+        {
+          label: "Publicar pendentes",
+          className: "btn-primary",
+          close: false,
+          onClick: async () => {
+            const choices = readChoices(body, "pending");
+            const confirmed = await confirmModal(
+              "Publicar somente os cursos ainda sem imagem pública? Imagens já publicadas permanecem.",
+              { confirmText: "Publicar" }
+            );
+            if (!confirmed) return;
+            await runCollectionPublish(id, { confirm: true, replace: false, choices }, overlay);
+          },
+        },
+        {
+          label: "Substituir imagens já publicadas",
+          className: "btn-danger",
+          close: false,
+          onClick: async () => {
+            const confirmed = await confirmModal(
+              "Substituir as imagens já publicadas pelas peças escolhidas? A URL pública de cada curso permanece a mesma.",
+              { confirmText: "Substituir", danger: true }
+            );
+            if (!confirmed) return;
+            await runCollectionPublish(id, {
+              confirm: true,
+              replace: true,
+              confirmReplace: true,
+              choices: readChoices(body, "replace"),
+            }, overlay);
+          },
+        },
+      ],
+    });
+  } catch (err) {
+    handleApiError(err, "status");
+  }
+}
+
+async function runCollectionPublish(id, payload, overlay) {
+  setStatus("status", "loading", "Publicando...");
+  try {
+    const result = await api.json(`/api/collections/${encodeURIComponent(id)}/publish-images`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (overlay) overlay.remove();
+    setStatus(
+      "status",
+      result.errors.length ? "error" : "success",
+      `Publicados: ${result.published}. Substituídos: ${result.replaced}. Já publicados: ${result.alreadyPublished}. Sem peça: ${result.missing}. Aguardando escolha: ${result.needsChoice}. Erros: ${result.errors.length}.`
+    );
+  } catch (err) {
+    handleApiError(err, "status");
+  }
+}
+
+function openExportCollection(id) {
+  const body = document.createElement("div");
+  body.innerHTML = "<p>A exportação inclui todos os cursos da coleção, com ou sem imagem publicada.</p>";
+  createModal({
+    title: "Exportar coleção",
+    body,
+    footer: [
+      { label: "Fechar", className: "btn-secondary" },
+      { label: "XLSX", className: "btn-primary", close: false, onClick: () => downloadCollection(id, "xlsx") },
+      { label: "CSV", className: "btn-primary", close: false, onClick: () => downloadCollection(id, "csv") },
+    ],
+  });
+}
+
+async function downloadCollection(id, format) {
+  setStatus("status", "loading", "Exportando...");
+  try {
+    const response = await fetch(`/api/collections/${encodeURIComponent(id)}/download`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ format }),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || "Erro ao exportar a coleção.");
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename="([^"]+)"/);
+    downloadBlob(blob, match ? match[1] : `${id}-colecao.${format}`);
+    setStatus("status", "success", "Coleção exportada.");
   } catch (err) {
     handleApiError(err, "status");
   }

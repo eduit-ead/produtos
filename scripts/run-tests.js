@@ -30,6 +30,7 @@ const tests = [
   "test-database-connection.js",
   "test-collections-postgres.js",
   "test-image-publish.js",
+  "test-collection-batch-export.js",
 ];
 
 let failed = false;

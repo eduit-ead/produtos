@@ -122,6 +122,19 @@ async function getPublication(collectionId, itemId) {
   return result.rows[0] || null;
 }
 
+async function currentPublication(collectionId, itemId) {
+  requirePostgres();
+  return view(await getPublication(collectionId, itemId));
+}
+
+async function finishedFileExists(fileKey) {
+  try {
+    return await storage().exists(fileKey);
+  } catch {
+    return false;
+  }
+}
+
 async function preview(piece, { findPiece } = {}) {
   const target = await resolveTarget(piece);
   if (target.error) return target.error;
@@ -323,6 +336,8 @@ module.exports = {
   preview,
   attach,
   publish,
+  currentPublication,
+  finishedFileExists,
   loadPublishedImage,
   sendPublishedImage,
   requestBaseUrl,

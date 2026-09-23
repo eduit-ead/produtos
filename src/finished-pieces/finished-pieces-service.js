@@ -60,6 +60,10 @@ function ensureFinishedDir() {
   fs.mkdirSync(finishedDir(), { recursive: true });
 }
 
+function listRaw() {
+  return readIndex().pieces.map((piece) => ({ ...piece }));
+}
+
 function readIndex() {
   ensureFinishedDir();
   const file = indexPath();
@@ -401,6 +405,7 @@ module.exports = {
   createFromRender,
   createFromBatchApprovedVisual,
   list,
+  listRaw,
   get,
   remove,
   duplicateData,

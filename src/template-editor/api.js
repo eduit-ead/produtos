@@ -55,6 +55,8 @@ const {
 } = require("../collections/store");
 const finishedPiecesService = require("../finished-pieces");
 const publications = require("../publications/service");
+const collectionPublish = require("../publications/batch");
+const collectionExport = require("../publications/export-collection");
 const ExcelJS = require("exceljs");
 const { validateCollection, isSafeRelative, ROOT } = require("../collections/schema");
 const { getDataSource } = require("../data-sources");
@@ -993,6 +995,45 @@ function createRouter() {
     } catch (err) {
       console.error(err);
       res.status(400).json({ error: err.message });
+    }
+  });
+
+  router.get("/collections/:id/publish-preview", async (req, res) => {
+    try {
+      res.json(await collectionPublish.planCollectionPublish(req.params.id));
+    } catch (err) {
+      console.error(err.code || err.message);
+      res.status(err.status || 500).json({ error: err.expose ? err.message : "Erro ao preparar a publicação da coleção." });
+    }
+  });
+
+  router.post("/collections/:id/publish-images", async (req, res) => {
+    try {
+      if (req.body?.confirm !== true) {
+        return res.status(400).json({ error: "Confirme a publicação depois de revisar a prévia." });
+      }
+      const result = await collectionPublish.publishCollection(req.params.id, {
+        baseUrl: publications.requestBaseUrl(req),
+        replace: req.body.replace === true,
+        confirmReplace: req.body.confirmReplace === true,
+        choices: req.body.choices && typeof req.body.choices === "object" ? req.body.choices : {},
+      });
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      console.error(err.code || err.message);
+      res.status(err.status || 500).json({ error: err.expose ? err.message : "Erro ao publicar imagens da coleção." });
+    }
+  });
+
+  router.post("/collections/:id/download", async (req, res) => {
+    try {
+      const file = await collectionExport.exportCollection(req.params.id, req.body?.format);
+      res.setHeader("Content-Type", file.contentType);
+      res.setHeader("Content-Disposition", `attachment; filename="${file.filename}"`);
+      res.send(file.body);
+    } catch (err) {
+      console.error(err.code || err.message);
+      res.status(err.status || 500).json({ error: err.expose ? err.message : "Erro ao exportar a coleção." });
     }
   });
 

@@ -113,6 +113,7 @@ function apiRecordFromRow(row) {
     ...stored,
     id: row.item_id,
     slug: row.slug,
+    sourceKey: row.source_key || null,
     title: row.title || stored.title || "",
     fields: Object.keys(fields).length > 0 ? fields : (stored.fields || {}),
     prompt: stored.prompt || "",
