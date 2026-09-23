@@ -2,12 +2,11 @@
  * Leitura compartilhada e somente leitura da planilha de cursos.
  */
 
-const path = require("path");
 const ExcelJS = require("exceljs");
 const { cleanUrl } = require("./image-cache");
+const { COURSES_FILE } = require("./config/runtime");
 
-const ROOT = path.resolve(__dirname, "..");
-const INPUT_FILE = path.join(ROOT, "input", "cursos.xlsx");
+const INPUT_FILE = COURSES_FILE;
 const SHEET_NAME = "Graduação";
 
 function col(headerMap, name) {

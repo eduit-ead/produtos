@@ -1,24 +1,50 @@
-node_modules
-npm-debug.log
+# Segredos e chaves
 .env
-.env.local
-.env.*.local
-output/whatsapp
-output/final
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa
+id_ed25519
+credentials.json
+secrets/
+
+# Dependências e VCS
+node_modules
 .git
 .gitignore
-.zips
+.gitattributes
+
+# Dados de produção, planilhas privadas, uploads e imagens geradas.
+# Templates em data/templates e os assets padrão em data/assets permanecem na imagem.
+input
+data/imports
+data/reference
+data/assets/dna-work-photo-*
+output
+*.xlsx
+*.xls
+*.xlsm
+*.csv
 *.zip
-zips/
-coverage/
-.cache/
-tmp/
-temp/
+.zips
+zips
+
+# Temporários e caches
+tmp
+temp
+*.tmp
+*.log
+logs
+npm-debug.log
+coverage
+.cache
+dist
+build
+
+# SO e editores
 .DS_Store
 Thumbs.db
-.vscode/
-.idea/
-*.log
-logs/
-dist/
-build/
+.vscode
+.idea
+*.swp

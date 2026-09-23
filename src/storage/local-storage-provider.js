@@ -11,9 +11,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { StorageProvider } = require("./storage-provider");
 const { courseFiles } = require("../batch/naming");
-
-const ROOT = path.resolve(__dirname, "..", "..");
-const DEFAULT_BASE_DIR = path.join(ROOT, "output", "ai-catalog");
+const { RUNTIME } = require("../config/runtime");
 
 class LocalStorageProvider extends StorageProvider {
   constructor(baseDir) {
@@ -22,7 +20,7 @@ class LocalStorageProvider extends StorageProvider {
       baseDir ||
         process.env.STORAGE_LOCAL_DIR ||
         process.env.AI_CATALOG_DIR ||
-        DEFAULT_BASE_DIR
+        RUNTIME.catalogDir
     );
   }
 

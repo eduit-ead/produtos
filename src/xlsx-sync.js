@@ -9,7 +9,9 @@ const fs = require("fs");
 const path = require("path");
 const ExcelJS = require("exceljs");
 
-const INPUT_FILE = path.join(__dirname, "..", "input", "cursos.xlsx");
+const { COURSES_FILE } = require("./config/runtime");
+
+const INPUT_FILE = COURSES_FILE;
 const SHEET_NAME = "Graduação";
 
 function lockFilePath(filePath) {

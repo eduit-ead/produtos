@@ -26,9 +26,17 @@ const RUNTIME = {
   templatesDir: runtimeSubdir("data", "templates"),
   assetsDir: runtimeSubdir("data", "assets"),
   importsDir: runtimeSubdir("data", "imports"),
+  inputDir: runtimeSubdir("input"),
+  backupsDir: runtimeSubdir("input", "backups"),
+  cacheDir: runtimeSubdir("input", "cache"),
   catalogDir: runtimeSubdir("output", "ai-catalog"),
   exportsDir: runtimeSubdir("output", "exports"),
+  outputDir: runtimeSubdir("output"),
+  finalDir: runtimeSubdir("output", "final"),
+  whatsappDir: runtimeSubdir("output", "whatsapp"),
 };
+
+const COURSES_FILE = path.join(RUNTIME.inputDir, "cursos.xlsx");
 
 function ensureRuntimeDirs() {
   for (const dir of Object.values(RUNTIME)) {
@@ -37,10 +45,9 @@ function ensureRuntimeDirs() {
 }
 
 function copyFileIfMissing(src, dest) {
-  if (!fs.existsSync(dest)) {
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.copyFileSync(src, dest);
-  }
+  if (!fs.existsSync(src) || fs.existsSync(dest)) return;
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.copyFileSync(src, dest);
 }
 
 function copyDirContentsIfMissing(srcDir, destDir) {
@@ -66,11 +73,13 @@ function seedDefaults() {
     path.join(ROOT, "data", "collections", "graduacao-cruzeiro.json"),
     path.join(RUNTIME.collectionsDir, "graduacao-cruzeiro.json")
   );
+  copyFileIfMissing(path.join(ROOT, "input", "cursos.xlsx"), COURSES_FILE);
 }
 
 module.exports = {
   APP_RUNTIME_DIR,
   RUNTIME,
+  COURSES_FILE,
   ensureRuntimeDirs,
   seedDefaults,
 };

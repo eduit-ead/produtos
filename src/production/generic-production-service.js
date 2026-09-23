@@ -30,7 +30,6 @@ const courseService = require("../course-production-service");
 const { resolveItemVisual, resolveBackgroundBufferForItem } = require("./visual-resolver");
 const finishedPiecesService = require("../finished-pieces");
 
-const ROOT = path.resolve(__dirname, "..", "..");
 const LEGACY_COLLECTION_ID = "graduacao-cruzeiro";
 const LEGACY_TEMPLATE_ID = "cruzeiro-graduacao-v1";
 const SLUG_REGEX = /^[a-zA-Z0-9_-]+$/;
@@ -46,9 +45,7 @@ function isLegacyCollection(collectionId) {
 }
 
 function catalogDirFor(collectionId) {
-  const base = process.env.AI_CATALOG_DIR
-    ? path.resolve(process.env.AI_CATALOG_DIR)
-    : path.join(ROOT, "output", "ai-catalog");
+  const base = getCatalogDir();
   if (isLegacyCollection(collectionId)) {
     return base;
   }

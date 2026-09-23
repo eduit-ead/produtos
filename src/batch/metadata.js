@@ -10,14 +10,12 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { courseFiles } = require("./naming");
-
-const ROOT = path.resolve(__dirname, "..", "..");
-const DEFAULT_CATALOG_DIR = path.join(ROOT, "output", "ai-catalog");
+const { RUNTIME } = require("../config/runtime");
 
 function getCatalogDir() {
   return process.env.AI_CATALOG_DIR
     ? path.resolve(process.env.AI_CATALOG_DIR)
-    : DEFAULT_CATALOG_DIR;
+    : RUNTIME.catalogDir;
 }
 
 function courseDir(catalogDir, slug) {

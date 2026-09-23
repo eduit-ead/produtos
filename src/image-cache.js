@@ -7,7 +7,7 @@ const fs = require("fs");
 const path = require("path");
 const { RUNTIME } = require("./config/runtime");
 
-const CACHE_DIR = path.join(RUNTIME.root, "input", "cache");
+const CACHE_DIR = RUNTIME.cacheDir;
 
 const DOWNLOAD_TIMEOUT_MS = 60000;
 const DOWNLOAD_RETRIES = 3;

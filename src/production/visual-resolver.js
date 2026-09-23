@@ -9,17 +9,13 @@
 
 const fs = require("fs");
 const path = require("path");
-const { RUNTIME } = require("../config/runtime");
 const { createStorageProvider } = require("../storage");
-const { readMetadata } = require("../batch/metadata");
+const { readMetadata, getCatalogDir } = require("../batch/metadata");
 
-const ROOT = path.resolve(__dirname, "..", "..");
 const LEGACY_COLLECTION_ID = "graduacao-cruzeiro";
 
 function catalogDirFor(collectionId) {
-  const base = process.env.AI_CATALOG_DIR
-    ? path.resolve(process.env.AI_CATALOG_DIR)
-    : path.join(ROOT, "output", "ai-catalog");
+  const base = getCatalogDir();
   if (collectionId === LEGACY_COLLECTION_ID) return base;
   const dir = path.join(base, collectionId);
   fs.mkdirSync(dir, { recursive: true });

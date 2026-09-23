@@ -53,7 +53,7 @@ const TEMPLATES_DIR = RUNTIME.templatesDir;
 const ASSETS_DIR = RUNTIME.assetsDir;
 const IMPORTS_DIR = RUNTIME.importsDir;
 const EXPORTS_DIR = RUNTIME.exportsDir;
-const BACKUPS_DIR = path.join(__dirname, "..", "..", "input", "backups");
+const BACKUPS_DIR = RUNTIME.backupsDir;
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
 const IMAGE_MIMETYPES = {
@@ -650,7 +650,7 @@ function createRouter() {
   // Controlled output file serving
   // ============================================================
 
-  const OUTPUT_DIR = path.join(__dirname, "..", "..", "output");
+  const OUTPUT_DIR = RUNTIME.outputDir;
   const SLUG_FILENAME_REGEX = /^[A-Za-z0-9_-]+$/;
 
   function serveOutputFile(req, res, subPathFn) {

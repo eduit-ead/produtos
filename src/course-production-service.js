@@ -14,15 +14,12 @@ const { generateImage } = require("./generate-ai-background");
 const { renderCourseCard, prepareBackgroundBuffer } = require("./render-card");
 const { getImageBuffer } = require("./image-cache");
 const { courseFiles } = require("./batch/naming");
-const { readMetadata, writeMetadata } = require("./batch/metadata");
+const { readMetadata, writeMetadata, getCatalogDir } = require("./batch/metadata");
+const { RUNTIME } = require("./config/runtime");
 
-const ROOT = path.resolve(__dirname, "..");
-const DEFAULT_CATALOG_DIR = path.join(ROOT, "output", "ai-catalog");
-const CATALOG_DIR = process.env.AI_CATALOG_DIR
-  ? path.resolve(process.env.AI_CATALOG_DIR)
-  : DEFAULT_CATALOG_DIR;
+const CATALOG_DIR = getCatalogDir();
 const MANIFEST_FILE = path.join(CATALOG_DIR, "manifest.json");
-const FINAL_DIR = path.join(ROOT, "output", "final");
+const FINAL_DIR = RUNTIME.finalDir;
 
 const ALLOWED_BG_EXT = new Set([".png", ".jpg", ".jpeg", ".svg"]);
 const SLUG_REGEX = /^[a-zA-Z0-9_-]+$/;
@@ -146,7 +143,7 @@ function catalogFileUrl(slug, filename) {
 
 function fileUrl(relPath) {
   if (!relPath || !fs.existsSync(relPath)) return null;
-  const relative = path.relative(path.join(ROOT, "output"), relPath);
+  const relative = path.relative(RUNTIME.outputDir, relPath);
   if (relative && !relative.startsWith("..")) {
     const posix = relative.replace(/\\/g, "/");
     // Serve output files only through controlled API routes.
