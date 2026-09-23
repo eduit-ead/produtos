@@ -16,6 +16,8 @@ const authRoutes = require("../auth/routes");
 const { requireAuth, isAuthenticated } = require("../auth/middleware");
 const { createRouter } = require("./api");
 const { createMigrationRouter } = require("../migration/routes");
+const { createDatabaseRouter } = require("../db/routes");
+const { closeDatabase } = require("../db/postgres");
 
 // Garante diretórios de runtime e copia defaults quando em volume externo.
 seedRuntimeDefaults();
@@ -73,6 +75,7 @@ app.use("/api", (req, res, next) => {
 });
 
 app.use("/api/admin/migration", createMigrationRouter());
+app.use("/api/admin/database", createDatabaseRouter());
 app.use("/api", createRouter());
 
 // Protege páginas HTML antes de servir estáticos.
@@ -96,3 +99,13 @@ const server = app.listen(PORT, HOST, () => {
   const actualPort = address?.port || PORT;
   console.log(`Produção Visual rodando em http://${HOST}:${actualPort}`);
 });
+
+function shutdown() {
+  server.close(() => {
+    closeDatabase().finally(() => process.exit(0));
+  });
+  setTimeout(() => process.exit(0), 5000).unref();
+}
+
+process.once("SIGTERM", shutdown);
+process.once("SIGINT", shutdown);

@@ -70,7 +70,13 @@ OPENAI_API_KEY=
 
 `AUTH_DISABLED=true` mantém o serviço no ar até a fase de autenticação. Quando a senha for ativada, defina `AUTH_DISABLED=false`, `APP_ACCESS_PASSWORD` e `APP_SESSION_SECRET` (mínimo 32 caracteres).
 
-`DATABASE_URL` pode ser declarada agora, apontando para o PostgreSQL do servidor pelo nome do serviço (não use `localhost`). A aplicação ainda não abre essa conexão.
+`DATABASE_URL` aponta para o PostgreSQL já existente, pelo nome do serviço:
+
+```env
+DATABASE_URL=postgres://bwipoart_user:SENHA@banco_banco:5432/bwipoart
+```
+
+A senha fica só no painel. Sem essa variável, a aplicação continua nos arquivos locais. Com ela, a verificação autenticada é `GET /api/admin/database/status`.
 
 A chave OpenAI fica só no painel. O frontend recebe apenas se ela está configurada, nunca o valor.
 
