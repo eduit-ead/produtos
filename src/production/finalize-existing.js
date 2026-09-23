@@ -137,7 +137,13 @@ async function finalizeExisting(collectionId, slugs, deps = {}) {
       });
       results.push({ slug: item.slug, itemId: item.itemId, status: saved.created ? "created" : "unchanged", pieceId: saved.piece.id });
     } catch (err) {
-      results.push({ slug: item.slug, itemId: item.itemId, status: "error", message: err.message || "Falha ao finalizar." });
+      results.push({
+        slug: item.slug,
+        itemId: item.itemId,
+        title: item.title,
+        status: "error",
+        message: err.message || "Falha ao finalizar.",
+      });
     }
   }
   return {

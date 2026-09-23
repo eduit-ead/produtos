@@ -180,6 +180,36 @@ function createMemory() {
   assert.ok(publishPlan.published.some((item) => item.itemId === "redes"));
   assert.equal(publishPlan.published.find((item) => item.itemId === "redes").publicUrl, "https://bwipo.example/api/public/images/graduacao-cruzeiro/redes");
 
+  const forbidden = {
+    ...deps,
+    readOfficialBackground: async (_collectionId, slug, record) => {
+      if (slug === "desenvolvimento-full-stack") {
+        throw new Error("Download falhou após 3 tentativas: HTTP 403 - Forbidden");
+      }
+      return Buffer.from(`bg:${slug}`);
+    },
+    getRecord: async (_collectionId, slug) => ({
+      slug,
+      curso: slug === "desenvolvimento-full-stack" ? "Desenvolvimento Full Stack" : "Direito",
+      image_url: slug === "desenvolvimento-full-stack" ? "https://i.ibb.co/ZcQ39pN/Full-stack.png" : "https://example.test/direito.png",
+      modalidade: "EAD",
+      formacao: "Bacharelado",
+      duracao: "4 anos",
+    }),
+    resolveVisual: async () => ({ visualStatus: "aguardando_revisao", currentBackgroundKey: null, candidateBackgroundKey: "studio/foto.png" }),
+  };
+  const fullStackPlan = await finalize.planFinalizeExisting(COLLECTION, ["desenvolvimento-full-stack"], forbidden);
+  assert.equal(fullStackPlan.ready.length, 1);
+  assert.equal(fullStackPlan.blocked.length, 0);
+  const mixed = await finalize.finalizeExisting(COLLECTION, ["desenvolvimento-full-stack", "direito"], forbidden);
+  assert.equal(mixed.finalized, 1);
+  assert.equal(mixed.errors.length, 1);
+  assert.equal(mixed.errors[0].slug, "desenvolvimento-full-stack");
+  assert.equal(mixed.errors[0].title, "Desenvolvimento Full Stack");
+  assert.match(mixed.errors[0].message, /403/);
+  assert.equal(finished.listRaw().some((piece) => piece.itemId === "desenvolvimento-full-stack"), false);
+  assert.equal(finished.listRaw().some((piece) => piece.itemId === "direito"), true);
+
   fs.rmSync(process.env.AI_CATALOG_DIR, { recursive: true, force: true });
   console.log("finalize existing ok");
 })().catch((err) => {

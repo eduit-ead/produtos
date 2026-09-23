@@ -146,18 +146,43 @@ async function openFinalizeExisting() {
               { confirmText: "Finalizar" }
             );
             if (!confirmed) return;
-            setStatus("status", "loading", "Finalizando...");
-            try {
-              const result = await api.json(`/api/collections/${encodeURIComponent(state.collectionId)}/finalize-existing`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ confirm: true, slugs }),
-              });
-              overlay.remove();
-              setStatus("status", result.errors.length ? "error" : "success", `Finalizadas: ${result.finalized}. Já finalizadas: ${result.alreadyFinished}. Sem fundo oficial: ${result.blocked}. Erros: ${result.errors.length}. Publique as pendentes em Biblioteca → Publicar imagens da coleção.`);
-            } catch (err) {
-              handleApiError(err, "status");
+            const log = document.createElement("ul");
+            const progress = document.createElement("p");
+            body.innerHTML = "";
+            body.append(progress, log);
+            let finalized = 0;
+            const errors = [];
+            for (let index = 0; index < preview.ready.length; index += 1) {
+              const item = preview.ready[index];
+              progress.textContent = `Finalizando ${index + 1} de ${preview.ready.length}: ${item.title}`;
+              try {
+                const result = await api.json(`/api/collections/${encodeURIComponent(state.collectionId)}/finalize-existing`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ confirm: true, slugs: [item.slug] }),
+                });
+                finalized += result.finalized;
+                for (const error of result.errors || []) {
+                  errors.push(error);
+                  const line = document.createElement("li");
+                  line.textContent = `${error.title || error.slug}: ${error.message}`;
+                  log.append(line);
+                }
+              } catch (err) {
+                errors.push({ slug: item.slug, title: item.title, message: err.message });
+                const line = document.createElement("li");
+                line.textContent = `${item.title}: ${err.message}`;
+                log.append(line);
+              }
             }
+            progress.textContent = `Finalizadas: ${finalized}. Já finalizadas: ${preview.alreadyFinished.length}. Sem fundo oficial: ${preview.blocked.length}. Erros: ${errors.length}.`;
+            setStatus(
+              "status",
+              errors.length ? "error" : "success",
+              errors.length
+                ? `${errors.length} curso(s) não finalizados. ${errors.map((error) => `${error.title || error.slug}: ${error.message}`).join(" ")}`
+                : `Finalizadas: ${finalized}. Publique as pendentes em Biblioteca → Publicar imagens da coleção.`
+            );
           },
         },
       ],
