@@ -123,6 +123,72 @@ function requestRaw(app, method, path, body, cookie = "") {
   const protectedOk = await requestRaw(enabledApp, "GET", "/api/collections", null, setCookie[0]);
   assert.equal(protectedOk.status, 200, "requisição autenticada deve passar");
 
+  // 5b. Senha principal, senha secundária e senha inválida.
+  const bothApp = buildApp({
+    AUTH_DISABLED: "false",
+    APP_ACCESS_PASSWORD: "senha-forte-1234",
+    APP_MKT_ACCESS_PASSWORD: "senha-mkt-5678",
+    APP_SESSION_SECRET: "segredo-de-no-minimo-32-caracteres-xxxx",
+  });
+
+  const primaryLogin = await requestRaw(
+    bothApp,
+    "POST",
+    "/api/auth/login",
+    JSON.stringify({ password: "senha-forte-1234" })
+  );
+  assert.equal(primaryLogin.status, 200, "senha principal deve autenticar");
+  assert.equal(JSON.parse(primaryLogin.body).ok, true);
+  assert.ok(!primaryLogin.body.includes("senha-forte-1234"), "resposta não deve expor a senha principal");
+  const primaryCookie = primaryLogin.headers["set-cookie"];
+  assert.ok(primaryCookie && primaryCookie[0].includes("HttpOnly"));
+  const primaryAccess = await requestRaw(bothApp, "GET", "/api/collections", null, primaryCookie[0]);
+  assert.equal(primaryAccess.status, 200, "sessão da senha principal deve acessar a API");
+
+  const mktLogin = await requestRaw(
+    bothApp,
+    "POST",
+    "/api/auth/login",
+    JSON.stringify({ password: "senha-mkt-5678" })
+  );
+  assert.equal(mktLogin.status, 200, "senha secundária deve autenticar");
+  assert.ok(!mktLogin.body.includes("senha-mkt-5678"), "resposta não deve expor a senha secundária");
+  const mktCookie = mktLogin.headers["set-cookie"];
+  assert.ok(mktCookie && mktCookie[0].includes("HttpOnly"));
+  const mktAccess = await requestRaw(bothApp, "GET", "/api/collections", null, mktCookie[0]);
+  assert.equal(mktAccess.status, 200, "sessão da senha secundária deve acessar a API");
+
+  const invalidLogin = await requestRaw(
+    bothApp,
+    "POST",
+    "/api/auth/login",
+    JSON.stringify({ password: "senha-invalida" })
+  );
+  assert.equal(invalidLogin.status, 401, "senha inválida deve ser recusada");
+  assert.equal(JSON.parse(invalidLogin.body).error, "Senha incorreta.");
+  assert.ok(!invalidLogin.body.includes("senha-forte-1234") && !invalidLogin.body.includes("senha-mkt-5678"));
+
+  const primaryOnlyApp = buildApp({
+    AUTH_DISABLED: "false",
+    APP_ACCESS_PASSWORD: "senha-forte-1234",
+    APP_MKT_ACCESS_PASSWORD: undefined,
+    APP_SESSION_SECRET: "segredo-de-no-minimo-32-caracteres-xxxx",
+  });
+  const mktWithoutConfig = await requestRaw(
+    primaryOnlyApp,
+    "POST",
+    "/api/auth/login",
+    JSON.stringify({ password: "senha-mkt-5678" })
+  );
+  assert.equal(mktWithoutConfig.status, 401, "sem APP_MKT_ACCESS_PASSWORD a senha secundária não autentica");
+  const primaryStillWorks = await requestRaw(
+    primaryOnlyApp,
+    "POST",
+    "/api/auth/login",
+    JSON.stringify({ password: "senha-forte-1234" })
+  );
+  assert.equal(primaryStillWorks.status, 200, "senha principal continua válida sem a secundária");
+
   // 6. Logout invalida a sessão.
   const logout = await requestRaw(enabledApp, "POST", "/api/auth/logout", null, setCookie[0]);
   assert.equal(logout.status, 200);

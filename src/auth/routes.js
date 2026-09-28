@@ -7,10 +7,10 @@ const cookie = require("cookie");
 const signature = require("cookie-signature");
 const {
   authDisabled,
-  accessPassword,
   sessionSecret,
   isProduction,
   cookieName,
+  passwordAccepted,
 } = require("./config");
 const { checkRateLimit, isAuthenticated } = require("./middleware");
 
@@ -63,7 +63,7 @@ router.post("/login", express.json(), (req, res) => {
   }
 
   const { password } = req.body || {};
-  if (password !== accessPassword) {
+  if (!passwordAccepted(password)) {
     return res.status(401).json({ error: "Senha incorreta." });
   }
 
