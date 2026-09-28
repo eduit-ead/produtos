@@ -112,6 +112,33 @@ function decodeRuntimeAssets(runtimeAssets = {}) {
   return decoded;
 }
 
+const STUDIO_CANDIDATE_KEY = /^studio\/[A-Za-z0-9_-]+\/(?:foto|fundo)$/;
+
+async function resolveRuntimeAssets(body = {}) {
+  const decoded = decodeRuntimeAssets(body.runtimeAssets);
+  const refs = body.runtimeAssetRefs;
+  if (refs == null) return decoded;
+  if (typeof refs !== "object" || Array.isArray(refs)) {
+    throw new Error("Referência de imagem inválida.");
+  }
+  const entries = Object.entries(refs);
+  if (entries.length > 4) {
+    throw new Error("Referência de imagem inválida.");
+  }
+  if (entries.length === 0) return decoded;
+  const storage = createStorageProvider({ baseDir: getCatalogDir() });
+  for (const [assetId, key] of entries) {
+    if (typeof key !== "string" || assetId !== key || !STUDIO_CANDIDATE_KEY.test(key)) {
+      throw new Error("Referência de imagem inválida.");
+    }
+    if (!(await storage.exists(key))) {
+      throw new Error("Imagem candidata não encontrada.");
+    }
+    decoded[assetId] = await storage.read(key);
+  }
+  return decoded;
+}
+
 function sanitizeFilename(name) {
   const base = path.basename(String(name || "asset").normalize("NFD"));
   const safe = base
@@ -312,13 +339,13 @@ function createRouter() {
     const id = path.basename(req.params.id);
     try {
       const body = req.body || {};
-      const runtimeAssets = decodeRuntimeAssets(body.runtimeAssets);
+      const runtimeAssets = await resolveRuntimeAssets(body);
       const buffer = await renderSavedTemplate(id, body.values || body, runtimeAssets);
       res.setHeader("Content-Type", "image/png");
       res.send(buffer);
     } catch (err) {
       console.error(err);
-      const status = err.message?.includes("inválido") || err.message?.includes("obrigatória") || err.message?.includes("não encontrada")
+      const status = err.message?.includes("inválid") || err.message?.includes("obrigatória") || err.message?.includes("não encontrada")
         ? 400
         : 500;
       return res.status(status).json({ error: err.message || "Erro ao renderizar." });
@@ -363,7 +390,7 @@ function createRouter() {
     const id = path.basename(req.params.id);
     try {
       const body = req.body || {};
-      const runtimeAssets = decodeRuntimeAssets(body.runtimeAssets);
+      const runtimeAssets = await resolveRuntimeAssets(body);
       const png = await renderSavedTemplate(id, body.values || body, runtimeAssets);
       const buffer = await convertCardToWhatsAppJpeg(png);
       res.setHeader("Content-Type", "image/jpeg");
@@ -371,7 +398,7 @@ function createRouter() {
       res.send(buffer);
     } catch (err) {
       console.error(err);
-      const status = err.message?.includes("inválido") || err.message?.includes("obrigatória") || err.message?.includes("não encontrada")
+      const status = err.message?.includes("inválid") || err.message?.includes("obrigatória") || err.message?.includes("não encontrada")
         ? 400
         : 500;
       return res.status(status).json({ error: err.message || "Erro ao renderizar WhatsApp." });
@@ -384,7 +411,8 @@ function createRouter() {
 
   router.post("/finished-pieces", express.json({ limit: "2mb" }), async (req, res) => {
     try {
-      const { templateId, values, runtimeAssets, collectionId, itemId } = req.body || {};
+      const { templateId, values, collectionId, itemId } = req.body || {};
+      const runtimeAssets = await resolveRuntimeAssets(req.body || {});
       const piece = await finishedPiecesService.createFromRender({
         templateId,
         values: values || {},
@@ -396,7 +424,7 @@ function createRouter() {
       res.json({ ok: true, piece });
     } catch (err) {
       console.error(err);
-      const status = err.message?.includes("obrigatório") || err.message?.includes("não encontrado") ? 400 : 500;
+      const status = err.message?.includes("obrigatório") || err.message?.includes("não encontrad") || err.message?.includes("inválid") ? 400 : 500;
       res.status(status).json({ error: err.message || "Erro ao finalizar peça." });
     }
   });

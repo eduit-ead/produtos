@@ -10,6 +10,7 @@ const state = {
   backgroundBuffers: {},
   photoVersions: [],
   photoBuffers: {},
+  photoRefs: {},
   photoActiveKey: null,
   generatingPhoto: false,
   photoPrompt: { sexo: "Indiferente", ambiente: "", descricao: "" },
@@ -185,10 +186,10 @@ async function selectTemplate(id) {
   const advanced = byId("advancedLink");
   if (tpl.editable === false) {
     badge.classList.remove("hidden");
-    advanced.classList.add("hidden");
+    if (advanced) advanced.classList.add("hidden");
   } else {
     badge.classList.add("hidden");
-    advanced.classList.remove("hidden");
+    if (advanced) advanced.classList.remove("hidden");
   }
 
   byId("stageSelect").classList.add("hidden");
@@ -508,14 +509,20 @@ function scheduleRender() {
 function getRenderPayload() {
   const payload = { values: state.values };
   const runtimeAssets = {};
+  const runtimeAssetRefs = {};
   if (state.activeBackgroundKey && state.backgroundBuffers[state.activeBackgroundKey]) {
     runtimeAssets[state.activeBackgroundKey] = state.backgroundBuffers[state.activeBackgroundKey];
   }
-  if (state.photoActiveKey && state.photoBuffers[state.photoActiveKey]) {
+  if (state.photoActiveKey && state.photoRefs[state.photoActiveKey]) {
+    runtimeAssetRefs[state.photoActiveKey] = state.photoRefs[state.photoActiveKey];
+  } else if (state.photoActiveKey && state.photoBuffers[state.photoActiveKey]) {
     runtimeAssets[state.photoActiveKey] = state.photoBuffers[state.photoActiveKey];
   }
   if (Object.keys(runtimeAssets).length > 0) {
     payload.runtimeAssets = runtimeAssets;
+  }
+  if (Object.keys(runtimeAssetRefs).length > 0) {
+    payload.runtimeAssetRefs = runtimeAssetRefs;
   }
   return payload;
 }
@@ -578,6 +585,7 @@ function showSelect() {
   state.backgroundBuffers = {};
   state.photoVersions = [];
   state.photoBuffers = {};
+  state.photoRefs = {};
   state.photoActiveKey = null;
   state.generatingPhoto = false;
   state.photoPrompt = { sexo: "Indiferente", ambiente: "", descricao: "" };
@@ -1128,16 +1136,11 @@ async function generatePhoto(dryRun) {
       }),
     });
 
-    const key = res.metadata?.storage?.key || res.metadata?.runId;
+    const key = res.metadata?.storage?.key;
     const url = res.metadata?.urls?.foto;
-    if (!url) throw new Error("Resposta não trouxe URL da fotografia.");
+    if (!key || !url) throw new Error("Resposta não trouxe URL da fotografia.");
 
-    const fetchRes = await fetch(url);
-    if (!fetchRes.ok) throw new Error("Falha ao carregar fotografia gerada.");
-    const buffer = await fetchRes.arrayBuffer();
-    const base64 = arrayBufferToBase64(buffer);
-
-    state.photoBuffers[key] = base64;
+    state.photoRefs[key] = key;
     const version = {
       key,
       runId: res.metadata.runId,
