@@ -846,11 +846,24 @@ async function renderTemplates() {
         for (const v of full.variables || []) {
           values[v.key] = v.defaultValue !== undefined ? v.defaultValue : (v.type === "boolean" ? false : "");
         }
-        const blob = await api.blob("/api/render", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ template: full, values }),
-        });
+        const blob = full.rendererType === "cruzeiro-pos-v1"
+          ? await api.blob(`/api/render/${encodeURIComponent(full.id)}`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                values: {
+                  titulo: "Administração",
+                  modalidade: "EAD",
+                  duracao: "6 meses",
+                  imagemFundo: "pos-preview-fundo.png",
+                },
+              }),
+            })
+          : await api.blob("/api/render", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ template: full, values }),
+            });
         const url = URL.createObjectURL(blob);
         const thumb = card.querySelector(".thumb");
         thumb.innerHTML = `<img src="${url}" alt="${escapeHtml(t.name || t.id)}">`;
