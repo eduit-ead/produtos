@@ -17,7 +17,7 @@ node_modules
 
 # Dados de produção, planilhas privadas, uploads e imagens geradas.
 # Templates em data/templates e os assets padrão em data/assets permanecem na imagem.
-input
+input/*
 data/imports
 data/reference
 data/assets/dna-work-photo-*
@@ -26,6 +26,7 @@ output
 *.xls
 *.xlsm
 *.csv
+!input/pos-graduacao-cruzeiro.xlsx
 *.zip
 .zips
 zips
