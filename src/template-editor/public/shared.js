@@ -29,6 +29,21 @@ const api = {
   },
 };
 
+function requestPosTemplatePreview(templateId) {
+  return api.blob(`/api/render/${encodeURIComponent(templateId)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      values: {
+        titulo: "Administração",
+        modalidade: "EAD",
+        duracao: "6 meses",
+        imagemFundo: "pos-preview-fundo.png",
+      },
+    }),
+  });
+}
+
 let cachedSystemStatus = null;
 let systemStatusPromise = null;
 

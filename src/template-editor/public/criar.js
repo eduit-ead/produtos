@@ -101,12 +101,13 @@ async function loadCollections() {
 
 async function renderThumbnail(template) {
   try {
-    const values = getDefaultValues(template);
-    const blob = await api.blob(`/api/render/${encodeURIComponent(template.id)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(values),
-    });
+    const blob = template.rendererType === "cruzeiro-pos-v1"
+      ? await requestPosTemplatePreview(template.id)
+      : await api.blob(`/api/render/${encodeURIComponent(template.id)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(getDefaultValues(template)),
+        });
     return URL.createObjectURL(blob);
   } catch (err) {
     console.error("Falha ao gerar miniatura:", err);

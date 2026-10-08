@@ -842,23 +842,16 @@ async function renderTemplates() {
     (async () => {
       try {
         const full = await api.json(`/api/templates/${encodeURIComponent(t.id)}`);
+        const meta = card.querySelector(".meta");
+        if (meta) {
+          meta.textContent = `${full.canvas?.width || 0}×${full.canvas?.height || 0} px · ${(full.variables || []).length} variáveis`;
+        }
         const values = {};
         for (const v of full.variables || []) {
           values[v.key] = v.defaultValue !== undefined ? v.defaultValue : (v.type === "boolean" ? false : "");
         }
         const blob = full.rendererType === "cruzeiro-pos-v1"
-          ? await api.blob(`/api/render/${encodeURIComponent(full.id)}`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                values: {
-                  titulo: "Administração",
-                  modalidade: "EAD",
-                  duracao: "6 meses",
-                  imagemFundo: "pos-preview-fundo.png",
-                },
-              }),
-            })
+          ? await requestPosTemplatePreview(full.id)
           : await api.blob("/api/render", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
