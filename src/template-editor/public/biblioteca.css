@@ -58,6 +58,68 @@
   word-break: break-all;
 }
 
+.upload-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+  max-width: 520px;
+}
+
+.upload-composer[hidden],
+.upload-preview[hidden],
+.upload-error[hidden] {
+  display: none;
+}
+
+.upload-drop {
+  position: relative;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  padding: 28px 16px;
+  text-align: center;
+  color: var(--text-muted);
+  background: var(--surface-2);
+}
+
+.upload-drop.dragover { border-color: var(--accent, #3b82f6); }
+
+.upload-drop input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.upload-preview {
+  max-width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+
+.upload-error { color: #b42318; }
+
+.upload-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.upload-card .thumb {
+  height: 180px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.upload-card .thumb img { width: 100%; height: 100%; object-fit: contain; }
+.upload-card h3 { margin: 0; font-size: 15px; }
+.upload-card .meta { color: var(--text-muted); font-size: 12px; line-height: 1.45; word-break: break-word; }
+.upload-card .url { font-size: 12px; word-break: break-all; }
+.upload-card .actions { display: flex; gap: 8px; }
+
 .menu {
   position: relative;
 }
@@ -124,3 +186,35 @@
 }
 
 .items-table tr:last-child td { border-bottom: none; }
+
+.modal.modal-editorial { max-width: 880px; }
+
+.editorial-detail h4 {
+  margin: 18px 0 10px;
+}
+
+.editorial-field { margin-bottom: 12px; }
+
+.editorial-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.editorial-value {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.editorial-detail textarea {
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+}
+
+.editorial-save-status { min-height: 1.2em; margin: 8px 0; }
+.editorial-save-status.success { color: var(--success, #1f7a3a); }
+.editorial-save-status.error { color: var(--danger, #b42318); }

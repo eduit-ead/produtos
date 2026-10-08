@@ -58,10 +58,13 @@ function assemblePrompt(templateImageGeneration, fields = {}) {
   const description = fields.prompt_imagem || fields.description || "";
   if (description) parts.push(description);
 
+  const castText = normalizeLine(fields.cast);
+  const peopleText = normalizeLine(fields.people);
   const ordered = [
     fields.environment,
     fields.activity,
-    fields.people,
+    castText && peopleText ? `Protagonista: ${peopleText}` : fields.people,
+    castText ? `Elenco / pessoas adicionais: ${castText}` : "",
     fields.composition,
     fields.details,
   ];
@@ -73,7 +76,9 @@ function assemblePrompt(templateImageGeneration, fields = {}) {
   if (cfg.negativePrompt) negative.push(cfg.negativePrompt);
   if (fields.avoid) negative.push(fields.avoid);
 
-  const rules = getImageGenerationRules();
+  const rules = Object.prototype.hasOwnProperty.call(fields, "imageRules")
+    ? fields.imageRules
+    : getImageGenerationRules();
   if (rules) parts.push(rules);
 
   const cleanParts = nonEmptyUnique(parts);
@@ -83,6 +88,61 @@ function assemblePrompt(templateImageGeneration, fields = {}) {
   const negativePrompt = cleanNegative.join("\n\n");
 
   return { prompt, negativePrompt };
+}
+
+const POS_COLLECTION_ID = "pos-graduacao-cruzeiro";
+
+const POS_COMPOSITION_DIRECTION =
+  "Composição visual equilibrada, com a atividade principal distribuída entre o centro e o centro-direita. O protagonista deve permanecer claramente identificável, com demais pessoas e objetos distribuídos naturalmente ao redor da ação. Preservar apenas uma área limpa no canto superior esquerdo para aplicação da marca, sem deslocar todo o grupo para a direita. Evitar concentração excessiva de pessoas no lado direito, grandes áreas vazias artificiais e sujeitos cortados nas bordas.";
+
+const POS_AVOID_DIRECTION =
+  "Evitar todas as pessoas concentradas no terço direito, composição excessivamente lateral, grandes áreas vazias artificiais, grupo espremido e personagens cortados nas bordas.";
+
+function withoutEmptyLeftBias(text) {
+  return normalizeLine(text)
+    .replace(/Preservar o terço esquerdo e a região inferior esquerda[^.]*\./gi, "")
+    .replace(/A região inferior esquerda do card deve continuar livre[^.]*\./gi, "")
+    .replace(/[^.]*\b(?:concentrad[oa] no lado direito|personagem no centro-direita)\b[^.]*\./gi, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function posImageGenerationRules() {
+  return getImageGenerationRules()
+    .replace(
+      "- Público brasileiro prioritário entre 20 e 35 anos.",
+      "- Público brasileiro adulto e profissional, prioritariamente entre 28 e 45 anos, podendo variar quando o contexto profissional do curso justificar."
+    )
+    .replace(
+      "A distribuição deve ser avaliada no catálogo completo de 128 cursos, e não isoladamente em cada lote.",
+      "A distribuição deve ser avaliada no catálogo completo da coleção de Pós-Graduação, e não isoladamente em cada imagem ou lote."
+    )
+    .replace(
+      `- Aproximadamente 70% das cenas com uma pessoa.
+- Aproximadamente 25% das cenas com duas pessoas.
+- Aproximadamente 5% das cenas com pequenos grupos.`,
+      "A quantidade de pessoas na cena deve seguir o campo visual_elenco e a atividade central do curso. Não forçar cena individual nem grupo quando isso contrariar o contexto."
+    )
+    .replace(
+      "- A região inferior esquerda do card deve continuar livre para logo, nome do curso e informações acadêmicas.",
+      "- Preservar apenas uma área visual relativamente limpa no canto superior esquerdo para aplicação da marca. A região inferior da fotografia poderá ser coberta pelo template e não precisa permanecer livre."
+    );
+}
+
+function applyPosImageDirection(fields = {}, collectionId) {
+  if (collectionId !== POS_COLLECTION_ID) return fields;
+  const description = withoutEmptyLeftBias(fields.prompt_imagem || fields.description || "");
+  const courseComposition = withoutEmptyLeftBias(fields.composition);
+  const avoid = [normalizeLine(fields.avoid), POS_AVOID_DIRECTION].filter(Boolean).join("\n\n");
+  return {
+    ...fields,
+    description,
+    prompt_imagem: description,
+    composition: [POS_COMPOSITION_DIRECTION, POS_AVOID_DIRECTION, courseComposition].filter(Boolean).join("\n\n"),
+    avoid,
+    imageRules: posImageGenerationRules(),
+  };
 }
 
 function estimateImageCost(model, quality, size) {
@@ -215,6 +275,7 @@ async function generateStudioBackground({
     environment: visual.environment || "",
     activity: visual.activity || "",
     people: visual.people || "",
+    cast: visual.cast || "",
     composition: visual.composition || "",
     details: visual.details || "",
     avoid: visual.avoid || "",
@@ -224,7 +285,8 @@ async function generateStudioBackground({
     throw new Error("Descrição da cena é obrigatória para gerar o fundo.");
   }
 
-  const { prompt } = assemblePrompt(cfg, fields);
+  const directed = applyPosImageDirection(fields, collectionId);
+  const { prompt } = assemblePrompt(cfg, directed);
   if (!prompt.trim()) {
     throw new Error("Prompt final montado ficou vazio.");
   }
@@ -440,6 +502,11 @@ async function approveStudioPhoto(runId, { catalogDir, assetsDir } = {}) {
 
 module.exports = {
   assemblePrompt,
+  applyPosImageDirection,
+  POS_COLLECTION_ID,
+  POS_COMPOSITION_DIRECTION,
+  POS_AVOID_DIRECTION,
+  posImageGenerationRules,
   generateStudioBackground,
   generateStudioPhoto,
   approveStudioPhoto,

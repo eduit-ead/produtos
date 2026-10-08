@@ -50,6 +50,7 @@ const {
   archiveCollection,
   duplicateCollection,
   listRecords,
+  patchRecordFields,
   importRecordsFromFile,
   usesPostgres,
 } = require("../collections/store");
@@ -62,6 +63,7 @@ const ExcelJS = require("exceljs");
 const { validateCollection, isSafeRelative, ROOT } = require("../collections/schema");
 const { getDataSource } = require("../data-sources");
 const { readPreview, readXlsxSheets, validatePrimaryKey } = require("../data-sources/raw-source-reader");
+const { createUploadRouter } = require("../uploads/image-uploads");
 
 const TEMPLATES_DIR = RUNTIME.templatesDir;
 const ASSETS_DIR = RUNTIME.assetsDir;
@@ -870,6 +872,27 @@ function createRouter() {
     }
   });
 
+  router.patch("/collections/:id/records/:slug", express.json({ limit: "1mb" }), async (req, res) => {
+    try {
+      if (req.params.id !== "pos-graduacao-cruzeiro") {
+        return res.status(400).json({ error: "Nesta fase a edição de campos está habilitada apenas para a coleção de Pós-Graduação." });
+      }
+      const fields = req.body?.fields;
+      if (!fields || typeof fields !== "object" || Array.isArray(fields)) {
+        return res.status(400).json({ error: "Informe fields com os campos a atualizar." });
+      }
+      const keys = Object.keys(fields);
+      if (keys.length !== 1 || keys[0] !== "prompt_imagem" || typeof fields.prompt_imagem !== "string") {
+        return res.status(400).json({ error: "Nesta fase apenas prompt_imagem pode ser atualizado." });
+      }
+      const record = await patchRecordFields(req.params.id, req.params.slug, { prompt_imagem: fields.prompt_imagem });
+      res.json(record);
+    } catch (err) {
+      console.error(err.code || err.message);
+      res.status(err.status || 500).json({ error: err.expose ? err.message : "Erro ao salvar o campo." });
+    }
+  });
+
   router.get("/collections/:id/records/:slug", async (req, res) => {
     try {
       const collection = await loadCollection(req.params.id);
@@ -1371,9 +1394,14 @@ function createRouter() {
     await serveCatalogFile(req.params.collectionId, req.params.slug, req.params.file, res);
   });
 
+  router.use(createUploadRouter());
+
   router.get("/files/:encodedKey", async (req, res) => {
     try {
       const key = Buffer.from(req.params.encodedKey, "base64url").toString("utf8");
+      if (key === "uploads/index.json") {
+        return res.status(404).json({ error: "Arquivo não encontrado." });
+      }
       const storage = createStorageProvider({ baseDir: getCatalogDir() });
 
       if (process.env.STORAGE_PROVIDER === "s3") {
@@ -1385,7 +1413,11 @@ function createRouter() {
 
       const buffer = await storage.read(key);
       const ext = path.extname(key).toLowerCase();
-      const mime = ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : "image/png";
+      const mime = ext === ".jpg" || ext === ".jpeg"
+        ? "image/jpeg"
+        : ext === ".webp"
+          ? "image/webp"
+          : "image/png";
       res.setHeader("Content-Type", mime);
       res.setHeader("Cache-Control", "public, max-age=60");
       res.end(buffer);

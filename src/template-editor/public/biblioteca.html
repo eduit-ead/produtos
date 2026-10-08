@@ -20,6 +20,7 @@
       <div class="tab" data-tab="bases">Bases de conteúdo</div>
       <div class="tab" data-tab="templates">Templates</div>
       <div class="tab" data-tab="assets">Assets</div>
+      <div class="tab" data-tab="uploads">Uploads</div>
     </div>
 
     <section id="tab-finished" class="tab-panel active">
@@ -73,6 +74,29 @@
         <input type="text" id="assetSearch" placeholder="Buscar assets..." style="max-width:260px">
       </div>
       <div id="assetsList" class="grid grid-6"></div>
+    </section>
+
+    <section id="tab-uploads" class="tab-panel">
+      <div class="action-bar">
+        <button type="button" id="btnPickUpload" class="btn-primary">Enviar imagem</button>
+        <span class="spacer"></span>
+        <span id="uploadsCount" class="hint"></span>
+      </div>
+      <form id="uploadComposer" class="card upload-composer" hidden>
+        <div id="uploadDrop" class="upload-drop">
+          Arraste uma imagem PNG, JPG ou WebP, ou clique para escolher.
+          <input type="file" id="uploadFile" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp">
+        </div>
+        <img id="uploadPreview" class="upload-preview" alt="Prévia da imagem" hidden>
+        <label class="hint" for="uploadName">Nome amigável (opcional)</label>
+        <input type="text" id="uploadName" class="input" maxlength="120" placeholder="Ex.: banner-pos-administracao">
+        <div class="actions">
+          <button type="submit" id="btnSendUpload" class="btn-primary" disabled>Enviar</button>
+          <button type="button" id="btnCancelUpload" class="btn-secondary">Cancelar</button>
+        </div>
+        <p id="uploadError" class="hint upload-error" hidden></p>
+      </form>
+      <div id="uploadsList" class="grid grid-3"></div>
     </section>
 
     <div id="status" class="status ready">Pronto</div>

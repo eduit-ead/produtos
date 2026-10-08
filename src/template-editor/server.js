@@ -7,6 +7,7 @@
 
 // Carrega variáveis de ambiente ANTES de qualquer módulo que leia process.env.
 require("dotenv").config();
+require("./renderer/pos-fontconfig").ensurePosFontconfig();
 
 const path = require("path");
 const express = require("express");
@@ -19,6 +20,7 @@ const { createMigrationRouter } = require("../migration/routes");
 const { createDatabaseRouter } = require("../db/routes");
 const { closeDatabase } = require("../db/postgres");
 const { sendPublishedImage } = require("../publications/service");
+const { sendUploadedImage } = require("../uploads/image-uploads");
 
 // Garante diretórios de runtime e copia defaults quando em volume externo.
 seedRuntimeDefaults();
@@ -67,8 +69,9 @@ app.use("/api/auth", (req, res, next) => {
 });
 app.use("/api/auth", authRoutes);
 
-// Imagem publicada: única rota de arquivo sem autenticação.
+// Imagens públicas: publicação de registros e uploads manuais. Sem autenticação.
 app.get("/api/public/images/:collectionId/:itemId", sendPublishedImage);
+app.get("/api/public/uploads/:id", sendUploadedImage);
 
 // Protege a API, exceto health e auth.
 app.use("/api", (req, res, next) => {

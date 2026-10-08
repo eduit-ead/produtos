@@ -1,0 +1,56 @@
+{
+  "id": "pos-graduacao-cruzeiro",
+  "name": "Pós-Graduação Cruzeiro do Sul",
+  "description": "Coleção genérica da Pós-Graduação Cruzeiro do Sul, isolada da Graduação. Fonte local: input/pos-graduacao-cruzeiro.xlsx, somente a aba Cursos. Template visual: cruzeiro-pos-v1 (1080×1080). Não usa cruzeiro-graduacao-v1.",
+  "source": {
+    "type": "xlsx",
+    "path": "input/pos-graduacao-cruzeiro.xlsx",
+    "sheet": "Cursos"
+  },
+  "primaryKey": "course_id",
+  "displayField": "Curso",
+  "searchFields": ["Curso", "Modalidade", "Formação", "slug"],
+  "fieldMappings": {
+    "title": "Curso",
+    "subtitle": "descricao_curta",
+    "prompt": "prompt_imagem",
+    "sourceImage": "Image",
+    "status": "conteudo_status",
+    "slug": "slug"
+  },
+  "filters": [
+    { "field": "modalidade", "label": "Modalidade" },
+    { "field": "formacao", "label": "Formação" },
+    { "field": "conteudo_status", "label": "Status" }
+  ],
+  "templateIds": ["cruzeiro-pos-v1"],
+  "defaultTemplateId": "cruzeiro-pos-v1",
+  "templateBindings": [
+    { "templateVariable": "titulo", "sourceField": "curso" },
+    { "templateVariable": "modalidade", "sourceField": "modalidade" },
+    { "templateVariable": "duracao", "sourceField": "duracao" },
+    { "templateVariable": "imagemFundo", "sourceField": "image" }
+  ],
+  "productionBackgroundBinding": { "variable": "imagemFundo" },
+  "filenamePattern": "{{slug}}",
+  "outputColumns": {
+    "backgroundFilename": "imagem_fundo_arquivo",
+    "cardFilename": "imagem_card_arquivo",
+    "whatsappFilename": "imagem_whatsapp_arquivo",
+    "backgroundUrl": "imagem_fundo_url",
+    "cardUrl": "imagem_card_url",
+    "whatsappUrl": "imagem_whatsapp_url",
+    "productionStatus": "imagem_producao_status",
+    "templateId": "imagem_template_id",
+    "updatedAt": "imagem_atualizada_em"
+  },
+  "imageGenerationBindings": {
+    "descriptionField": "prompt_imagem",
+    "environmentField": "visual_ambiente",
+    "activityField": "visual_atividade",
+    "peopleField": "visual_personagem",
+    "castField": "visual_elenco",
+    "compositionField": "visual_composicao",
+    "avoidField": "visual_evitar"
+  }
+}

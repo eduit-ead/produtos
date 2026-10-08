@@ -261,6 +261,53 @@ class XlsxDataSource extends DataSource {
     await workbook.xlsx.writeFile(sourcePath);
     return { mode: "sync", plan, backup: backupPath };
   }
+
+  async patchRecordFields(recordId, patch) {
+    if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+      const err = new Error("Campos para atualizar devem ser um objeto.");
+      err.status = 400;
+      err.expose = true;
+      throw err;
+    }
+    const keys = Object.keys(patch);
+    if (keys.length === 0) {
+      const err = new Error("Nenhum campo para atualizar.");
+      err.status = 400;
+      err.expose = true;
+      throw err;
+    }
+
+    const workbook = await this._loadWorkbook();
+    const sheet = this._getSheet(workbook);
+    const headerMap = getHeaderMap(sheet);
+    const rowNumber = this._findRowByPrimaryKey(sheet, headerMap, String(recordId));
+    if (!rowNumber) return null;
+
+    const row = sheet.getRow(rowNumber);
+    for (const key of keys) {
+      const col = headerMap[key] || headerMap[normalizeHeader(key)];
+      if (!col) {
+        const err = new Error(`Campo "${key}" não existe na planilha.`);
+        err.status = 400;
+        err.expose = true;
+        throw err;
+      }
+      if (typeof patch[key] !== "string") {
+        const err = new Error(`O campo "${key}" deve ser texto.`);
+        err.status = 400;
+        err.expose = true;
+        throw err;
+      }
+      row.getCell(col).value = patch[key];
+    }
+
+    const filePath = this._resolvedPath();
+    const tmpPath = `${filePath}.tmp-write`;
+    await workbook.xlsx.writeFile(tmpPath);
+    fs.copyFileSync(tmpPath, filePath);
+    fs.rmSync(tmpPath, { force: true });
+    return this.getRecord(String(recordId));
+  }
 }
 
 module.exports = { XlsxDataSource };

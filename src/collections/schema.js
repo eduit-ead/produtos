@@ -112,6 +112,7 @@ function validateCollection(collection) {
       "environmentField",
       "activityField",
       "peopleField",
+      "castField",
       "compositionField",
       "detailsField",
       "avoidField",

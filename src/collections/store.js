@@ -77,6 +77,23 @@ async function listRecords(id, page = null) {
   };
 }
 
+async function patchRecordFields(collectionId, recordId, patch) {
+  assertMode();
+  const collection = await loadCollection(collectionId);
+  if (usesPostgres()) {
+    const updated = await repo.patchRecordFields(collection.id, recordId, patch);
+    if (!updated) throw exposeError("Registro não encontrado.", 404);
+    return updated;
+  }
+  const source = getFileDataSource(collection);
+  if (typeof source.patchRecordFields !== "function") {
+    throw exposeError("Esta fonte não permite edição de campos.", 400);
+  }
+  const updated = await source.patchRecordFields(recordId, patch);
+  if (!updated) throw exposeError("Registro não encontrado.", 404);
+  return updated;
+}
+
 async function importRecordsFromFile(collection, { onConflict = "merge" } = {}) {
   assertMode();
   if (!usesPostgres()) {
@@ -96,5 +113,6 @@ module.exports = {
   archiveCollection,
   duplicateCollection,
   listRecords,
+  patchRecordFields,
   importRecordsFromFile,
 };

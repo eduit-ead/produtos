@@ -15,6 +15,7 @@ const { renderTemplate } = require("./index");
 const { loadAssetBuffer } = require("./utils");
 const { renderCourseCard, prepareBackgroundBuffer } = require("../../render-card");
 const { renderDnaWorkVagasTemplate } = require("./dna-work-vagas");
+const { renderCruzeiroPosV1 } = require("./cruzeiro-pos-v1");
 
 async function renderSavedTemplate(templateId, values = {}, runtimeAssets = {}) {
   const filePath = path.join(RUNTIME.templatesDir, `${templateId}.json`);
@@ -50,6 +51,28 @@ async function renderSavedTemplate(templateId, values = {}, runtimeAssets = {}) 
 
   if (template.rendererType === "dna-work-vagas") {
     return renderDnaWorkVagasTemplate(values, runtimeAssets);
+  }
+
+  if (template.rendererType === "cruzeiro-pos-v1") {
+    const required = ["titulo", "modalidade", "duracao", "imagemFundo"];
+    for (const key of required) {
+      if (values[key] === undefined || values[key] === null || String(values[key]).trim() === "") {
+        throw new Error(`Variável obrigatória ausente: ${key}`);
+      }
+    }
+
+    const bgBuffer = await loadAssetBuffer(values.imagemFundo, runtimeAssets);
+    if (!bgBuffer) {
+      throw new Error(`Imagem de fundo não encontrada: ${values.imagemFundo}`);
+    }
+
+    const rendered = await renderCruzeiroPosV1({
+      titulo: values.titulo,
+      modalidade: values.modalidade,
+      duracao: values.duracao,
+      backgroundBuffer: bgBuffer,
+    });
+    return rendered.buffer;
   }
 
   return renderTemplate(template, values, { runtimeAssets });

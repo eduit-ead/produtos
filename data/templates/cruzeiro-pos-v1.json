@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "id": "cruzeiro-pos-v1",
+  "name": "Pós-Graduação Cruzeiro do Sul — v1",
+  "rendererType": "cruzeiro-pos-v1",
+  "editable": false,
+  "canvas": {
+    "width": 1080,
+    "height": 1080,
+    "background": "#071833"
+  },
+  "variables": [
+    {
+      "key": "titulo",
+      "label": "Curso",
+      "type": "string",
+      "defaultValue": "Administração",
+      "required": true
+    },
+    {
+      "key": "modalidade",
+      "label": "Modalidade",
+      "type": "string",
+      "defaultValue": "EAD",
+      "required": true
+    },
+    {
+      "key": "duracao",
+      "label": "Duração",
+      "type": "string",
+      "defaultValue": "6 meses",
+      "required": true
+    },
+    {
+      "key": "imagemFundo",
+      "label": "Imagem de fundo",
+      "type": "image",
+      "defaultValue": "",
+      "required": true
+    }
+  ],
+  "assets": [],
+  "layers": [],
+  "metadata": {
+    "createdAt": "2026-10-05T18:00:00.000Z",
+    "updatedAt": "2026-10-05T18:00:00.000Z",
+    "phase": "3.1"
+  }
+}

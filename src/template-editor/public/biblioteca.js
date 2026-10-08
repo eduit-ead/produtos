@@ -3,6 +3,9 @@ const state = {
   templates: [],
   assets: [],
   finished: { items: [], total: 0, page: 1, limit: 12 },
+  uploads: [],
+  uploadFile: null,
+  uploadPreviewUrl: "",
   baseStats: {},
   activeTab: "finished",
   showArchived: false,
@@ -17,7 +20,7 @@ async function init() {
 
   const params = new URLSearchParams(window.location.search);
   const requested = params.get("tab");
-  if (requested && ["finished", "bases", "templates", "assets"].includes(requested)) {
+  if (requested && ["finished", "bases", "templates", "assets", "uploads"].includes(requested)) {
     switchTab(requested);
   }
   const baseParam = params.get("base");
@@ -33,6 +36,7 @@ async function init() {
 
   byId("assetUpload").addEventListener("change", handleAssetUpload);
   byId("assetSearch").addEventListener("input", renderAssets);
+  initUploads();
 
   byId("finishedSearch").addEventListener("keydown", (e) => { if (e.key === "Enter") loadFinished(); });
   byId("btnFinishedFilter").addEventListener("click", loadFinished);
@@ -56,6 +60,7 @@ function switchTab(tab) {
   if (tab === "bases") renderBases();
   if (tab === "templates") renderTemplates();
   if (tab === "assets") renderAssets();
+  if (tab === "uploads") renderUploads();
 }
 
 async function loadAll() {
@@ -69,7 +74,7 @@ async function loadAll() {
     state.templates = templates;
     state.assets = assets;
     populateFinishedTemplateFilter();
-    await Promise.all([loadFinished(), loadBaseStats()]);
+    await Promise.all([loadFinished(), loadBaseStats(), loadUploads()]);
     renderBases();
     renderTemplates();
     renderAssets();
@@ -387,8 +392,21 @@ async function openItemsModal(id) {
   }
 }
 
+const POS_COLLECTION_ID = "pos-graduacao-cruzeiro";
+const EDITORIAL_FIELDS = [
+  { key: "visual_tema", label: "Tema" },
+  { key: "visual_personagem", label: "Protagonista" },
+  { key: "visual_elenco", label: "Elenco" },
+  { key: "visual_ambiente", label: "Ambiente" },
+  { key: "visual_objetos", label: "Objetos" },
+  { key: "visual_atividade", label: "Atividade" },
+  { key: "visual_composicao", label: "Composição" },
+  { key: "visual_evitar", label: "Evitar" },
+];
+
 function renderItemsModal(id, records) {
   const collection = state.collections.find((c) => c.id === id);
+  const editorial = id === POS_COLLECTION_ID;
   const body = document.createElement("div");
   body.innerHTML = `<p class="hint">${escapeHtml(collection?.name || id)} · ${records.length} registros</p>`;
 
@@ -405,10 +423,11 @@ function renderItemsModal(id, records) {
     }
     const headers = [...keys];
     table.innerHTML = `
-      <thead><tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead>
+      <thead><tr>${editorial ? "<th>Conteúdo</th>" : ""}${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead>
       <tbody>
         ${records.slice(0, 50).map((r) => `
           <tr>
+            ${editorial ? `<td><button type="button" class="btn-secondary open-editorial" data-slug="${escapeHtml(r.slug)}">Abrir</button></td>` : ""}
             ${headers.map((h) => {
               const value = h === "id" ? r.id : h === "title" ? r.title : h === "slug" ? r.slug : h === "sourceStatus" ? r.sourceStatus : (r.fields || {})[h];
               return `<td>${escapeHtml(String(value ?? "").slice(0, 80))}</td>`;
@@ -422,6 +441,9 @@ function renderItemsModal(id, records) {
     if (records.length > 50) {
       body.innerHTML += `<p class="hint">Mostrando 50 de ${records.length} registros.</p>`;
     }
+    body.querySelectorAll(".open-editorial").forEach((btn) => {
+      btn.addEventListener("click", () => openEditorialModal(id, btn.dataset.slug));
+    });
   }
 
   createModal({
@@ -429,6 +451,114 @@ function renderItemsModal(id, records) {
     body,
     footer: [{ label: "Fechar", className: "btn-secondary", close: true }],
   });
+}
+
+function appendReadOnlyField(parent, label, value) {
+  const block = document.createElement("div");
+  block.className = "editorial-field";
+  const title = document.createElement("div");
+  title.className = "editorial-label";
+  title.textContent = label;
+  const text = document.createElement("p");
+  text.className = "editorial-value";
+  text.textContent = value || "—";
+  block.appendChild(title);
+  block.appendChild(text);
+  parent.appendChild(block);
+}
+
+async function openEditorialModal(collectionId, slug) {
+  try {
+    setStatus("status", "loading", "Carregando conteúdo...");
+    const record = await api.json(`/api/collections/${encodeURIComponent(collectionId)}/records/${encodeURIComponent(slug)}`);
+    const fields = record.fields || {};
+    const body = document.createElement("div");
+    body.className = "editorial-detail";
+
+    const context = document.createElement("p");
+    context.className = "hint";
+    context.textContent = record.title || slug;
+    body.appendChild(context);
+    appendReadOnlyField(body, "Descrição curta", fields.descricao_curta);
+    const contextNote = document.createElement("p");
+    contextNote.className = "hint";
+    contextNote.textContent = "A descrição curta é contexto do curso e não faz parte do prompt visual.";
+    body.appendChild(contextNote);
+
+    const heading = document.createElement("h4");
+    heading.textContent = "Conteúdo para geração de imagem";
+    body.appendChild(heading);
+
+    for (const field of EDITORIAL_FIELDS) {
+      appendReadOnlyField(body, field.label, fields[field.key]);
+    }
+
+    const promptBlock = document.createElement("div");
+    promptBlock.className = "editorial-field";
+    const promptLabel = document.createElement("label");
+    promptLabel.className = "editorial-label";
+    promptLabel.textContent = "Prompt da imagem";
+    promptLabel.htmlFor = "editorialPrompt";
+    const textarea = document.createElement("textarea");
+    textarea.id = "editorialPrompt";
+    textarea.rows = 12;
+    textarea.value = fields.prompt_imagem || "";
+    promptBlock.appendChild(promptLabel);
+    promptBlock.appendChild(textarea);
+    body.appendChild(promptBlock);
+
+    const reimport = document.createElement("p");
+    reimport.className = "hint";
+    reimport.textContent = "Uma futura reimportação que contenha prompt_imagem poderá sobrescrever o valor editado no sistema.";
+    body.appendChild(reimport);
+
+    const saveStatus = document.createElement("p");
+    saveStatus.className = "editorial-save-status";
+    body.appendChild(saveStatus);
+
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "btn-primary";
+    save.textContent = "Salvar prompt";
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      saveStatus.className = "editorial-save-status";
+      saveStatus.textContent = "Salvando...";
+      try {
+        const updated = await api.json(`/api/collections/${encodeURIComponent(collectionId)}/records/${encodeURIComponent(slug)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: { prompt_imagem: textarea.value } }),
+        });
+        textarea.value = updated.fields?.prompt_imagem ?? textarea.value;
+        saveStatus.className = "editorial-save-status success";
+        saveStatus.textContent = "Prompt salvo.";
+        if (Array.isArray(state.viewItemsRecords)) {
+          const cached = state.viewItemsRecords.find((item) => item.slug === slug);
+          if (cached) {
+            cached.fields = updated.fields || cached.fields;
+            cached.prompt = updated.prompt;
+          }
+        }
+      } catch (err) {
+        saveStatus.className = "editorial-save-status error";
+        saveStatus.textContent = err.message || "Erro ao salvar o prompt.";
+      } finally {
+        save.disabled = false;
+      }
+    });
+    body.appendChild(save);
+
+    const overlay = createModal({
+      title: record.title || "Conteúdo para geração de imagem",
+      body,
+      footer: [{ label: "Fechar", className: "btn-secondary", close: true }],
+    });
+    overlay.querySelector(".modal")?.classList.add("modal-editorial");
+    setStatus("status", "ready", "Conteúdo carregado.");
+  } catch (err) {
+    handleApiError(err, "status");
+  }
 }
 
 async function openConfigModal(id) {
@@ -772,6 +902,127 @@ function renderAssets() {
       <div class="meta">${formatBytes(a.size)}</div>
     `;
     container.appendChild(card);
+  }
+}
+
+function initUploads() {
+  const composer = byId("uploadComposer");
+  const input = byId("uploadFile");
+  const drop = byId("uploadDrop");
+  byId("btnPickUpload").addEventListener("click", () => {
+    composer.hidden = false;
+    input.click();
+  });
+  byId("btnCancelUpload").addEventListener("click", resetUploadComposer);
+  byId("uploadComposer").addEventListener("submit", sendUpload);
+  input.addEventListener("change", () => {
+    if (input.files[0]) selectUploadFile(input.files[0]);
+  });
+  ["dragenter", "dragover"].forEach((eventName) => {
+    drop.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      drop.classList.add("dragover");
+    });
+  });
+  ["dragleave", "drop"].forEach((eventName) => {
+    drop.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      drop.classList.remove("dragover");
+    });
+  });
+  drop.addEventListener("drop", (event) => {
+    const file = event.dataTransfer?.files?.[0];
+    if (file) selectUploadFile(file);
+  });
+}
+
+function selectUploadFile(file) {
+  if (state.uploadPreviewUrl) URL.revokeObjectURL(state.uploadPreviewUrl);
+  state.uploadFile = file;
+  state.uploadPreviewUrl = URL.createObjectURL(file);
+  const preview = byId("uploadPreview");
+  preview.src = state.uploadPreviewUrl;
+  preview.hidden = false;
+  byId("btnSendUpload").disabled = false;
+  byId("uploadComposer").hidden = false;
+  byId("uploadError").hidden = true;
+}
+
+function resetUploadComposer() {
+  if (state.uploadPreviewUrl) URL.revokeObjectURL(state.uploadPreviewUrl);
+  state.uploadFile = null;
+  state.uploadPreviewUrl = "";
+  byId("uploadFile").value = "";
+  byId("uploadName").value = "";
+  byId("uploadPreview").hidden = true;
+  byId("uploadPreview").removeAttribute("src");
+  byId("btnSendUpload").disabled = true;
+  byId("uploadError").hidden = true;
+  byId("uploadComposer").hidden = true;
+}
+
+async function loadUploads() {
+  const result = await api.json("/api/uploads/images");
+  state.uploads = result.items || [];
+  byId("uploadsCount").textContent = `${state.uploads.length} upload(s)`;
+  renderUploads();
+}
+
+function renderUploads() {
+  const container = byId("uploadsList");
+  if (!container) return;
+  if (state.uploads.length === 0) {
+    container.innerHTML = `<p class="hint">Nenhuma imagem enviada.</p>`;
+    return;
+  }
+  container.innerHTML = "";
+  for (const item of state.uploads) {
+    const card = document.createElement("article");
+    card.className = "card upload-card";
+    const format = item.format === "jpeg" ? "JPEG" : String(item.format || "").toUpperCase();
+    card.innerHTML = `
+      <div class="thumb"><img src="${escapeHtml(item.publicUrl)}" alt="${escapeHtml(item.name)}" loading="lazy"></div>
+      <h3>${escapeHtml(item.name)}</h3>
+      <div class="meta">
+        Arquivo: ${escapeHtml(item.originalName)}<br>
+        ${escapeHtml(formatDate(item.uploadedAt))} · ${escapeHtml(format)} · ${item.width}×${item.height} · ${formatBytes(item.size)}
+      </div>
+      <div class="url">${escapeHtml(absolutePublicUrl(item.publicUrl))}</div>
+      <div class="actions">
+        <button type="button" class="btn-secondary" data-copy-upload="${escapeHtml(item.publicUrl)}">Copiar link</button>
+        <a class="btn-secondary" href="${escapeHtml(item.publicUrl)}" target="_blank" rel="noopener">Abrir link</a>
+      </div>
+    `;
+    container.appendChild(card);
+  }
+  container.querySelectorAll("[data-copy-upload]").forEach((button) => {
+    button.addEventListener("click", () => copyPublicLink(button.dataset.copyUpload));
+  });
+}
+
+async function sendUpload(event) {
+  event.preventDefault();
+  if (!state.uploadFile) return;
+  const error = byId("uploadError");
+  error.hidden = true;
+  byId("btnSendUpload").disabled = true;
+  setStatus("status", "loading", "Enviando imagem...");
+  try {
+    const data = new FormData();
+    data.append("file", state.uploadFile);
+    const name = byId("uploadName").value.trim();
+    if (name) data.append("name", name);
+    const item = await api.json("/api/uploads/images", { method: "POST", body: data });
+    state.uploads.unshift(item);
+    byId("uploadsCount").textContent = `${state.uploads.length} upload(s)`;
+    resetUploadComposer();
+    renderUploads();
+    setStatus("status", "success", "Imagem enviada.");
+  } catch (err) {
+    byId("btnSendUpload").disabled = false;
+    error.textContent = err.message || "Falha ao enviar.";
+    error.hidden = false;
+    handleApiError(err, "status");
   }
 }
 

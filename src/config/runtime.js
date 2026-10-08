@@ -74,6 +74,10 @@ function seedDefaults() {
     path.join(RUNTIME.collectionsDir, "graduacao-cruzeiro.json")
   );
   copyFileIfMissing(path.join(ROOT, "input", "cursos.xlsx"), COURSES_FILE);
+  copyFileIfMissing(
+    path.join(ROOT, "input", "pos-graduacao-cruzeiro.xlsx"),
+    path.join(RUNTIME.inputDir, "pos-graduacao-cruzeiro.xlsx")
+  );
 }
 
 module.exports = {

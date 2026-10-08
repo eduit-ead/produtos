@@ -713,20 +713,38 @@ async function searchBaseFill(collectionId, query) {
     const searchFields = col?.searchFields || [displayField];
     const q = query.toLowerCase();
     const matched = records
-      .filter((r) => searchFields.some((f) => String(r[f] || "").toLowerCase().includes(q)))
+      .filter((r) => {
+        if (collectionId !== "pos-graduacao-cruzeiro") {
+          return searchFields.some((f) => String(r[f] || "").toLowerCase().includes(q));
+        }
+        return searchFields.some((f) => String(readRecordField(r, f, collectionId) || "").toLowerCase().includes(q))
+          || String(r.title || "").toLowerCase().includes(q);
+      })
       .slice(0, 10);
 
     for (const r of matched) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "search-result-item";
-      btn.textContent = String(r[displayField] || r[col?.primaryKey || "slug"] || "Sem nome");
+      const label = collectionId === "pos-graduacao-cruzeiro"
+        ? readRecordField(r, displayField, collectionId) || r.title
+        : r[displayField];
+      btn.textContent = String(label || r[col?.primaryKey || "slug"] || "Sem nome");
       btn.addEventListener("click", () => applyBaseFill(collectionId, r));
       results.appendChild(btn);
     }
   } catch (err) {
     handleApiError(err, "status");
   }
+}
+
+function readRecordField(record, fieldName, collectionId) {
+  if (!fieldName || !record) return undefined;
+  if (record[fieldName] !== undefined && record[fieldName] !== null) return record[fieldName];
+  if (collectionId === "pos-graduacao-cruzeiro" && record.fields && record.fields[fieldName] !== undefined && record.fields[fieldName] !== null) {
+    return record.fields[fieldName];
+  }
+  return undefined;
 }
 
 function applyBaseFill(collectionId, record) {
@@ -738,7 +756,7 @@ function applyBaseFill(collectionId, record) {
   state.selectedItemRecord = record;
 
   for (const mapping of collection.templateBindings || []) {
-    const source = record[mapping.sourceField];
+    const source = readRecordField(record, mapping.sourceField, collectionId);
     if (source !== undefined && source !== null) {
       state.values[mapping.templateVariable] = String(source);
     }
@@ -748,27 +766,38 @@ function applyBaseFill(collectionId, record) {
   const cfg = state.selectedTemplate.imageGeneration || {};
   const promptField = cfg.promptField || "prompt_imagem";
 
-  if (igBindings.descriptionField && record[igBindings.descriptionField] !== undefined) {
-    state.visual.description = String(record[igBindings.descriptionField]);
+  const description = readRecordField(record, igBindings.descriptionField, collectionId);
+  if (igBindings.descriptionField && description !== undefined) {
+    state.visual.description = String(description);
     state.values[promptField] = state.visual.description;
   }
-  if (igBindings.environmentField && record[igBindings.environmentField] !== undefined) {
-    state.visual.environment = String(record[igBindings.environmentField]);
+  const environment = readRecordField(record, igBindings.environmentField, collectionId);
+  if (igBindings.environmentField && environment !== undefined) {
+    state.visual.environment = String(environment);
   }
-  if (igBindings.activityField && record[igBindings.activityField] !== undefined) {
-    state.visual.activity = String(record[igBindings.activityField]);
+  const activity = readRecordField(record, igBindings.activityField, collectionId);
+  if (igBindings.activityField && activity !== undefined) {
+    state.visual.activity = String(activity);
   }
-  if (igBindings.peopleField && record[igBindings.peopleField] !== undefined) {
-    state.visual.people = String(record[igBindings.peopleField]);
+  const people = readRecordField(record, igBindings.peopleField, collectionId);
+  if (igBindings.peopleField && people !== undefined) {
+    state.visual.people = String(people);
   }
-  if (igBindings.compositionField && record[igBindings.compositionField] !== undefined) {
-    state.visual.composition = String(record[igBindings.compositionField]);
+  const cast = readRecordField(record, igBindings.castField, collectionId);
+  if (igBindings.castField && cast !== undefined) {
+    state.visual.cast = String(cast);
   }
-  if (igBindings.avoidField && record[igBindings.avoidField] !== undefined) {
-    state.visual.avoid = String(record[igBindings.avoidField]);
+  const composition = readRecordField(record, igBindings.compositionField, collectionId);
+  if (igBindings.compositionField && composition !== undefined) {
+    state.visual.composition = String(composition);
   }
-  if (igBindings.detailsField && record[igBindings.detailsField] !== undefined) {
-    state.visual.details = String(record[igBindings.detailsField]);
+  const avoid = readRecordField(record, igBindings.avoidField, collectionId);
+  if (igBindings.avoidField && avoid !== undefined) {
+    state.visual.avoid = String(avoid);
+  }
+  const details = readRecordField(record, igBindings.detailsField, collectionId);
+  if (igBindings.detailsField && details !== undefined) {
+    state.visual.details = String(details);
   }
 
   buildForm();
@@ -888,7 +917,17 @@ async function updateFinalPrompt() {
   const lines = [];
   if (cfg.basePrompt) lines.push(cfg.basePrompt);
   if (state.visual.description) lines.push(state.visual.description);
-  [state.visual.environment, state.visual.activity, state.visual.people, state.visual.composition, state.visual.details].forEach((val) => {
+  const castText = String(state.visual.cast || "").replace(/\s+/g, " ").trim();
+  const peopleText = String(state.visual.people || "").replace(/\s+/g, " ").trim();
+  const visualParts = [
+    state.visual.environment,
+    state.visual.activity,
+    castText && peopleText ? `Protagonista: ${peopleText}` : state.visual.people,
+    castText ? `Elenco / pessoas adicionais: ${castText}` : "",
+    state.visual.composition,
+    state.visual.details,
+  ];
+  visualParts.forEach((val) => {
     if (val) lines.push(val);
   });
   if (cfg.negativePrompt) lines.push(`(elementos a evitar: ${cfg.negativePrompt}${state.visual.avoid ? "; " + state.visual.avoid : ""})`);
