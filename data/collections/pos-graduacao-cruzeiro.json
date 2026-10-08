@@ -50,6 +50,7 @@
     "activityField": "visual_atividade",
     "peopleField": "visual_personagem",
     "castField": "visual_elenco",
+    "objectsField": "visual_objetos",
     "compositionField": "visual_composicao",
     "avoidField": "visual_evitar"
   }

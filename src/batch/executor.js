@@ -38,11 +38,10 @@ const {
   catalogDirFor: catalogDirForCollection,
   loadCollectionAndRecords,
   resolveTemplateBindingsValues,
-  applyProductionBackground,
-  PRODUCTION_BACKGROUND_KEY,
+  renderProductionCard,
+  resolveProductionImagePrompt,
 } = require("../production/generic-production-service");
 const { loadCollection } = require("../collections/store");
-const { renderTemplate } = require("../template-editor/renderer");
 const { resolveItemVisual, resolveBackgroundBufferForItem } = require("../production/visual-resolver");
 
 const MAX_ATTEMPTS = 3;
@@ -236,12 +235,19 @@ function createGenericProvider(collectionId) {
 
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "batch-bg-"));
     try {
+      const collection = await loadCol();
+      const prompt = resolveProductionImagePrompt(
+        collection,
+        record,
+        collection.id === "pos-graduacao-cruzeiro" ? null : (metadata.prompt || record.prompt || record.title)
+      );
+      metadata.prompt = prompt;
       const recordImage = await generateImage(
         {
           course_id: record.id,
           slug: record.slug,
           curso: record.title,
-          prompt: metadata.prompt || record.prompt || record.title,
+          prompt,
         },
         { outputDir: tempDir }
       );
@@ -275,17 +281,15 @@ function createGenericProvider(collectionId) {
       if (v.defaultValue !== undefined) values[v.key] = v.defaultValue;
     }
 
+    const backgroundVariable = collection.productionBackgroundBinding?.variable;
     const missing = (template.variables || [])
-      .filter((v) => v.required && (!values[v.key] || values[v.key] === ""))
+      .filter((v) => v.required && v.key !== backgroundVariable && (!values[v.key] || values[v.key] === ""))
       .map((v) => v.key);
     if (missing.length > 0) {
       throw new Error(`Variáveis obrigatórias sem binding: ${missing.join(", ")}`);
     }
 
-    const applied = applyProductionBackground(template, values, collection);
-    return renderTemplate(applied.template || template, applied.values, {
-      runtimeAssets: { [PRODUCTION_BACKGROUND_KEY]: backgroundBuffer },
-    });
+    return renderProductionCard(templateId, template, values, collection, backgroundBuffer);
   }
 
   return { loadMap, generateBackground, renderCard };

@@ -49,6 +49,15 @@ function nonEmptyUnique(lines) {
     });
 }
 
+function removeEmbeddedText(text, embedded) {
+  const source = normalizeLine(text);
+  const needle = normalizeLine(embedded);
+  if (!source || !needle) return source;
+  const idx = source.toLowerCase().indexOf(needle.toLowerCase());
+  if (idx < 0) return source;
+  return normalizeLine(`${source.slice(0, idx)} ${source.slice(idx + needle.length)}`);
+}
+
 function assemblePrompt(templateImageGeneration, fields = {}) {
   const cfg = templateImageGeneration || {};
   const parts = [];
@@ -56,12 +65,16 @@ function assemblePrompt(templateImageGeneration, fields = {}) {
   if (cfg.basePrompt) parts.push(cfg.basePrompt);
 
   const description = fields.prompt_imagem || fields.description || "";
-  if (description) parts.push(description);
+  const objectsText = normalizeLine(fields.objects);
+  const descriptionForPrompt = removeEmbeddedText(description, objectsText);
+  if (descriptionForPrompt) parts.push(descriptionForPrompt);
 
   const castText = normalizeLine(fields.cast);
   const peopleText = normalizeLine(fields.people);
+  const objectsSection = objectsText ? `Objetos / elementos de cena: ${objectsText}` : "";
   const ordered = [
     fields.environment,
+    objectsSection,
     fields.activity,
     castText && peopleText ? `Protagonista: ${peopleText}` : fields.people,
     castText ? `Elenco / pessoas adicionais: ${castText}` : "",
@@ -128,6 +141,36 @@ function posImageGenerationRules() {
       "- A região inferior esquerda do card deve continuar livre para logo, nome do curso e informações acadêmicas.",
       "- Preservar apenas uma área visual relativamente limpa no canto superior esquerdo para aplicação da marca. A região inferior da fotografia poderá ser coberta pelo template e não precisa permanecer livre."
     );
+}
+
+function readBoundField(recordFields, fieldName) {
+  if (!fieldName) return "";
+  const value = recordFields?.[fieldName];
+  return value === undefined || value === null ? "" : String(value);
+}
+
+function fieldsFromImageBindings(bindings, recordFields) {
+  const source = bindings || {};
+  return {
+    description: readBoundField(recordFields, source.descriptionField),
+    environment: readBoundField(recordFields, source.environmentField),
+    activity: readBoundField(recordFields, source.activityField),
+    people: readBoundField(recordFields, source.peopleField),
+    cast: readBoundField(recordFields, source.castField),
+    objects: readBoundField(recordFields, source.objectsField),
+    composition: readBoundField(recordFields, source.compositionField),
+    details: readBoundField(recordFields, source.detailsField),
+    avoid: readBoundField(recordFields, source.avoidField),
+  };
+}
+
+function buildCollectionImagePrompt(collection, record) {
+  const fields = fieldsFromImageBindings(collection?.imageGenerationBindings, record?.fields || {});
+  if (!normalizeLine(fields.description)) {
+    fields.description = record?.prompt || "";
+  }
+  const directed = applyPosImageDirection(fields, collection?.id);
+  return assemblePrompt({}, directed).prompt;
 }
 
 function applyPosImageDirection(fields = {}, collectionId) {
@@ -503,6 +546,7 @@ async function approveStudioPhoto(runId, { catalogDir, assetsDir } = {}) {
 module.exports = {
   assemblePrompt,
   applyPosImageDirection,
+  buildCollectionImagePrompt,
   POS_COLLECTION_ID,
   POS_COMPOSITION_DIRECTION,
   POS_AVOID_DIRECTION,

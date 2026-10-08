@@ -21,6 +21,8 @@ const {
   getCatalogDir,
 } = require("../batch/metadata");
 const { renderTemplate } = require("../template-editor/renderer");
+const { renderSavedTemplate } = require("../template-editor/renderer/render-saved-template");
+const { buildCollectionImagePrompt, POS_COLLECTION_ID } = require("../template-editor/ai-background");
 const { resolveVariables, applyVariableBindings } = require("../template-editor/schema/template-schema");
 const { generateImage } = require("../generate-ai-background");
 const { renderCourseCard, prepareBackgroundBuffer } = require("../render-card");
@@ -322,7 +324,8 @@ async function generateAIBackground(collectionId, slug, { dryRun = false, prompt
   }
 
   const manifest = ensureManifest(collectionId);
-  const usedPrompt = typeof prompt === "string" && prompt.trim() ? prompt.trim() : record.prompt || record.title;
+  const collection = await loadCollection(collectionId);
+  const usedPrompt = resolveProductionImagePrompt(collection, record, prompt);
   const catalogDir = catalogDirFor(collectionId);
   const storage = storageFor(collectionId);
 
@@ -531,7 +534,10 @@ async function validateCollectionProduction(collection) {
 function applyProductionBackground(template, values, collection) {
   const binding = collection.productionBackgroundBinding;
   if (binding?.variable) {
-    return { ...values, [binding.variable]: PRODUCTION_BACKGROUND_KEY };
+    return {
+      template,
+      values: { ...values, [binding.variable]: PRODUCTION_BACKGROUND_KEY },
+    };
   }
   if (binding?.layerId) {
     const templateCopy = JSON.parse(JSON.stringify(template));
@@ -547,7 +553,10 @@ function applyProductionBackground(template, values, collection) {
     (v) => v.type === "image" && v.binding && v.binding.property === "assetId"
   );
   if (imageVar) {
-    return { ...values, [imageVar.key]: PRODUCTION_BACKGROUND_KEY };
+    return {
+      template,
+      values: { ...values, [imageVar.key]: PRODUCTION_BACKGROUND_KEY },
+    };
   }
 
   const bgLayer = template.layers.find((l) => l.type === "background");
@@ -561,6 +570,31 @@ function applyProductionBackground(template, values, collection) {
   }
 
   return { template, values };
+}
+
+function usesDedicatedSavedRenderer(template) {
+  const type = template?.rendererType;
+  return type === "cruzeiro-pos-v1" || type === "dna-work-vagas";
+}
+
+function missingContentVariables(template, values, collection) {
+  const backgroundVariable = collection?.productionBackgroundBinding?.variable;
+  return requiredVariablesMissing(template, values).filter((key) => key !== backgroundVariable);
+}
+
+async function renderProductionCard(templateId, template, values, collection, backgroundBuffer) {
+  const applied = applyProductionBackground(template, values, collection);
+  const runtimeAssets = { [PRODUCTION_BACKGROUND_KEY]: backgroundBuffer };
+  if (usesDedicatedSavedRenderer(template)) {
+    return renderSavedTemplate(templateId, applied.values, runtimeAssets);
+  }
+  return renderTemplate(applied.template || template, applied.values, { runtimeAssets });
+}
+
+function resolveProductionImagePrompt(collection, record, explicitPrompt) {
+  if (typeof explicitPrompt === "string" && explicitPrompt.trim()) return explicitPrompt.trim();
+  if (collection?.id === POS_COLLECTION_ID) return buildCollectionImagePrompt(collection, record);
+  return record?.prompt || record?.title || "";
 }
 
 async function renderOfficialCardBuffer(collectionId, slug, record) {
@@ -584,14 +618,11 @@ async function renderOfficialCardBuffer(collectionId, slug, record) {
   const useTemplateId = collection.defaultTemplateId;
   const template = await loadTemplate(useTemplateId);
   const values = resolveTemplateBindingsValues(collection, record);
-  const missing = requiredVariablesMissing(template, values);
+  const missing = missingContentVariables(template, values, collection);
   if (missing.length > 0) {
     throw new Error(`Variáveis obrigatórias sem binding: ${missing.join(", ")}`);
   }
-  const applied = applyProductionBackground(template, values, collection);
-  return renderTemplate(applied.template || template, applied.values, {
-    runtimeAssets: { [PRODUCTION_BACKGROUND_KEY]: backgroundBuffer },
-  });
+  return renderProductionCard(useTemplateId, template, values, collection, backgroundBuffer);
 }
 
 async function renderItem(collectionId, slug, { templateId = null } = {}) {
@@ -624,14 +655,11 @@ async function renderItem(collectionId, slug, { templateId = null } = {}) {
   } else {
     const template = await loadTemplate(useTemplateId);
     const values = resolveTemplateBindingsValues(collection, record);
-    const missing = requiredVariablesMissing(template, values);
+    const missing = missingContentVariables(template, values, collection);
     if (missing.length > 0) {
       throw new Error(`Variáveis obrigatórias sem binding: ${missing.join(", ")}`);
     }
-    const applied = applyProductionBackground(template, values, collection);
-    cardBuffer = await renderTemplate(applied.template || template, applied.values, {
-      runtimeAssets: { [PRODUCTION_BACKGROUND_KEY]: backgroundBuffer },
-    });
+    cardBuffer = await renderProductionCard(useTemplateId, template, values, collection, backgroundBuffer);
   }
 
   await storage.save(`${slug}/card`, cardBuffer, { contentType: "image/png" });
@@ -808,6 +836,9 @@ module.exports = {
   requiredVariablesMissing,
   isLegacyCollection,
   applyProductionBackground,
+  renderProductionCard,
+  resolveProductionImagePrompt,
+  usesDedicatedSavedRenderer,
   resolveBackgroundBufferGeneric,
   validateCollectionProduction,
   getManifestEntry,
