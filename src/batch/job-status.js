@@ -6,7 +6,7 @@
 const fs = require("fs");
 const path = require("path");
 const { readJob, writeJob } = require("./job");
-const { readMetadata, writeMetadata, metadataPath } = require("./metadata");
+const { readMetadata, writeMetadata, metadataPath, getCatalogDir } = require("./metadata");
 const { courseFiles } = require("./naming");
 const { createStorageProvider } = require("../storage");
 const { catalogDirFor, ensureManifest, saveManifest, getManifestEntry, setManifestEntry } = require("../production/generic-production-service");
@@ -68,7 +68,7 @@ async function cardExists(catalogDir, slug, storageProvider = null) {
   const meta = readMetadata(catalogDir, slug);
   if (!meta) return false;
   try {
-    const storage = storageProvider || createStorageProvider({ baseDir: catalogDir });
+    const storage = storageProvider || createStorageProvider({ baseDir: getCatalogDir() });
     return await storage.exists(meta.storage.keys.card);
   } catch {
     return false;

@@ -27,6 +27,7 @@ const tests = [
   "test-studio-ai-background.js",
   "test-cast-field-prompt.js",
   "test-pos-batch-production.js",
+  "test-storage-keys.js",
   "test-image-uploads.js",
   "check-pos-release.js",
   "test-studio-batch-visual-integration.js",

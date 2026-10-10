@@ -32,6 +32,16 @@ function sha256(buffer) {
   return crypto.createHash("sha256").update(buffer).digest("hex");
 }
 
+function storageKeysForCourse(slug, collectionId) {
+  const generic = collectionId && collectionId !== "graduacao-cruzeiro";
+  const build = (type) => (generic ? `${collectionId}/${slug}/${type}` : `${slug}/${type}`);
+  return {
+    fundo: build("fundo"),
+    card: build("card"),
+    whatsapp: build("whatsapp"),
+  };
+}
+
 function createMetadata(course, options = {}) {
   const files = courseFiles(course.slug);
   const provider = options.provider || "local";
@@ -49,11 +59,7 @@ function createMetadata(course, options = {}) {
     files,
     storage: {
       provider,
-      keys: {
-        fundo: `${course.slug}/fundo`,
-        card: `${course.slug}/card`,
-        whatsapp: `${course.slug}/whatsapp`,
-      },
+      keys: storageKeysForCourse(course.slug, options.collectionId),
     },
     urls: {
       fundo: null,
@@ -130,6 +136,7 @@ module.exports = {
   metadataPath,
   sha256,
   createMetadata,
+  storageKeysForCourse,
   readMetadata,
   writeMetadata: writeMetadataAtomic,
   updateMetadataUrls,

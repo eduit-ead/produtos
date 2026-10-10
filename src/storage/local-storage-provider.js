@@ -13,6 +13,23 @@ const { StorageProvider } = require("./storage-provider");
 const { courseFiles } = require("../batch/naming");
 const { RUNTIME } = require("../config/runtime");
 
+const KNOWN_ASSET_TYPES = new Set(["fundo", "card", "whatsapp"]);
+const RESERVED_KEY_ROOTS = new Set(["studio", "uploads"]);
+
+function rejectUnsafeSegment(segment) {
+  if (
+    !segment
+    || segment.includes("..")
+    || segment.includes("\\")
+    || segment.includes("/")
+    || segment.includes("\0")
+    || segment.startsWith("/")
+    || /^[A-Za-z]:/.test(segment)
+  ) {
+    throw new Error("Chave fora do diretório de armazenamento.");
+  }
+}
+
 class LocalStorageProvider extends StorageProvider {
   constructor(baseDir) {
     super();
@@ -24,30 +41,41 @@ class LocalStorageProvider extends StorageProvider {
     );
   }
 
-  _keyToFilePath(key) {
-    if (!key || typeof key !== "string") {
-      throw new Error("Chave de armazenamento inválida.");
-    }
-    const parts = key.split("/");
-    if (parts.length >= 2) {
-      const [slug, type, ...rest] = parts;
-      const names = courseFiles(slug);
-      const filename = names[type] || rest.join("/") || type;
-      const filePath = path.join(this.baseDir, slug, filename);
-      const resolved = path.resolve(filePath);
-      const baseResolved = path.resolve(this.baseDir);
-      if (!resolved.startsWith(baseResolved + path.sep) && resolved !== baseResolved) {
-        throw new Error("Chave fora do diretório de armazenamento.");
-      }
-      return resolved;
-    }
-    const filePath = path.join(this.baseDir, key);
+  _assertInside(filePath) {
     const resolved = path.resolve(filePath);
     const baseResolved = path.resolve(this.baseDir);
     if (!resolved.startsWith(baseResolved + path.sep) && resolved !== baseResolved) {
       throw new Error("Chave fora do diretório de armazenamento.");
     }
     return resolved;
+  }
+
+  _keyToFilePath(key) {
+    if (!key || typeof key !== "string" || key.includes("\\") || key.includes("\0")) {
+      throw new Error("Chave de armazenamento inválida.");
+    }
+    const parts = key.split("/");
+    if (parts.some((part) => !part || part.includes(".."))) {
+      throw new Error("Chave fora do diretório de armazenamento.");
+    }
+    if (parts.length === 3 && !RESERVED_KEY_ROOTS.has(parts[0])) {
+      if (!KNOWN_ASSET_TYPES.has(parts[2])) {
+        throw new Error("Chave fora do diretório de armazenamento.");
+      }
+      const [collectionId, slug, type] = parts;
+      rejectUnsafeSegment(collectionId);
+      rejectUnsafeSegment(slug);
+      rejectUnsafeSegment(type);
+      const filename = courseFiles(slug)[type];
+      return this._assertInside(path.join(this.baseDir, collectionId, slug, filename));
+    }
+    if (parts.length >= 2) {
+      const [slug, type, ...rest] = parts;
+      const names = courseFiles(slug);
+      const filename = names[type] || rest.join("/") || type;
+      return this._assertInside(path.join(this.baseDir, slug, filename));
+    }
+    return this._assertInside(path.join(this.baseDir, key));
   }
 
   _contentTypeFromKey(key) {

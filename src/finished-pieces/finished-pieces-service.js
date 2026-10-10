@@ -41,11 +41,8 @@ function storageForFinished() {
   return createStorageProvider({ baseDir: getCatalogDir() });
 }
 
-function storageForCollection(collectionId) {
-  const baseDir = collectionId === "graduacao-cruzeiro"
-    ? getCatalogDir()
-    : path.join(getCatalogDir(), collectionId);
-  return createStorageProvider({ baseDir });
+function storageForCollection() {
+  return createStorageProvider({ baseDir: getCatalogDir() });
 }
 
 function finishedDir() {

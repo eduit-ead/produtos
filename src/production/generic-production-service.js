@@ -19,6 +19,7 @@ const {
   writeMetadata,
   updateMetadataUrls,
   getCatalogDir,
+  storageKeysForCourse,
 } = require("../batch/metadata");
 const { renderTemplate } = require("../template-editor/renderer");
 const { renderSavedTemplate } = require("../template-editor/renderer/render-saved-template");
@@ -91,8 +92,8 @@ function saveManifest(collectionId, manifest) {
   fs.renameSync(tmp, file);
 }
 
-function storageFor(collectionId) {
-  return createStorageProvider({ baseDir: catalogDirFor(collectionId) });
+function storageFor() {
+  return createStorageProvider({ baseDir: getCatalogDir() });
 }
 
 function recordToMetadataRecord(record) {
@@ -158,14 +159,14 @@ function setManifestEntry(manifest, slug, partial) {
   };
 }
 
-async function resolveGenericStatus(manifestEntry, storage, slug) {
+async function resolveGenericStatus(manifestEntry, storage, slug, collectionId) {
   if (manifestEntry?.status === "aprovado") return "aprovado";
   if (manifestEntry?.status === "rejeitado") return "rejeitado";
   if (manifestEntry?.status === "erro") return "erro";
   if (manifestEntry?.status === "gerando") return "gerando";
   const [hasBg, hasCard] = await Promise.all([
-    storage.exists(`${slug}/fundo`).catch(() => false),
-    storage.exists(`${slug}/card`).catch(() => false),
+    storage.exists(storageKeysForCourse(slug, collectionId).fundo).catch(() => false),
+    storage.exists(storageKeysForCourse(slug, collectionId).card).catch(() => false),
   ]);
   if (hasCard || hasBg) return "gerado";
   return "pendente";
@@ -338,8 +339,6 @@ async function generateAIBackground(collectionId, slug, { dryRun = false, prompt
   });
   saveManifest(collectionId, manifest);
 
-  const files = courseFiles(slug);
-
   try {
     let buffer;
     let model = "mock";
@@ -372,14 +371,15 @@ async function generateAIBackground(collectionId, slug, { dryRun = false, prompt
       }
     }
 
-    await storage.save(`${slug}/fundo`, buffer, { contentType: "image/png" });
+    const backgroundKey = storageKeysForCourse(slug, collectionId).fundo;
+    await storage.save(backgroundKey, buffer, { contentType: "image/png" });
 
     setManifestEntry(manifest, slug, {
       course_id: record.id,
       curso: record.title,
       status: "gerado",
       prompt: usedPrompt,
-      backgroundPath: `${slug}/fundo`,
+      backgroundPath: backgroundKey,
       selectedBackground: "ai",
       model,
       quality,
@@ -419,21 +419,20 @@ async function uploadBackground(collectionId, slug, buffer, ext) {
     .png()
     .toBuffer();
 
-  const catalogDir = catalogDirFor(collectionId);
   const storage = storageFor(collectionId);
-  const files = courseFiles(slug);
 
-  await storage.save(`${slug}/fundo`, normalized, { contentType: "image/png" });
+  const backgroundKey = storageKeysForCourse(slug, collectionId).fundo;
+  await storage.save(backgroundKey, normalized, { contentType: "image/png" });
 
   const manifest = ensureManifest(collectionId);
   const entry = getManifestEntry(manifest, slug) || {};
-  const status = await resolveGenericStatus(entry, storage, slug);
+  const status = await resolveGenericStatus(entry, storage, slug, collectionId);
   setManifestEntry(manifest, slug, {
     ...entry,
     course_id: record.id,
     curso: record.title,
     status,
-    backgroundPath: `${slug}/fundo`,
+    backgroundPath: backgroundKey,
     selectedBackground: "upload",
     uploadedAt: new Date().toISOString(),
     error: null,
@@ -662,15 +661,16 @@ async function renderItem(collectionId, slug, { templateId = null } = {}) {
     cardBuffer = await renderProductionCard(useTemplateId, template, values, collection, backgroundBuffer);
   }
 
-  await storage.save(`${slug}/card`, cardBuffer, { contentType: "image/png" });
+  const cardKey = storageKeysForCourse(slug, collectionId).card;
+  await storage.save(cardKey, cardBuffer, { contentType: "image/png" });
 
-  const resolvedStatus = await resolveGenericStatus(entry, storage, slug);
+  const resolvedStatus = await resolveGenericStatus(entry, storage, slug, collectionId);
   const nextStatus = resolvedStatus === "aprovado" ? "aprovado" : "gerado";
   setManifestEntry(manifest, slug, {
     course_id: record.id,
     curso: record.title,
     status: nextStatus,
-    cardPath: `${slug}/card`,
+    cardPath: cardKey,
     template_id: useTemplateId,
     renderedAt: new Date().toISOString(),
     error: null,
@@ -688,9 +688,7 @@ async function approveItem(collectionId, slug, { source = "batch", runId = null,
   const record = await getRecord(collectionId, validateSlug(slug));
   if (!record) throw new Error("Item não encontrado.");
 
-  const catalogDir = catalogDirFor(collectionId);
   const storage = storageFor(collectionId);
-  const files = courseFiles(slug);
 
   // Resolve as chaves do visual atual (aprovado ou candidato).
   const visual = await resolveItemVisual(collectionId, slug, record);
@@ -699,7 +697,7 @@ async function approveItem(collectionId, slug, { source = "batch", runId = null,
   }
 
   // Gera WhatsApp se ainda não existir.
-  const whatsappKey = visual.whatsappKey || `${slug}/${files.whatsapp}`;
+  const whatsappKey = visual.whatsappKey || storageKeysForCourse(slug, collectionId).whatsapp;
   if (!(await storage.exists(whatsappKey))) {
     const cardBuffer = await storage.read(visual.cardKey);
     const whatsappBuffer = await convertCardToWhatsAppJpeg(cardBuffer);
@@ -772,8 +770,9 @@ async function rejectItem(collectionId, slug) {
 async function generateWhatsApp(collectionId, slug) {
   const record = await getRecord(collectionId, slug);
   const visual = record ? await resolveItemVisual(collectionId, slug, record) : null;
-  const cardKey = visual?.cardKey || `${slug}/${files.card}`;
-  const whatsappKey = visual?.whatsappKey || `${slug}/${files.whatsapp}`;
+  const assetKeys = storageKeysForCourse(slug, collectionId);
+  const cardKey = visual?.cardKey || assetKeys.card;
+  const whatsappKey = visual?.whatsappKey || assetKeys.whatsapp;
   const storage = storageFor(collectionId);
   if (!(await storage.exists(cardKey))) {
     throw new Error("Card ainda não foi renderizado.");
@@ -788,7 +787,7 @@ async function generateWhatsApp(collectionId, slug) {
   setManifestEntry(manifest, slug, {
     ...entry,
     status: entry.status === "aprovado" ? "aprovado" : "pronto_revisao",
-    whatsappPath: `${slug}/whatsapp`,
+    whatsappPath: whatsappKey,
     error: null,
   });
   saveManifest(collectionId, manifest);

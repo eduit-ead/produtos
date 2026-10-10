@@ -1610,7 +1610,7 @@ function createRouter() {
     const file = findJobFile(jobId);
     if (!file) throw new Error("Lote não encontrado.");
     const catalogDir = path.dirname(path.dirname(file));
-    const exec = new BatchExecutor({ catalogDir, storageProvider: createStorageProvider({ baseDir: catalogDir }) });
+    const exec = new BatchExecutor({ catalogDir, storageProvider: createStorageProvider({ baseDir: getCatalogDir() }) });
     return exec[action](jobId);
   }
 
@@ -1729,7 +1729,7 @@ function createRouter() {
       const { job, collectionId } = await findJobAndCollection(req.params.jobId);
       await resetJobItemForRegeneration(collectionId, req.params.jobId, req.params.slug);
       const catalogDir = genericProduction.catalogDirFor(collectionId);
-      const exec = new BatchExecutor({ catalogDir, storageProvider: createStorageProvider({ baseDir: catalogDir }) });
+      const exec = new BatchExecutor({ catalogDir, storageProvider: createStorageProvider({ baseDir: getCatalogDir() }) });
       const updatedJob = await exec.resume(req.params.jobId);
       res.json({ ok: true, job: updatedJob });
     } catch (err) {

@@ -612,6 +612,7 @@ class BatchExecutor {
       prompt_imagem: prompt,
     };
     return createMetadata(recordLike, {
+      collectionId: job.collectionId,
       template_id,
       model: job.model,
       quality: job.quality,
@@ -628,7 +629,7 @@ class BatchExecutor {
         let job = this._refreshJob(jobId);
         if (!job) throw new Error("Job não encontrado.");
         this.catalogDir = catalogDirFor(job);
-        this.storage = this.storage || createStorageProvider({ baseDir: this.catalogDir });
+        this.storage = this.storage || createStorageProvider({ baseDir: getCatalogDir() });
         const provider = getProvider(job);
         const courseMap = await provider.loadMap();
 
@@ -751,7 +752,7 @@ class BatchExecutor {
     const job = this._refreshJob(jobId);
     if (!job) throw new Error("Job não encontrado.");
     this.catalogDir = catalogDirFor(job);
-    this.storage = this.storage || createStorageProvider({ baseDir: this.catalogDir });
+    this.storage = this.storage || createStorageProvider({ baseDir: getCatalogDir() });
     const provider = getProvider(job);
     const courseMap = await provider.loadMap();
 

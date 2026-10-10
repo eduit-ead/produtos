@@ -93,7 +93,7 @@ function pickLatest(values) {
 
 async function resolveItemVisual(collectionId, slug, record) {
   const catalogDir = catalogDirFor(collectionId);
-  const storage = createStorageProvider({ baseDir: catalogDir });
+  const storage = createStorageProvider({ baseDir: getCatalogDir() });
   const manifest = ensureManifest(collectionId);
   const entry = getManifestEntry(manifest, slug) || {};
   const batchMeta = readMetadata(catalogDir, slug) || null;
@@ -279,8 +279,7 @@ async function resolveItemVisual(collectionId, slug, record) {
 async function resolveBackgroundBufferForItem(collectionId, slug, record) {
   const visual = await resolveItemVisual(collectionId, slug, record);
   if (visual.currentBackgroundKey) {
-    const catalogDir = catalogDirFor(collectionId);
-    const storage = createStorageProvider({ baseDir: catalogDir });
+    const storage = createStorageProvider({ baseDir: getCatalogDir() });
     return storage.read(visual.currentBackgroundKey);
   }
   const originalUrl = record?.sourceImage || record?.image_url || null;
