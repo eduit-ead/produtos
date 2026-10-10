@@ -508,7 +508,14 @@ function scheduleRender() {
 }
 
 function getRenderPayload() {
-  const payload = { values: state.values };
+  const values = { ...state.values };
+  if (state.selectedTemplate?.rendererType === "cruzeiro-pos-v1") {
+    const fundo = values.imagemFundo;
+    if (fundo === undefined || fundo === null || String(fundo).trim() === "") {
+      values.imagemFundo = "pos-preview-fundo.png";
+    }
+  }
+  const payload = { values };
   const runtimeAssets = {};
   const runtimeAssetRefs = {};
   if (state.activeBackgroundKey && state.backgroundBuffers[state.activeBackgroundKey]) {
@@ -572,6 +579,13 @@ function validateRequired() {
   for (const v of state.selectedTemplate.variables || []) {
     if (!v.required) continue;
     const val = state.values[v.key];
+    if (
+      v.key === "imagemFundo"
+      && state.selectedTemplate.rendererType === "cruzeiro-pos-v1"
+      && (val === undefined || val === null || String(val).trim() === "")
+    ) {
+      continue;
+    }
     if (val === undefined || val === null || String(val).trim() === "") return false;
   }
   return true;
