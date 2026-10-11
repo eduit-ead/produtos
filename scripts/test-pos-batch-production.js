@@ -95,6 +95,10 @@ async function main() {
       assert.equal(prompt.includes("Objetos / elementos de cena:"), false);
     }
     assert.ok(prompt.includes(POS_COMPOSITION_DIRECTION), `${item.record.slug}: direção da Pós ausente`);
+    assert.ok(
+      prompt.includes("Evitar pessoas, cabeças, cabelos ou objetos importantes no quadrante superior esquerdo."),
+      `${item.record.slug}: área da marca ausente do evitar`
+    );
     assert.ok(prompt.includes("visual_elenco"), `${item.record.slug}: regra de quantidade ausente`);
     if (item.record.fields.visual_personagem) {
       assert.ok(prompt.includes(item.record.fields.visual_personagem), `${item.record.slug}: visual_personagem ausente do prompt`);

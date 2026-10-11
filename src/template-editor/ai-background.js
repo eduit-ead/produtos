@@ -106,10 +106,10 @@ function assemblePrompt(templateImageGeneration, fields = {}) {
 const POS_COLLECTION_ID = "pos-graduacao-cruzeiro";
 
 const POS_COMPOSITION_DIRECTION =
-  "Composição visual equilibrada, com a atividade principal distribuída entre o centro e o centro-direita. O protagonista deve permanecer claramente identificável, com demais pessoas e objetos distribuídos naturalmente ao redor da ação. Preservar apenas uma área limpa no canto superior esquerdo para aplicação da marca, sem deslocar todo o grupo para a direita. Evitar concentração excessiva de pessoas no lado direito, grandes áreas vazias artificiais e sujeitos cortados nas bordas.";
+  "Composição visual equilibrada, com a atividade principal distribuída entre o centro e o centro-direita. O protagonista deve permanecer claramente identificável, com demais pessoas e objetos distribuídos naturalmente ao redor da ação. Preservar uma área claramente livre no canto superior esquerdo para aplicação da marca. Não posicionar rostos, cabeças, cabelos, mãos ou objetos de alto contraste atrás dessa área. O fundo nessa região deve ser visualmente simples e oferecer contraste suficiente para leitura do logo. Essa restrição vale somente para a área da marca no topo esquerdo, sem deslocar todo o grupo para a direita e sem deixar o lado esquerdo inteiro vazio. Evitar concentração excessiva de pessoas no lado direito, grandes áreas vazias artificiais e sujeitos cortados nas bordas.";
 
 const POS_AVOID_DIRECTION =
-  "Evitar todas as pessoas concentradas no terço direito, composição excessivamente lateral, grandes áreas vazias artificiais, grupo espremido e personagens cortados nas bordas.";
+  "Evitar todas as pessoas concentradas no terço direito, composição excessivamente lateral, grandes áreas vazias artificiais, grupo espremido e personagens cortados nas bordas. Evitar pessoas, cabeças, cabelos ou objetos importantes no quadrante superior esquerdo.";
 
 function withoutEmptyLeftBias(text) {
   return normalizeLine(text)
@@ -139,7 +139,7 @@ function posImageGenerationRules() {
     )
     .replace(
       "- A região inferior esquerda do card deve continuar livre para logo, nome do curso e informações acadêmicas.",
-      "- Preservar apenas uma área visual relativamente limpa no canto superior esquerdo para aplicação da marca. A região inferior da fotografia poderá ser coberta pelo template e não precisa permanecer livre."
+      "- Preservar uma área claramente livre no canto superior esquerdo para aplicação da marca. Não posicionar rostos, cabeças, cabelos, mãos ou objetos de alto contraste atrás dessa área. O fundo nessa região deve ser visualmente simples e oferecer contraste suficiente para leitura do logo. Essa restrição vale somente para a área da marca no topo esquerdo. A região inferior da fotografia poderá ser coberta pelo template e não precisa permanecer livre."
     );
 }
 
