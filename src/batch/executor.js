@@ -20,6 +20,7 @@ const {
   readMetadata,
   writeMetadata,
   createMetadata,
+  storageKeysForCourse,
   updateMetadataUrls,
   sha256,
   getCatalogDir,
@@ -558,6 +559,10 @@ class BatchExecutor {
     if (!metadata) {
       metadata = this._createMetadata(course, job, item);
     }
+    if (!metadata.storage) {
+      metadata.storage = { provider: "local" };
+    }
+    metadata.storage.keys = storageKeysForCourse(item.slug, job.collectionId);
 
     const step = stepNameFromStatus(item.status);
 
