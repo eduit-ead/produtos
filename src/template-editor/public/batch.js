@@ -774,6 +774,13 @@ function getCatalogUrl(slug, file) {
   return `/api/catalog/${encodeURIComponent(slug)}/${encodeURIComponent(file)}`;
 }
 
+function reviewAssetUrl(item, type) {
+  const canonical = item.urls && item.urls[type];
+  if (canonical) return canonical;
+  const file = type === "whatsapp" ? `${item.slug}-whatsapp.jpg` : `${item.slug}-${type}.png`;
+  return getCatalogUrl(item.slug, file);
+}
+
 function renderReview() {
   const job = state.job;
   const stats = job?.stats || {};
@@ -951,7 +958,7 @@ function buildReviewItem(item) {
         <h5>Fundo novo</h5>
         <div class="thumb">
           ${hasBackground
-            ? `<img src="${getCatalogUrl(item.slug, `${item.slug}-fundo.png`)}" alt="Novo fundo">`
+            ? `<img src="${escapeHtml(reviewAssetUrl(item, "fundo"))}" alt="Novo fundo">`
             : `<div class="missing">${placeholderText("Fundo")}</div>`}
         </div>
       </div>
@@ -959,7 +966,7 @@ function buildReviewItem(item) {
         <h5>Card novo</h5>
         <div class="thumb">
           ${hasCard
-            ? `<img src="${getCatalogUrl(item.slug, `${item.slug}-card.png`)}" alt="Novo card">`
+            ? `<img src="${escapeHtml(reviewAssetUrl(item, "card"))}" alt="Novo card">`
             : `<div class="missing">${placeholderText("Card")}</div>`}
         </div>
       </div>
@@ -967,7 +974,7 @@ function buildReviewItem(item) {
         <h5>WhatsApp</h5>
         <div class="thumb">
           ${hasWhatsApp
-            ? `<img src="${getCatalogUrl(item.slug, `${item.slug}-whatsapp.jpg`)}" alt="WhatsApp">`
+            ? `<img src="${escapeHtml(reviewAssetUrl(item, "whatsapp"))}" alt="WhatsApp">`
             : `<div class="missing">${placeholderText("WhatsApp")}</div>`}
         </div>
       </div>
@@ -1008,8 +1015,10 @@ async function bulkAction(action) {
 }
 
 async function downloadItem(slug, type) {
-  const file = type === "whatsapp" ? `${slug}-whatsapp.jpg` : `${slug}-card.png`;
-  const url = getCatalogUrl(slug, file);
+  const item = (state.job?.courses || []).find((course) => course.slug === slug) || { slug };
+  const assetType = type === "whatsapp" ? "whatsapp" : "card";
+  const file = assetType === "whatsapp" ? `${slug}-whatsapp.jpg` : `${slug}-card.png`;
+  const url = reviewAssetUrl(item, assetType);
   setStatus("status", "loading", "Preparando download...");
   try {
     await downloadUrl(url, file);

@@ -1566,12 +1566,23 @@ function createRouter() {
       courses: job.courses.map((item) => {
         const meta = readMetadata(catalogDir, item.slug) || {};
         const files = meta.files || {};
+        const storedUrls = meta.urls || {};
         const base = path.join(catalogDir, item.slug);
+        const storedUrl = (key) => {
+          const value = storedUrls[key];
+          if (value === undefined || value === null || String(value).trim() === "") return null;
+          return value;
+        };
         return {
           ...item,
           hasBackground: files.fundo ? fs.existsSync(path.join(base, files.fundo)) : false,
           hasCard: files.card ? fs.existsSync(path.join(base, files.card)) : false,
           hasWhatsApp: files.whatsapp ? fs.existsSync(path.join(base, files.whatsapp)) : false,
+          urls: {
+            fundo: storedUrl("fundo"),
+            card: storedUrl("card"),
+            whatsapp: storedUrl("whatsapp"),
+          },
         };
       }),
     };
