@@ -105,12 +105,24 @@ function writeMetadataAtomic(catalogDir, slug, metadata) {
   }
 }
 
+function versionedAssetUrl(url, hash) {
+  if (!url) return url;
+  const version = hash === undefined || hash === null ? "" : String(hash).trim();
+  if (!version) return url;
+  const base = String(url).split("?")[0];
+  return `${base}?v=${encodeURIComponent(version)}`;
+}
+
 async function updateMetadataUrls(metadata, provider) {
   if (!provider || !provider.getPublicUrl) return;
-  metadata.urls.fundo = await provider.getPublicUrl(metadata.storage.keys.fundo);
-  metadata.urls.card = await provider.getPublicUrl(metadata.storage.keys.card);
-  metadata.urls.whatsapp = await provider.getPublicUrl(
-    metadata.storage.keys.whatsapp
+  const keys = metadata.storage?.keys || {};
+  const hashes = metadata.hashes || {};
+  metadata.urls = metadata.urls || {};
+  metadata.urls.fundo = versionedAssetUrl(await provider.getPublicUrl(keys.fundo), hashes.fundo);
+  metadata.urls.card = versionedAssetUrl(await provider.getPublicUrl(keys.card), hashes.card);
+  metadata.urls.whatsapp = versionedAssetUrl(
+    await provider.getPublicUrl(keys.whatsapp),
+    hashes.whatsapp
   );
 }
 
@@ -139,6 +151,7 @@ module.exports = {
   storageKeysForCourse,
   readMetadata,
   writeMetadata: writeMetadataAtomic,
+  versionedAssetUrl,
   updateMetadataUrls,
   listMetadata,
 };

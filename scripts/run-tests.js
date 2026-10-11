@@ -30,6 +30,7 @@ const tests = [
   "test-storage-keys.js",
   "test-storage-key-regeneration.js",
   "test-batch-review-urls.js",
+  "test-metadata-url-versions.js",
   "test-image-uploads.js",
   "check-pos-release.js",
   "test-studio-batch-visual-integration.js",

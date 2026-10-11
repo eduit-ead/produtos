@@ -137,9 +137,9 @@ async function main() {
   assert.equal(pos.after.storage.keys.fundo, `${posCollection}/${posSlug}/fundo`);
   assert.equal(pos.after.storage.keys.card, `${posCollection}/${posSlug}/card`);
   assert.equal(pos.after.storage.keys.whatsapp, `${posCollection}/${posSlug}/whatsapp`);
-  assert.equal(pos.after.urls.fundo, await storage.getPublicUrl(expected.fundo));
-  assert.equal(pos.after.urls.card, await storage.getPublicUrl(expected.card));
-  assert.equal(pos.after.urls.whatsapp, await storage.getPublicUrl(expected.whatsapp));
+  assert.equal(pos.after.urls.fundo, `${await storage.getPublicUrl(expected.fundo)}?v=${pos.after.hashes.fundo}`);
+  assert.equal(pos.after.urls.card, `${await storage.getPublicUrl(expected.card)}?v=${pos.after.hashes.card}`);
+  assert.equal(pos.after.urls.whatsapp, `${await storage.getPublicUrl(expected.whatsapp)}?v=${pos.after.hashes.whatsapp}`);
   assert.equal(fs.existsSync(pos.oldPath), true);
   assert.equal(fs.existsSync(storage.resolveLocalPath(expected.fundo)), true);
   assert.deepEqual(preservedFields(pos.after), pos.kept);
@@ -155,9 +155,10 @@ async function main() {
     card: `${gradSlug}/card`,
     whatsapp: `${gradSlug}/whatsapp`,
   });
-  assert.equal(grad.after.urls.fundo, await storage.getPublicUrl(`${gradSlug}/fundo`));
-  assert.equal(grad.after.urls.card, await storage.getPublicUrl(`${gradSlug}/card`));
-  assert.equal(grad.after.urls.whatsapp, await storage.getPublicUrl(`${gradSlug}/whatsapp`));
+  assert.equal(grad.after.urls.fundo, `${await storage.getPublicUrl(`${gradSlug}/fundo`)}?v=${grad.after.hashes.fundo}`);
+  assert.equal(grad.after.urls.card, `${await storage.getPublicUrl(`${gradSlug}/card`)}?v=${grad.after.hashes.card}`);
+  assert.equal(grad.after.urls.whatsapp, `${await storage.getPublicUrl(`${gradSlug}/whatsapp`)}?v=${grad.after.hashes.whatsapp}`);
+  assert.equal(grad.after.storage.keys.fundo, `${gradSlug}/fundo`);
   assert.deepEqual(preservedFields(grad.after), grad.kept);
   assert.equal(grad.after.hashes.fundo, sha256(grad.png));
   assert.notEqual(grad.after.timestamps.generated_at, grad.before.timestamps.generated_at);
